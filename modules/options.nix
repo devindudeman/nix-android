@@ -103,5 +103,73 @@
         description = "What converge does with installed-but-undeclared user apps. \"none\" = additive (default), \"uninstall\" = NixOS-style purity.";
       };
     };
+
+    # Phase-2 surface. Managed-key semantics throughout: converge only touches
+    # what you declare — it never reverts device state you left undeclared.
+    android = {
+      settings = lib.genAttrs [ "global" "secure" "system" ] (ns: lib.mkOption {
+        type = with lib.types; attrsOf (either str int);
+        default = { };
+        description = "`settings put ${ns}` key/values (compared via `settings get`).";
+      });
+
+      darkMode = lib.mkOption {
+        type = with lib.types; nullOr bool;
+        default = null;
+        description = "Dark mode via `cmd uimode night`. null = unmanaged.";
+      };
+
+      privateDns = lib.mkOption {
+        type = with lib.types; nullOr str;
+        default = null;
+        description = "Private DNS: \"off\", \"opportunistic\", or a DoT hostname. Sugar over settings.global.private_dns_mode/_specifier. null = unmanaged.";
+        example = "dns.example.com";
+      };
+
+      quickSettings.tiles = lib.mkOption {
+        type = with lib.types; nullOr (listOf str);
+        default = null;
+        description = "Exact quick-settings tile layout (sugar over settings.secure.sysui_qs_tiles). Tile names as in `settings get secure sysui_qs_tiles`, incl. custom(...) third-party tiles. null = unmanaged.";
+      };
+
+      defaultApps = lib.genAttrs [ "browser" "sms" "dialer" "home" ] (role: lib.mkOption {
+        type = with lib.types; nullOr str;
+        default = null;
+        description = "Package holding the ${role} role (`cmd role`). null = unmanaged.";
+      });
+
+      packages.disabled = lib.mkOption {
+        type = with lib.types; listOf str;
+        default = [ ];
+        description = "Packages kept disabled for the managed user (`pm disable-user`). Ensure-disabled only: removing an entry does not re-enable (imperative escape: `pm enable`).";
+      };
+
+      permissions = lib.mkOption {
+        type =
+          with lib.types;
+          attrsOf (submodule {
+            options = {
+              grant = lib.mkOption {
+                type = listOf str;
+                default = [ ];
+                description = "Runtime permissions to ensure granted (pm grant). On GrapheneOS this includes android.permission.INTERNET (Network) and android.permission.OTHER_SENSORS (Sensors).";
+              };
+              revoke = lib.mkOption {
+                type = listOf str;
+                default = [ ];
+                description = "Runtime permissions to ensure revoked (pm revoke).";
+              };
+            };
+          });
+        default = { };
+        description = "Per-package runtime-permission state, keyed by package id.";
+      };
+
+      batteryOptimization.exempt = lib.mkOption {
+        type = with lib.types; listOf str;
+        default = [ ];
+        description = "Packages exempted from battery optimization (`cmd deviceidle whitelist +pkg`). Ensure-present only.";
+      };
+    };
   };
 }

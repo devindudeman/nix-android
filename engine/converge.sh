@@ -20,12 +20,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-adb=(adb)
-[ -n "$serial" ] && adb=(adb -s "$serial")
+adb_base=(adb)
+[ -n "$serial" ] && adb_base=(adb -s "$serial")
+# Wrapper: adb MUST read from /dev/null. `adb shell` otherwise drains the
+# enclosing `while read` loop's stdin, so only the first item iterates — the
+# silent bug behind partial plans. Every adb call goes through this.
+adb() { "${adb_base[@]}" "$@" </dev/null; }
 user=$(jq -r '.device.user' "$manifest")
 
 # Device reality: user-installed packages with versionCodes.
-installed=$("${adb[@]}" shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+installed=$(adb shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
 current_code() { # -> versionCode or empty
   sed -n "s/^package:$1 versionCode:\([0-9]*\).*/\1/p" <<<"$installed" | head -1
 }
@@ -61,10 +65,86 @@ if [ "$(jq -r '.apps.cleanup' "$manifest")" = "uninstall" ]; then
   done < <(sed -n 's/^package:\([^ ]*\) .*/\1/p' <<<"$installed")
 fi
 
-plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} ))
+# ---- Phase-2 categories: managed keys only, read → diff → plan → apply ----
+todo_setting=()   # ns \t key \t cur \t want
+todo_dark=()      # want (yes|no)
+todo_role=()      # roleName \t cur \t wantPkg
+todo_disable=()   # pkg
+todo_grant=()     # pkg \t perm
+todo_revoke=()    # pkg \t perm
+todo_idle=()      # pkg
+
+for ns in global secure system; do
+  while IFS=$'\t' read -r key want; do
+    cur=$(adb shell settings get "$ns" "$key" | tr -d '\r')
+    [ "$cur" = "null" ] && cur=""
+    [ "$cur" = "$want" ] || todo_setting+=("$ns"$'\t'"$key"$'\t'"$cur"$'\t'"$want")
+  done < <(jq -r --arg ns "$ns" '.android.settings[$ns] // {} | to_entries[] | [.key, .value] | @tsv' "$manifest")
+done
+
+dark=$(jq -r '.android.darkMode' "$manifest")
+if [ "$dark" != "null" ]; then
+  want=$([ "$dark" = "true" ] && echo yes || echo no)
+  cur=$(adb shell cmd uimode night | tr -d '\r' | sed 's/Night mode: //')
+  [ "$cur" = "$want" ] || todo_dark+=("$want")
+fi
+
+role_id() { # browser|sms|dialer|home → android role id
+  case $1 in
+  browser) echo android.app.role.BROWSER ;;
+  sms) echo android.app.role.SMS ;;
+  dialer) echo android.app.role.DIALER ;;
+  home) echo android.app.role.HOME ;;
+  esac
+}
+while IFS=$'\t' read -r role want; do
+  cur=$(adb shell cmd role get-role-holders --user "$user" "$(role_id "$role")" | tr -d '\r')
+  [ "$cur" = "$want" ] || todo_role+=("$role"$'\t'"$cur"$'\t'"$want")
+done < <(jq -r '.android.roles // {} | to_entries[] | [.key, .value] | @tsv' "$manifest")
+
+disabled_now=$(adb shell pm list packages -d --user "$user" | tr -d '\r')
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  if ! grep -q "^package:$pkg$" <<<"$disabled_now"; then
+    # only meaningful if the package exists for this user at all
+    if adb shell pm list packages --user "$user" "$pkg" | tr -d '\r' | grep -q "^package:$pkg$"; then
+      todo_disable+=("$pkg")
+    else
+      echo "note: android.packages.disabled: $pkg not installed for user $user — skipping" >&2
+    fi
+  fi
+done < <(jq -r '.android.disabled // [] | .[]' "$manifest")
+
+# ponytail: permission read = grep dumpsys for "<perm>: granted=" — coarse
+# (not per-user-sectioned), fine for the single managed user; ceiling noted.
+while IFS=$'\t' read -r pkg perm action; do
+  granted=$(adb shell dumpsys package "$pkg" | tr -d '\r' | grep -m1 "  $perm: granted=" | sed 's/.*granted=\([a-z]*\).*/\1/' || true)
+  if [ "$action" = grant ] && [ "$granted" != "true" ]; then
+    todo_grant+=("$pkg"$'\t'"$perm")
+  elif [ "$action" = revoke ] && [ "$granted" = "true" ]; then
+    todo_revoke+=("$pkg"$'\t'"$perm")
+  fi
+done < <(jq -r '.android.permissions // {} | to_entries[] | .key as $p | ((.value.grant[] | [$p, ., "grant"]), (.value.revoke[] | [$p, ., "revoke"])) | @tsv' "$manifest")
+
+idle_now=$(adb shell cmd deviceidle whitelist | tr -d '\r')
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  grep -q ",$pkg," <<<"$idle_now" || todo_idle+=("$pkg")
+done < <(jq -r '.android.deviceidleExempt // [] | .[]' "$manifest")
+
+plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
+  + ${#todo_setting[@]} + ${#todo_dark[@]} + ${#todo_role[@]} + ${#todo_disable[@]} \
+  + ${#todo_grant[@]} + ${#todo_revoke[@]} + ${#todo_idle[@]} ))
 for t in "${todo_install[@]}"; do IFS=$'\t' read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
 for t in "${todo_upgrade[@]}"; do IFS=$'\t' read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
 for t in "${todo_remove[@]}";  do echo "remove   $t"; done
+for t in "${todo_setting[@]}"; do IFS=$'\t' read -r ns k c w <<<"$t"; echo "setting  $ns/$k (${c:-unset} → $w)"; done
+for t in "${todo_dark[@]}";    do echo "darkmode → $t"; done
+for t in "${todo_role[@]}";    do IFS=$'\t' read -r r c w <<<"$t"; echo "role     $r (${c:-none} → $w)"; done
+for t in "${todo_disable[@]}"; do echo "disable  $t"; done
+for t in "${todo_grant[@]}";   do IFS=$'\t' read -r p m <<<"$t"; echo "grant    $p $m"; done
+for t in "${todo_revoke[@]}";  do IFS=$'\t' read -r p m <<<"$t"; echo "revoke   $p $m"; done
+for t in "${todo_idle[@]}";    do echo "idle-ok  $t (battery-optimization exempt)"; done
 for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install by hand (Play/Aurora)"; done
 
 if [ "$plan_lines" -eq 0 ]; then
@@ -80,10 +160,35 @@ fi
 for t in "${todo_install[@]}" "${todo_upgrade[@]}"; do
   IFS=$'\t' read -r pkg _ apk <<<"$t"
   echo "installing $pkg…"
-  "${adb[@]}" install -r --user "$user" "$apk" >/dev/null
+  adb install -r --user "$user" "$apk" >/dev/null
 done
 for pkg in "${todo_remove[@]}"; do
   echo "uninstalling $pkg…"
-  "${adb[@]}" uninstall --user "$user" "$pkg" >/dev/null
+  adb uninstall --user "$user" "$pkg" >/dev/null
+done
+for t in "${todo_setting[@]}"; do
+  IFS=$'\t' read -r ns k _ w <<<"$t"
+  adb shell settings put "$ns" "$k" "$w"
+done
+for t in "${todo_dark[@]}"; do
+  adb shell cmd uimode night "$t" >/dev/null
+done
+for t in "${todo_role[@]}"; do
+  IFS=$'\t' read -r r _ w <<<"$t"
+  adb shell cmd role add-role-holder --user "$user" "$(role_id "$r")" "$w"
+done
+for pkg in "${todo_disable[@]}"; do
+  adb shell pm disable-user --user "$user" "$pkg" >/dev/null
+done
+for t in "${todo_grant[@]}"; do
+  IFS=$'\t' read -r p m <<<"$t"
+  adb shell pm grant --user "$user" "$p" "$m"
+done
+for t in "${todo_revoke[@]}"; do
+  IFS=$'\t' read -r p m <<<"$t"
+  adb shell pm revoke --user "$user" "$p" "$m"
+done
+for pkg in "${todo_idle[@]}"; do
+  adb shell cmd deviceidle whitelist "+$pkg" >/dev/null
 done
 echo "✓ applied $plan_lines changes"

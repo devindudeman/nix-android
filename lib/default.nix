@@ -48,10 +48,38 @@
           v
       ) cfg.apps.release;
 
+      # Sugar options desugar to plain settings keys — zero engine surface.
+      sugarSettings = {
+        global =
+          if cfg.android.privateDns == null then
+            { }
+          else if builtins.elem cfg.android.privateDns [ "off" "opportunistic" ] then
+            { private_dns_mode = cfg.android.privateDns; }
+          else
+            {
+              private_dns_mode = "hostname";
+              private_dns_specifier = cfg.android.privateDns;
+            };
+        secure = lib.optionalAttrs (cfg.android.quickSettings.tiles != null) {
+          sysui_qs_tiles = lib.concatStringsSep "," cfg.android.quickSettings.tiles;
+        };
+        system = { };
+      };
+      settingsFinal = lib.genAttrs [ "global" "secure" "system" ] (
+        ns: lib.mapAttrs (_: v: toString v) (cfg.android.settings.${ns} // sugarSettings.${ns})
+      );
+
       baseManifest = pkgs.writeText "nix-android-${cfg.device.name}-manifest-base.json" (
         builtins.toJSON {
           device = {
             inherit (cfg.device) name user;
+          };
+          android = {
+            settings = settingsFinal;
+            roles = lib.filterAttrs (_: v: v != null) cfg.android.defaultApps;
+            inherit (cfg.android) darkMode permissions;
+            disabled = cfg.android.packages.disabled;
+            deviceidleExempt = cfg.android.batteryOptimization.exempt;
           };
           apps = {
             # One unified list regardless of source — the engine doesn't care

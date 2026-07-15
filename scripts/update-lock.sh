@@ -114,7 +114,7 @@ resolved=$({
     curl -fsSL "$url" -o "$tmp/asset"
     sha=$(sha256sum "$tmp/asset" | cut -d' ' -f1)
     if [[ $url == *.tar.gz ]]; then
-      apkpath=$(tar -tzf "$tmp/asset" | grep '\.apk$' | head -1)
+      apkpath=$(tar -tzf "$tmp/asset" | grep '\.apk$' | head -1 || true)
       [ -n "$apkpath" ] || { echo "no .apk inside $url" >&2; exit 1; }
       tar -xzf "$tmp/asset" -C "$tmp" "$apkpath"
       apkfile="$tmp/$apkpath"
