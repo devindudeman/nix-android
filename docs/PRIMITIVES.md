@@ -93,6 +93,32 @@ belongs to its MDM.
   all-users uninstall on a multi-profile device is cosmetic — verify with a
   user-0 query, not the exit message.
 
+## Session 4 — 2026-07-15 (Phase 2 converge, bench)
+
+**6 converge categories verified idempotent** (plan → apply → re-plan no-op) on
+AOSP 35 bench: `settings put` (global/secure/system), `cmd uimode night`
+(darkMode), private DNS (settings sugar), `pm disable-user` (packages.disabled),
+`pm grant`/`revoke` (permissions), `cmd deviceidle whitelist` (batteryOptimization),
+`cmd role add-role-holder` (defaultApps, read+idempotence — a real role *change*
+needs 2 candidate apps, not on the single-SMS-app image; write was Pixel-verified
+session 1).
+
+**REJECTED: quick-settings tiles.** `settings put secure sysui_qs_tiles`
+accepts a no-op write but **SystemUI reverts any real change** — wrote
+`internet,bt,flashlight,dark`, device snapped back to the full default list.
+Fails read-back/idempotence → not a supported option. Lesson: a no-op write
+succeeding does NOT verify a primitive; test a real change (session-1 marked this
+"verified" on a no-op — wrong). Possible future path: `cmd statusbar`.
+
+**Engine bugs found by the idempotence bar** (all fixed, see DEVELOPING.md
+"Bash gotchas"): adb-wrapper infinite recursion; `IFS=$'\t' read` collapsing
+empty interior fields (→ `settings put key ''`); adb draining while-read stdin.
+
+**Emulator hard-crashed the host once** (host-GPU Vulkan `VulkanAllocateHostMemory`
+balloon → unreclaimable shmem → hang, no OOM log). Fixed operationally: run in a
+memory-capped systemd scope + `-gpu swiftshader_indirect` + foreground binary
+(recipe in DEVELOPING.md). Not a nix-android bug — a bench-operation hazard.
+
 ## Next session
 
 - [ ] Pixel no-op confirmations (with go-ahead): grant-what's-granted, ime-set-current
