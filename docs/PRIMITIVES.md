@@ -36,6 +36,7 @@ on emulator.
 
 | Boundary | Evidence |
 |----------|----------|
+| Work profile: mutations blocked, **inventory readable** | Root cause verified in AOSP UserController: shell is denied `--user` access to users carrying `DISALLOW_DEBUGGING_FEATURES` (set by managed provisioning; Shelter clears other restrictions but not this one — stock Android, not Graphene). BUT `dumpsys package <pkg>` reports per-user `installed=` state with no gate (verified live: GMS user0=false/user10=true) → read-only work-profile inventory works today. Future unlock: profile owner (Shelter patch) could `clearUserRestriction(DISALLOW_DEBUGGING_FEATURES)` — per API docs; untested. |
 | Secondary profiles unreachable | `pm` against user 10 (Work profile) → `SecurityException: Shell does not have permission to access user 10`. Converge scope = owner (user 0) only; Work profile belongs to its MDM; Private space (user 11) presumed same — verify |
 | GrapheneOS per-app exploit protection (memtag etc.) | Not present in any `settings` namespace — storage location unknown, likely out of shell reach. Dig later; provisional LIMITS entry |
 
