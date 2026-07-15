@@ -5,10 +5,11 @@ device toward a version-controlled Nix file over adb at uid 2000 — no root,
 security model untouched. Name is final (chosen 2026-07-15); CLI is
 `android-rebuild`, outputs are `androidConfigurations.<device>`.
 
-- **Read `docs/PLAN.md` first** — phases, architecture (manifest + engine),
-  design decisions. `docs/PRIMITIVES.md` is the verified adb capability matrix;
-  **every module option must cite a verified primitive** — no options for
-  unproven capabilities.
+- **New here? Read `docs/DEVELOPING.md`** (architecture, ground rules, dev
+  loop, how-to-add). `docs/PLAN.md` = roadmap; `docs/USING.md` = user-facing
+  behavior; `docs/PRIMITIVES.md` = verified adb capability matrix — **every
+  module option must cite a verified primitive**, no options for unproven
+  capabilities.
 - **⚠️ Safety protocol (non-negotiable):** Devin's Pixel 6 (GrapheneOS, daily
   use) gets read-only probes and no-op/trivially-reversible round-trips ONLY.
   All mutation-class testing runs on the emulator first

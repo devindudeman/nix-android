@@ -37,6 +37,14 @@ fetched by sha256 into the Nix store — your phone's app payload is a real Nix
 closure. Pins are floors: converge installs and upgrades, never downgrades,
 never fights on-device updaters.
 
+## Docs
+
+- **[docs/USING.md](docs/USING.md)** — user guide: quick start, the full
+  option surface, `import` from an existing phone, semantics and boundaries.
+- **[docs/DEVELOPING.md](docs/DEVELOPING.md)** — contributor guide:
+  architecture, ground rules, the dev loop, how to add options and sources.
+- **[docs/PLAN.md](docs/PLAN.md)** — roadmap · **[docs/PRIMITIVES.md](docs/PRIMITIVES.md)** — verified adb capability matrix.
+
 ## Development
 
 ```bash
