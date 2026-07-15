@@ -20,7 +20,7 @@
         let
           l =
             lock.packages.${p}
-              or (throw "droidnix: '${p}' not in ${baseNameOf lockFile} — run scripts/update-lock.sh ${p}");
+              or (throw "nix-android: '${p}' not in ${baseNameOf lockFile} — run scripts/update-lock.sh ${p}");
         in
         {
           package = p;
@@ -31,7 +31,7 @@
           };
         };
 
-      manifest = pkgs.writeText "droidnix-${cfg.device.name}-manifest.json" (
+      manifest = pkgs.writeText "nix-android-${cfg.device.name}-manifest.json" (
         builtins.toJSON {
           device = {
             inherit (cfg.device) name user;
@@ -44,7 +44,7 @@
       );
 
       converge = pkgs.writeShellApplication {
-        name = "droidnix-converge-${cfg.device.name}";
+        name = "nix-android-converge-${cfg.device.name}";
         runtimeInputs = [
           pkgs.android-tools
           pkgs.jq

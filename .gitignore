@@ -1,2 +1,10 @@
+# devenv / direnv
+/.devenv
+/.devenv.flake.nix
+/.direnv
+devenv.local.nix
+# secrets
+.env
+.env*.local
+# nix
 result
-.direnv

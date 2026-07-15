@@ -1,4 +1,4 @@
-# droidnix task runner — `just` lists recipes
+# nix-android task runner — `just` lists recipes
 
 # build + launch the headless AOSP emulator (the mutation-test bench)
 emu:

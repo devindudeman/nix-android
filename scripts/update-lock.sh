@@ -28,7 +28,7 @@ if [ ${#pkgs[@]} -eq 0 ] && [ -f "$lock" ]; then
 fi
 [ ${#pkgs[@]} -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
 
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/droidnix
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/nix-android
 mkdir -p "$cache"
 
 entry=$(curl -fsS "$repo/entry.json")

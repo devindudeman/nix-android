@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# droidnix converge engine: manifest.json → device, over adb at uid 2000.
+# nix-android converge engine: manifest.json → device, over adb at uid 2000.
 #
 # PLAN by default (prints what would change, touches nothing); --apply executes.
 # Safety posture (docs/PLAN.md): pins are floors — installs and upgrades only,

@@ -15,7 +15,7 @@ settings, permissions, debloat — over plain `adb` (uid 2000, no root, security
 model untouched). `darwin-rebuild switch` for your phone:
 
 ```
-droid-rebuild switch --flake .#pixel
+android-rebuild switch --flake .#pixel
 ```
 
 "Good enough within the environment" is the design creed, exactly as nix-darwin
@@ -69,7 +69,7 @@ rewrite is the named upgrade path if bash parsing pain exceeds ~500 lines.)
 
 ```nix
 # flake.nix (user's phone repo)
-droidConfigurations.pixel = droidnix.lib.mkDevice {
+androidConfigurations.pixel = nix-android.lib.mkDevice {
   modules = [ ./pixel.nix ];
 };
 ```
@@ -113,13 +113,13 @@ droidConfigurations.pixel = droidnix.lib.mkDevice {
 
 | Command | Does |
 |---------|------|
-| `droid-rebuild build` | eval → manifest, fetch APK closure, **print the plan** (diff vs device) — apply nothing |
-| `droid-rebuild switch` | build + apply + record generation |
-| `droid-rebuild import` | **`nixos-generate-config` for phones**: read a connected device (pm list -3 -i, settings, grants) and emit a starter `pixel.nix` — this is the migration-day killer feature and reuses the app-inventory adb work already done |
-| `droid-rebuild update` | refresh the lock file (latest versionCodes/hashes from F-Droid index-v2 + GitHub releases) |
-| `droid-rebuild rollback` | converge to previous generation's manifest |
+| `android-rebuild build` | eval → manifest, fetch APK closure, **print the plan** (diff vs device) — apply nothing |
+| `android-rebuild switch` | build + apply + record generation |
+| `android-rebuild import` | **`nixos-generate-config` for phones**: read a connected device (pm list -3 -i, settings, grants) and emit a starter `pixel.nix` — this is the migration-day killer feature and reuses the app-inventory adb work already done |
+| `android-rebuild update` | refresh the lock file (latest versionCodes/hashes from F-Droid index-v2 + GitHub releases) |
+| `android-rebuild rollback` | converge to previous generation's manifest |
 
-Generations = applied manifests archived in `~/.local/state/droidnix/<device>/`.
+Generations = applied manifests archived in `~/.local/state/nix-android/<device>/`.
 Rollback re-converges to an old manifest — honest about being convergence, not a
 store symlink flip (the device is mutable; we don't pretend otherwise).
 
@@ -194,11 +194,11 @@ patterns are proven and because it *is* going to be consumed from it:
 - **Same hygiene**: treefmt + nixfmt (RFC-166), statix, deadnix pre-commit;
   CLAUDE.md canonical + AGENTS.md symlink (project-setup skill).
 - **GitOps, comin-flavored** (Phase 4): the phone config lives in a git repo;
-  a udev rule + systemd service on the laptops runs `droid-rebuild switch`
+  a udev rule + systemd service on the laptops runs `android-rebuild switch`
   automatically when *your* phone (by serial) is plugged in — comin's
   pull-on-change model with the USB cable as the trigger. Same safety shape
   too: plan-before-apply, generation recorded, converge is idempotent.
-- **Eventually a skill**: a `droidnix` skill in `home/skills/` once the CLI
+- **Eventually a skill**: a `nix-android` skill in `home/skills/` once the CLI
   stabilizes, so every agent can operate the phone config.
 
 ## Phases
@@ -251,7 +251,7 @@ upgrade-to-floor / attended-assert / cleanup-uninstall). Verified: plan → appl
 "uninstall"` → remove → re-converge match). `nix run .#bench -- --serial …`.
 
 Remaining for Phase 1 proper:
-- [ ] `droid-rebuild` CLI wrapper (build|switch|update|import subcommands)
+- [ ] `android-rebuild` CLI wrapper (build|switch|update|import subcommands)
 - [ ] `import`: read a connected device → starter device.nix
 - [ ] GitHub-release app source (`apps.release.*`)
 - [ ] Device-sourced apps (Phase 2+, for migration day): `pm path` + `adb pull`
@@ -280,7 +280,7 @@ documented as such). The blog post writes itself from this day's notes.
 
 ### Phase 4 — portability + polish
 
-Generations/rollback, multi-device (`droidConfigurations.<name>`), the
+Generations/rollback, multi-device (`androidConfigurations.<name>`), the
 on-device Termux+rish engine variant, attended-apps UX, `apps.cleanup =
 "uninstall"` mode, the udev plug-in-to-converge trigger on the laptop fleet
 (comin-flavored GitOps, see above), defensive parsing pinned to the Atlas's
@@ -297,10 +297,11 @@ necessarily build) the device-owner backend.
 
 ## Open questions (decide before their phase, not before starting)
 
-1. **Name.** Working name **droidnix** (rhymes with robotnix, honest about scope).
-   Candidates: `droidnix`, `nix-android`, `adroit` (a-droid, "skillful" — fun,
-   poor discoverability). `nix-droid` rejected: collides with nix-on-droid.
-   Decide by Phase 5; repo rename is cheap before publishing.
+1. **Name: DECIDED 2026-07-15 — `nix-android`**, the literal nix-darwin sibling;
+   CLI `android-rebuild`, `androidConfigurations.<device>` outputs. Devin chose
+   it over the coined candidates (droidnix, adroit, phonix) for maximum
+   discoverability. The README must be up-front that scope = uid-2000 converge
+   on a stock OS (not an OS build — that's robotnix) to earn the canonical name.
 2. **Engine language.** Start bash+jq (ponytail rung 6); named ceiling = parsing
    `dumpsys` in bash. Upgrade path: single static Go binary. Decide when it hurts.
 3. **Emulator CI.** Module-eval + manifest golden tests in `nix flake check` from
