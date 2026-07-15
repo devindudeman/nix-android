@@ -97,8 +97,9 @@ for curation. Curate before converging:
 - **The APK payload is a Nix closure.** Every managed APK is fetched by
   sha256 into the store (F-Droid index chain-of-trust; release assets hashed
   at lock time; local files badging-verified). Offline converge works.
-- **Generations**: each applied manifest is recorded (rollback = converge to
-  a previous manifest; remember floors — rollback can't downgrade).
+- **Generations** (planned, not yet built): applied manifests will be
+  recorded, with rollback = converge to a previous manifest (floors still
+  apply — rollback can't downgrade).
 
 ## What it can NOT do (by design — no root)
 
