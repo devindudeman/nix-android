@@ -25,25 +25,64 @@ Surface size: 333 `cmd` services, 401 settings keys, 35 user apps.
 
 ## Verified LIMITS
 
+## Atlas raw capture (2026-07-15, GrapheneOS 2026071101)
+
+`scripts/atlas-probe.sh` → `~/Documents/phone-migration/probes/`. **335 `cmd`
+services; 134 have no shell interface, ~200 do.** No graphene-named services —
+supports the exploit-protection-out-of-reach hypothesis. New find from the walk:
+`cmd locale` has clean get/set symmetry for **device locale AND per-app locales**
+(`set-app-locales`, `set-device-locale`) — strong module candidate; write test
+on emulator.
+
 | Boundary | Evidence |
 |----------|----------|
 | Secondary profiles unreachable | `pm` against user 10 (Work profile) → `SecurityException: Shell does not have permission to access user 10`. Converge scope = owner (user 0) only; Work profile belongs to its MDM; Private space (user 11) presumed same — verify |
 | GrapheneOS per-app exploit protection (memtag etc.) | Not present in any `settings` namespace — storage location unknown, likely out of shell reach. Dig later; provisional LIMITS entry |
 
+## Session 2 — 2026-07-15 (emulator bench, AOSP API 35 x86_64 userdebug)
+
+Bench: `nix run .#emulator` (headless, KVM on duo). All probes ran with explicit
+`-s emulator-5554`; adb refuses untargeted commands with two devices attached —
+extra guardrail. Test payload: F-Droid.apk (12 MB).
+
+All verified on the bench, full write round-trips:
+
+| Primitive | Result |
+|-----------|--------|
+| Silent `adb install` / `uninstall` / reinstall | ✓ zero prompts, versionCode readable |
+| `pm grant/revoke` (POST_NOTIFICATIONS) | ✓ reflected in dumpsys immediately |
+| `appops set/get` round-trip | ✓ |
+| `ime set` | ✓ "Input method … selected" |
+| `cmd netpolicy add/remove restrict-background-blacklist <uid>` | ✓ |
+| `pm suspend/unsuspend` | ✓ suspended=true visible in pm dump |
+| `cmd locale set-app-locales` set/get/clear | ✓ per-app locale fully scriptable |
+| `cmd package get-app-links` | ✓ read incl. **signer cert hash** — feeds the engine's signature-mismatch detection |
+
+**⚠ Persistence nuance (the session's big find):** after an abrupt `adb reboot`,
+only `settings put` survived — deviceidle whitelist, per-app locale,
+`pm disable-user`, and appops all reverted (while installed apps survived, so
+/data was intact). With a ~90 s settle + graceful `svc power reboot
+userrequested`, **everything persisted**. Interpretation: those subsystems
+write-behind their /data/system XMLs and flush on clean shutdown; the settings
+provider commits synchronously. Engine rules: (1) never hard-reboot right after
+converge; (2) persistence tests must use graceful reboots. Normal power-menu
+reboots are graceful, so real-world risk is low. (Settle-vs-graceful not
+bisected — recipe recorded as both.)
+
+**LIMITS correction:** Private space (user 11) **is shell-enumerable** on the
+Pixel (`pm list packages --user 11` works) — unlike the Work profile (user 10,
+SecurityException). Scope: owner + Private space manageable; Work profile
+belongs to its MDM.
+
 ## Next session
 
-> **Safety protocol applies (PLAN §Phase 0): the Pixel 6 is daily-use hardware.**
-> Emulator-first for anything below marked (emu); Pixel only gets no-op /
-> new-state-reversible probes, with explicit go-ahead per mutation class.
-
-- [ ] Set up AOSP emulator on duo (KVM) — the free-fire lane
-- [ ] (emu) `pm grant/revoke` round-trip; then Pixel: grant-what's-already-granted no-op only
-- [ ] (emu) `ime set-default` round-trip
-- [ ] (emu→pixel, with go-ahead) silent `adb install` + uninstall of a tiny NEW F-Droid APK — never touches existing apps
-- [ ] (emu) `appops set`, `cmd netpolicy`, `pm suspend/hide`, `cmd package set-app-links`
-- [ ] (emu) reboot-persistence pass for everything above
-- [ ] Atlas probe script: walk `cmd -l` help texts → classification skeleton (read-only, Pixel OK)
-- [ ] Private space (user 11) accessibility check (read-only)
+- [ ] Pixel no-op confirmations (with go-ahead): grant-what's-granted, ime-set-current
+- [ ] (emu) `pm hide`, `cmd package set-app-links --package` write side
+- [ ] (emu) `cmd role` write round-trip (role service on emulator), `settings put system`
+- [ ] F-Droid index-v2 → versionCode/APK-URL/sha256 resolution (pure curl+jq, no device)
+- [ ] Obtainium export round-trip (has an app list on the Pixel? read-only export)
+- [ ] Atlas classification pass: cmd-help.txt → docs/ATLAS.md skeleton
+- [ ] **Phase 1 start**: module system skeleton (`lib.evalModules` → manifest.json golden test)
 
 Deprioritized: Wi-Fi module (verified working, stays a feature, not on Devin's
 personal critical path).
