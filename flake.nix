@@ -96,7 +96,9 @@
               aapt
             ];
             git-hooks.hooks = {
-              nixfmt-rfc-style.enable = true;
+              # `nixfmt` = pkgs.nixfmt (the RFC-style formatter); the old
+              # `nixfmt-rfc-style` alias now warns on eval.
+              nixfmt.enable = true;
               statix.enable = true;
               deadnix.enable = true;
               shellcheck.enable = true;
