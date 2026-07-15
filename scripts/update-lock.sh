@@ -24,19 +24,22 @@ lock=apps.lock.json
 abi=arm64-v8a
 pkgs=()
 ghspecs=()
+gtspecs=()
 while [ $# -gt 0 ]; do
   case $1 in
   --lock) lock=$2; shift 2 ;;
   --abi) abi=$2; shift 2 ;;
   --github) ghspecs+=("$2"); shift 2 ;;
+  --gitea) gtspecs+=("$2"); shift 2 ;;
   *) pkgs+=("$1"); shift ;;
   esac
 done
-if [ ${#pkgs[@]} -eq 0 ] && [ ${#ghspecs[@]} -eq 0 ] && [ -f "$lock" ]; then
+if [ ${#pkgs[@]} -eq 0 ] && [ ${#ghspecs[@]} -eq 0 ] && [ ${#gtspecs[@]} -eq 0 ] && [ -f "$lock" ]; then
   mapfile -t pkgs < <(jq -r '.packages | to_entries[] | select(.value.source == null) | .key' "$lock")
-  mapfile -t ghspecs < <(jq -r '.packages | to_entries[] | select(.value.source != null) | "\(.key)=\(.value.source | sub("^github:"; ""))"' "$lock")
+  mapfile -t ghspecs < <(jq -r '.packages | to_entries[] | select(.value.source // "" | startswith("github:")) | "\(.key)=\(.value.source | sub("^github:"; ""))"' "$lock")
+  mapfile -t gtspecs < <(jq -r '.packages | to_entries[] | select(.value.source // "" | startswith("gitea:")) | "\(.key)=\(.value.source | sub("^gitea:"; ""))"' "$lock")
 fi
-[ $(( ${#pkgs[@]} + ${#ghspecs[@]} )) -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
+[ $(( ${#pkgs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
 
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/nix-android
 mkdir -p "$cache"
@@ -68,25 +71,51 @@ resolved=$({
         }}' "$index"
   done
 
-  for spec in "${ghspecs[@]}"; do
-    p=${spec%%=*} gh=${spec#*=}
-    rel=$(curl -fsS "https://api.github.com/repos/$gh/releases/latest")
-    # Prefer a universal APK (no abi in the asset name); fall back to $abi-suffixed.
+  # Shared resolver for GitHub + Gitea releases (compatible asset JSON shape).
+  # Assets may be bare .apk or a .tar.gz containing one (recorded as apkPath).
+  resolve_release() { # $1=pkg $2=api-url $3=source-tag
+    local p=$1 api=$2 srctag=$3 rel url tmp apkfile apkpath="" sha badging got_pkg
+    rel=$(curl -fsS "$api")
+    # Prefer a universal APK (no abi in the name) → abi-suffixed APK →
+    # abi-matching .tar.gz → universal .tar.gz.
     url=$(jq -r --arg abi "$abi" '
       [.assets[] | select(.name | endswith(".apk"))] as $apks
-      | ([$apks[] | select(.name | test("arm64|armeabi|x86") | not)] + [$apks[] | select(.name | contains($abi))])
-      | .[0].browser_download_url // error("no suitable .apk asset")' <<<"$rel")
-    tmp=$(mktemp --suffix=.apk)
-    curl -fsSL "$url" -o "$tmp"
-    sha=$(sha256sum "$tmp" | cut -d' ' -f1)
-    badging=$(aapt2 dump badging "$tmp")
-    rm -f "$tmp"
+      | [.assets[] | select(.name | endswith(".tar.gz"))] as $tars
+      | ([$apks[] | select(.name | test("arm64|armeabi|x86") | not)]
+         + [$apks[] | select(.name | contains($abi))]
+         + [$tars[] | select(.name | contains($abi))]
+         + [$tars[] | select(.name | test("arm64|armeabi|x86") | not)])
+      | .[0].browser_download_url // error("no suitable .apk/.tar.gz asset")' <<<"$rel")
+    tmp=$(mktemp -d)
+    curl -fsSL "$url" -o "$tmp/asset"
+    sha=$(sha256sum "$tmp/asset" | cut -d' ' -f1)
+    if [[ $url == *.tar.gz ]]; then
+      apkpath=$(tar -tzf "$tmp/asset" | grep '\.apk$' | head -1)
+      [ -n "$apkpath" ] || { echo "no .apk inside $url" >&2; exit 1; }
+      tar -xzf "$tmp/asset" -C "$tmp" "$apkpath"
+      apkfile="$tmp/$apkpath"
+    else
+      apkfile="$tmp/asset"
+    fi
+    badging=$(aapt2 dump badging "$apkfile")
+    rm -rf "$tmp"
     got_pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
-    [ "$got_pkg" = "$p" ] || { echo "package mismatch for $gh: declared $p, APK says $got_pkg" >&2; exit 1; }
-    jq -n --arg p "$p" --arg gh "$gh" --arg url "$url" --arg sha "$sha" \
+    [ "$got_pkg" = "$p" ] || { echo "package mismatch for $srctag: declared $p, APK says $got_pkg" >&2; exit 1; }
+    jq -n --arg p "$p" --arg src "$srctag" --arg url "$url" --arg sha "$sha" --arg apkpath "$apkpath" \
       --arg code "$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$badging")" \
       --arg name "$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")" \
-      '{($p): {versionCode: ($code | tonumber), versionName: $name, url: $url, sha256: $sha, source: ("github:" + $gh)}}'
+      '{($p): ({versionCode: ($code | tonumber), versionName: $name, url: $url, sha256: $sha, source: $src}
+               + (if $apkpath != "" then {apkPath: $apkpath} else {} end))}'
+  }
+
+  for spec in "${ghspecs[@]}"; do
+    p=${spec%%=*} gh=${spec#*=}
+    resolve_release "$p" "https://api.github.com/repos/$gh/releases/latest" "github:$gh"
+  done
+  for spec in "${gtspecs[@]}"; do
+    p=${spec%%=*} gt=${spec#*=} # host/owner/repo
+    host=${gt%%/*} orepo=${gt#*/}
+    resolve_release "$p" "https://$host/api/v1/repos/$orepo/releases/latest" "gitea:$gt"
   done
 } | jq -s 'add')
 

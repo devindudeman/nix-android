@@ -7,4 +7,6 @@
     "com.termux"
   ];
   apps.release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
+  # Archive-wrapped release: the .tar.gz asset contains plezy.apk.
+  apps.release."com.edde746.plezy".github = "edde746/plezy";
 }

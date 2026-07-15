@@ -35,14 +35,36 @@
         type =
           with lib.types;
           attrsOf (submodule {
-            options.github = lib.mkOption {
-              type = str;
-              description = "owner/repo whose GitHub releases ship this package's APK.";
-              example = "ImranR98/Obtainium";
+            options = {
+              github = lib.mkOption {
+                type = nullOr str;
+                default = null;
+                description = "owner/repo whose GitHub releases ship this package's APK.";
+                example = "ImranR98/Obtainium";
+              };
+              gitea = lib.mkOption {
+                type = nullOr str;
+                default = null;
+                description = "host/owner/repo on a Gitea instance whose releases ship this package's APK (anonymous read).";
+                example = "git.example.com/owner/repo";
+              };
             };
           });
         default = { };
-        description = "Apps installed from GitHub release APKs (Obtainium-style), keyed by Android package id, pinned via apps.lock.json.";
+        description = "Apps installed from GitHub/Gitea release APKs (Obtainium-style), keyed by Android package id, pinned via apps.lock.json. Exactly one of github/gitea per app. Release assets may be bare .apk or a .tar.gz containing one.";
+      };
+
+      local = lib.mkOption {
+        type =
+          with lib.types;
+          attrsOf (submodule {
+            options.apk = lib.mkOption {
+              type = path;
+              description = "Absolute path to a locally-built/self-signed APK (kept OUTSIDE the repo — the store copy is fine, a public git history is not). versionCode and package id are read from the APK at build time via aapt2; a package-id mismatch fails the build.";
+            };
+          });
+        default = { };
+        description = "Self-built / device-extracted APKs, keyed by Android package id. No lock entry — the APK file IS the pin.";
       };
 
       attended = lib.mkOption {

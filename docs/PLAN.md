@@ -259,6 +259,13 @@ Remaining for Phase 1 proper:
       aapt2 reads versionCode + verifies package id from the APK; unified
       `apps.managed` manifest list; Obtainium installs on bench
 - [x] devenv/pre-commit hygiene (flake-parts + devenv, name finalized nix-android)
+- [x] `apps.release.<pkg>.gitea` — Gitea-instance releases (same resolver, host
+      in the value; keep private hosts out of committed examples)
+- [x] Archive-wrapped release assets (.tar.gz containing an .apk): lock records
+      `apkPath`, store extraction at manifest build (plezy on bench)
+- [x] `apps.local.<pkg>.apk = /abs/path` — self-built APKs; aapt2 badging at
+      build time, package-id mismatch fails the build (this is also the future
+      substrate for device-extracted attended apps)
 - [ ] Device-sourced apps (Phase 2+, for migration day): `pm path` + `adb pull`
       extracts installed APKs (incl. splits) from the old device,
       `install-multiple` onto the new — signature preserved, so Aurora/Play

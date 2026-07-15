@@ -20,6 +20,14 @@
       "url": "https://github.com/ImranR98/Obtainium/releases/download/v1.6.5/app-fdroid-release.apk",
       "sha256": "52b7a83365277ab083de67eebc71b47096b6a7c97093a629ac455e3e35fe1a7c",
       "source": "github:ImranR98/Obtainium"
+    },
+    "com.edde746.plezy": {
+      "versionCode": 4121,
+      "versionName": "2.9.1",
+      "url": "https://github.com/edde746/plezy/releases/download/2.9.1/plezy-android-x86_64.tar.gz",
+      "sha256": "0350a5e6c3bd8f62745b401e74c0f0f15887a9cfa7fd358be3a59ec1c986fc07",
+      "source": "github:edde746/plezy",
+      "apkPath": "plezy.apk"
     }
   }
 }

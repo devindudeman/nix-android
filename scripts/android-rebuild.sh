@@ -50,8 +50,11 @@ plan | switch)
 update)
   abi=$(nix eval "${nixargs[@]}" "$attr.config.device.abi" --raw 2>/dev/null || echo arm64-v8a)
   mapfile -t fdroid < <(nix eval "${nixargs[@]}" "$attr.config.apps.fdroid.packages" --json | jq -r '.[]')
-  mapfile -t ghspecs < <(nix eval "${nixargs[@]}" "$attr.config.apps.release" --json | jq -r 'to_entries[] | "--github\n\(.key)=\(.value.github)"')
-  exec bash "$src/scripts/update-lock.sh" --abi "$abi" "${fdroid[@]}" "${ghspecs[@]}"
+  mapfile -t relspecs < <(nix eval "${nixargs[@]}" "$attr.config.apps.release" --json | jq -r '
+    to_entries[] | if .value.github != null
+      then "--github\n\(.key)=\(.value.github)"
+      else "--gitea\n\(.key)=\(.value.gitea)" end')
+  exec bash "$src/scripts/update-lock.sh" --abi "$abi" "${fdroid[@]}" "${relspecs[@]}"
   ;;
 import)
   exec bash "$src/scripts/import.sh" "${engine_args[@]}"
