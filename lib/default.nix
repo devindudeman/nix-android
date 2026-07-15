@@ -60,9 +60,7 @@
               private_dns_mode = "hostname";
               private_dns_specifier = cfg.android.privateDns;
             };
-        secure = lib.optionalAttrs (cfg.android.quickSettings.tiles != null) {
-          sysui_qs_tiles = lib.concatStringsSep "," cfg.android.quickSettings.tiles;
-        };
+        secure = { };
         system = { };
       };
       settingsFinal = lib.genAttrs [ "global" "secure" "system" ] (

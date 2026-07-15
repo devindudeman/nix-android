@@ -15,12 +15,6 @@
     settings.global.stay_on_while_plugged_in = 3;
     darkMode = true;
     privateDns = "opportunistic";
-    quickSettings.tiles = [
-      "internet"
-      "bt"
-      "flashlight"
-      "dark"
-    ];
     packages.disabled = [ "com.android.egg" ];
     permissions."org.fdroid.fdroid".grant = [ "android.permission.POST_NOTIFICATIONS" ];
     batteryOptimization.exempt = [ "com.termux" ];

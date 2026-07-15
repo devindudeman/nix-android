@@ -126,12 +126,6 @@
         example = "dns.example.com";
       };
 
-      quickSettings.tiles = lib.mkOption {
-        type = with lib.types; nullOr (listOf str);
-        default = null;
-        description = "Exact quick-settings tile layout (sugar over settings.secure.sysui_qs_tiles). Tile names as in `settings get secure sysui_qs_tiles`, incl. custom(...) third-party tiles. null = unmanaged.";
-      };
-
       defaultApps = lib.genAttrs [ "browser" "sms" "dialer" "home" ] (role: lib.mkOption {
         type = with lib.types; nullOr str;
         default = null;
