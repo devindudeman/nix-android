@@ -81,6 +81,7 @@ cache.
 - [docs/DEVELOPING.md](docs/DEVELOPING.md) — architecture, checks, and emulator
   workflow
 - [docs/PRIMITIVES.md](docs/PRIMITIVES.md) — device-tested adb capability matrix
+- [docs/IMPORT.md](docs/IMPORT.md) — faithful import model, schema, and prior art
 - [docs/PLAN.md](docs/PLAN.md) — release gate and post-0.1 roadmap
 
 nix-android can be its own configuration flake or an input to an existing

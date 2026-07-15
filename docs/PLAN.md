@@ -30,7 +30,8 @@ The alpha is ready only when all of these are true:
 - [x] Apple Silicon Darwin packages and device-free checks build on a real Mac
       or the `macos-15` CI runner.
 - [x] Two consecutive fresh AOSP benches pass plan → switch → direct
-      verification → no-op plan → graceful reboot → no-op plan → clean teardown.
+      verification → no-op plan → graceful reboot → no-op plan → structured
+      import coverage → clean teardown.
 - [x] Negative bench tests prove ABI mismatch and missing attended apps abort
       before writes, and a setting containing spaces survives remote quoting.
 - [x] A clean-clone audit contains no personal capture, absolute generated
@@ -70,7 +71,7 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 
 ### Tooling and safety
 
-- read-only import of ABI and third-party app inventory
+- read-only, versioned package-protobuf snapshot and conservative app import
 - read-only Atlas capture with one explicit serial and no stdin-drain truncation
 - x86_64 AOSP emulator bench
 - formatter, shellcheck, statix, deadnix, manifest, parser, signed-lock,
@@ -87,7 +88,8 @@ These are useful but are not allowed to delay a small, honest initial release:
 - applied-state receipts and generations; any rollback must document that it
   cannot restore app data, downgrade packages, or invert ensure-only state
 - split APK/device-extracted app migration
-- improved attended-app import and curation UX
+- targeted import of already-supported Android state and explicit curation report
+- optional credential-free App Manager and Obtainium export adapters
 - optional device product/serial identity guards without forcing identifiers
   into public configuration
 - multi-user work after per-version owner/Private-Space/work-profile testing

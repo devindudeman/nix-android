@@ -180,6 +180,20 @@ for run in $(seq 1 "$runs"); do
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
 
+  # Import must survive the real AOSP package proto and represent every
+  # managed-user third-party app conservatively as attended.
+  imported=$tmp/imported-$run.nix
+  snapshot=$tmp/snapshot-$run.json
+  nix run .#android-rebuild --accept-flake-config -- \
+    import --serial "$serial" --snapshot-out "$snapshot" > "$imported"
+  jq -e '.schemaVersion == 1 and .device.abi == "x86_64"' "$snapshot" >/dev/null
+  jq -S '[.packages[] | select(.thirdPartyForManagedUser) | .name]' \
+    "$snapshot" > "$tmp/snapshot-attended-$run.json"
+  nix eval --impure --json --expr "(import $imported).apps.attended" \
+    > "$tmp/generated-attended-$run.json"
+  jq -S . "$tmp/generated-attended-$run.json" > "$tmp/generated-attended-sorted-$run.json"
+  cmp "$tmp/snapshot-attended-$run.json" "$tmp/generated-attended-sorted-$run.json"
+
   run_root=$(cat "$root_file")
   adb emu kill >/dev/null
   wait "$launcher_pid"

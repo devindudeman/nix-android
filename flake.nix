@@ -71,6 +71,7 @@
               abiVersions = [ "x86_64" ];
             }).androidsdk;
           androidSdkRoot = "${androidSdk}/libexec/android-sdk";
+          importPython = pkgs.python3.withPackages (python: [ python.protobuf ]);
         in
         {
           packages = rec {
@@ -99,6 +100,7 @@
                 jq
                 coreutils
                 gnused
+                importPython
               ];
               text = ''
                 export NIX_ANDROID_SRC=${inputs.self}
@@ -109,7 +111,8 @@
             default = android-rebuild;
           }
           // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-            # `nix run .#bench -- [--apply]` — converge the emulator bench device.
+            # `nix run .#bench -- --serial emulator-5554 [--apply]` — converge
+            # the emulator bench device.
             bench = inputs.self.androidConfigurations.bench.converge;
 
             # Test bench: headless AOSP emulator (the "free-fire lane" —
@@ -214,8 +217,18 @@
               ! "$cli" import >/dev/null 2>&1
               ! "$cli" unknown >/dev/null 2>&1
               ! "$cli" build --flake >/dev/null 2>&1
+              ! "$cli" build --flake x#bench --lock nope.json >/dev/null 2>lock-err
+              grep -q 'only valid with update' lock-err
+              ! "$cli" build --flake x#bench --snapshot-out nope.json >/dev/null 2>snapshot-err
+              grep -q 'only valid with import' snapshot-err
               touch $out
             '';
+            import-snapshot =
+              pkgs.runCommand "nix-android-import-snapshot" { nativeBuildInputs = [ importPython ]; }
+                ''
+                  python3 ${inputs.self}/scripts/test-package-snapshot.py
+                  touch $out
+                '';
             manifest-safety =
               pkgs.runCommand "nix-android-manifest-safety" { nativeBuildInputs = [ pkgs.jq ]; }
                 ''
@@ -392,6 +405,37 @@
                 device.abi = "x86_64";
                 android.settings.global.example = "null";
               };
+              # `.config` is gated by the lock-independent checks (android-rebuild
+              # update reads it) …
+              assert
+                !(builtins.tryEval
+                  (inputs.self.lib.mkDevice {
+                    inherit system;
+                    modules = [
+                      {
+                        device.name = "config-gate";
+                        device.abi = "x86_64";
+                        apps.attended = [ "not a package" ];
+                      }
+                    ];
+                    lockFile = ./apps.lock.json;
+                  }).config.device.name
+                ).success;
+              # … but not by the lock/abi comparison, so `update` still works
+              # against a stale lock.
+              assert
+                (builtins.tryEval
+                  (inputs.self.lib.mkDevice {
+                    inherit system;
+                    modules = [
+                      {
+                        device.name = "stale-lock-config";
+                        device.abi = "arm64-v8a";
+                      }
+                    ];
+                    lockFile = ./apps.lock.json;
+                  }).config.device.abi
+                ).success;
               pkgs.runCommand "nix-android-validation" { } "touch $out";
           }
           // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
@@ -416,6 +460,7 @@
               jq
               aapt
               just
+              importPython
             ];
             git-hooks.hooks = {
               # `nixfmt` = pkgs.nixfmt (the RFC-style formatter); the old

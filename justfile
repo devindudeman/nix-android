@@ -18,9 +18,10 @@ fmt:
 
 # public release checks (whole-flake check is blocked by devenv task evaluation)
 check:
-    system=$(nix eval --impure --raw --expr builtins.currentSystem); \
+    set -e; system=$(nix eval --impure --raw --expr builtins.currentSystem); \
       nix build ".#checks.$system.formatting" ".#checks.$system.shellcheck" ".#checks.$system.statix" \
         ".#checks.$system.deadnix" ".#checks.$system.cli-safety" ".#checks.$system.manifest-safety" \
-        ".#checks.$system.update-lock-safety" ".#checks.$system.validation" --accept-flake-config --no-link; \
+        ".#checks.$system.import-snapshot" ".#checks.$system.update-lock-safety" ".#checks.$system.validation" \
+        --accept-flake-config --no-link; \
       if [ "$system" = x86_64-linux ]; then nix build .#checks.x86_64-linux.bench-manifest --accept-flake-config --no-link; fi; \
       if [ "$system" = aarch64-darwin ]; then nix build .#checks.aarch64-darwin.{darwin-manifest,darwin-converge} --accept-flake-config --no-link; fi

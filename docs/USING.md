@@ -74,8 +74,10 @@ git add apps.lock.json
 `build` prints the manifest's Nix store path; open that printed file to inspect
 the JSON.
 
-Use `--lock PATH` when the lock is not `./apps.lock.json`; the path is resolved
-from the directory where `android-rebuild` runs.
+`update` accepts `--lock PATH` when the lock is not `./apps.lock.json`; the
+path is resolved from the directory where `android-rebuild` runs. `build`,
+`plan`, and `switch` always read the lock pinned by `mkDevice.lockFile` and
+reject `--lock`.
 
 ## Add nix-android to an existing flake
 
@@ -260,8 +262,8 @@ and compares `device.abi` with `ro.product.cpu.abi` on the selected target.
 `plan` is device-read-only, although Nix may fetch or build missing store paths
 on the controller. `switch` computes the same plan and applies it. Review every
 line before switching a real device, then run `plan` again; a converged device
-prints `device matches manifest`. Missing attended apps abort before any device
-writes.
+prints `✓ device matches manifest`. Missing attended apps abort before any
+device writes.
 
 `switch` is sequential, not transactional. If a later adb action fails, earlier
 actions remain applied; re-run `plan` to see the remainder. Managed permission
@@ -277,17 +279,30 @@ use `adb -s emulator-5554 shell svc power reboot userrequested`.
 ## Import an existing phone
 
 ```console
+(umask 077
 nix run .#android-rebuild -- \
-  import --serial SERIAL > imported-pixel.nix
+  import --serial SERIAL > imported-pixel.nix)
+
+# Optional: also preserve the normalized evidence outside the public checkout.
+(umask 077
+nix run .#android-rebuild -- \
+  import --serial SERIAL \
+  --snapshot-out ~/Documents/phone-migration/pixel.snapshot.json \
+  > imported-pixel.nix)
 ```
 
-Import is read-only and currently captures the ABI and third-party app
-inventory. Installer attribution classifies likely main-F-Droid, Play/Aurora,
-and Obtainium apps; unknowns become comments. It cannot infer which third-party
-F-Droid repository a client used, so curate every generated source before
-updating the lock. The generated inventory is personal data: keep the raw output
-out of a public repository and copy only declarations you deliberately choose
-to publish.
+Import is read-only. It decodes AOSP's structured package dump into a versioned
+snapshot containing package versions, split and per-user state, install-source
+evidence, and granted runtime-permission observations. The generated Nix is
+more conservative: every managed-user third-party app becomes an attended
+presence assertion, while likely main-F-Droid and Obtainium entries appear
+only as commented curation candidates. Installer attribution cannot prove a
+repository, release URL, or signing trust anchor.
+
+The snapshot and generated inventory are personal data. Keep both out of a
+public repository and copy only declarations you deliberately choose to
+publish. See [IMPORT.md](./IMPORT.md) for the schema, evidence boundaries, and
+planned adapters.
 
 ## Lock and signature behavior
 

@@ -132,7 +132,10 @@
           };
         }) cfg.apps.release
       );
-      validated =
+      # Lock-independent checks. `android-rebuild update` reads `config`, and
+      # updating is the documented fix for a stale lock — so the lock/abi
+      # comparison lives in `validated` below, not here.
+      validatedConfig =
         if builtins.match "[A-Za-z0-9._-]+" cfg.device.name == null then
           throw "nix-android: device.name must contain only letters, numbers, dot, underscore, or hyphen"
         else if cfg.device.user != 0 then
@@ -141,8 +144,6 @@
           throw "nix-android: invalid Android package names: ${lib.concatStringsSep ", " (lib.unique invalidPackageNames)}"
         else if invalidPermissionNames != [ ] then
           throw "nix-android: invalid Android permission names: ${lib.concatStringsSep ", " (lib.unique invalidPermissionNames)}"
-        else if (lock.abi or null) != cfg.device.abi then
-          throw "nix-android: ${baseNameOf lockFile} targets '${lock.abi or "unknown"}', but device.abi is '${cfg.device.abi}' — run android-rebuild update"
         else if duplicateApps != [ ] then
           throw "nix-android: each app must have exactly one source; duplicate declarations: ${lib.concatStringsSep ", " duplicateApps}"
         else if permissionConflicts != [ ] then
@@ -159,6 +160,11 @@
           throw "nix-android: raw settings require safe keys and nonempty values other than literal 'null'"
         else
           true;
+      validated =
+        if (lock.abi or null) != cfg.device.abi then
+          throw "nix-android: ${baseNameOf lockFile} targets '${lock.abi or "unknown"}', but device.abi is '${cfg.device.abi}' — run android-rebuild update"
+        else
+          validatedConfig;
 
       fetchApk =
         p:
@@ -295,6 +301,6 @@
     in
     {
       inherit manifest converge;
-      config = cfg;
+      config = builtins.seq validatedConfig cfg;
     };
 }

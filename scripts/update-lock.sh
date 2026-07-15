@@ -2,13 +2,17 @@
 # Resolve F-Droid packages to pinned {versionCode, versionName, url, sha256}
 # and write the lock file Nix reads to fetch APKs into the store.
 #
-# Usage: update-lock.sh --lock apps.lock.json [--abi arm64-v8a] \
+# Usage: update-lock.sh --lock apps.lock.json [--abi arm64-v8a] [--replace] \
 #          [pkg ...] [--fdroid pkg repo-url fingerprint ...] [--github pkg=owner/repo ...] \
 #          [--gitea pkg=host/owner/repo ...]
 #   Plain pkg args resolve against f-droid.org; --fdroid pins a package to a
 #   third-party F-Droid repo and authenticates its signed entry.jar using the
 #   repository certificate's SHA-256 fingerprint (64 hex characters).
-#   With no packages given, refreshes every package already in the lock.
+#   With no packages given, refreshes every package already in the lock,
+#   keeping the lock's recorded ABI unless --abi overrides it.
+#   Resolved entries MERGE into an existing same-ABI lock; --replace rewrites
+#   the lock to exactly the given set (android-rebuild update passes it, since
+#   the config is the authoritative full set).
 #
 # Chain of trust: the repository certificate signs entry.jar; entry.json inside
 # carries index-v2.json's sha256; each APK's sha256 then lands in the lock for
@@ -30,6 +34,8 @@ repo=https://f-droid.org/repo
 repo_fingerprint=43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab
 lock=apps.lock.json
 abi=arm64-v8a
+abi_set=0
+replace=0
 US=$'\037'
 pkgs=()
 fspecs=()
@@ -74,7 +80,10 @@ while [ $# -gt 0 ]; do
     ;;
   --abi)
     [ $# -ge 2 ] || { echo "--abi requires a value" >&2; exit 2; }
-    abi=$2; shift 2
+    abi=$2; abi_set=1; shift 2
+    ;;
+  --replace)
+    replace=1; shift
     ;;
   --fdroid)
     [ $# -ge 4 ] || { echo "--fdroid requires: PACKAGE REPO_URL FINGERPRINT" >&2; exit 2; }
@@ -132,8 +141,21 @@ if [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -eq 0 
   done < <(jq -r '.fdroid[] | @tsv' <<<"$refresh")
   mapfile -t ghspecs < <(jq -r '.github[]' <<<"$refresh")
   mapfile -t gtspecs < <(jq -r '.gitea[]' <<<"$refresh")
+  [ "$abi_set" -eq 1 ] || abi=$(jq -r '.abi' "$lock")
 fi
 [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
+
+# Entries resolved for one ABI must never silently coexist with (or silently
+# drop) entries locked for another.
+existing='{}'
+if [ "$replace" -eq 0 ] && [ -f "$lock" ]; then
+  prev_abi=$(jq -r '.abi // empty' "$lock")
+  if [ "$prev_abi" != "$abi" ]; then
+    echo "cannot merge into $lock: it targets abi '${prev_abi:-unknown}', not '$abi' — pass --replace to rewrite it" >&2
+    exit 1
+  fi
+  existing=$(jq '.packages // {}' "$lock")
+fi
 
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/nix-android
 mkdir -p "$cache"
@@ -286,8 +308,8 @@ actual=$(jq -r 'length' <<<"$resolved")
 
 lock_tmp="$lock.tmp.$$"
 trap 'rm -f "$lock_tmp"' EXIT
-jq -n --argjson packages "$resolved" --arg abi "$abi" --arg ts "$(date +%s)" \
-  '{abi: $abi, lockedAt: ($ts | tonumber), packages: $packages}' > "$lock_tmp"
+jq -n --argjson existing "$existing" --argjson packages "$resolved" --arg abi "$abi" --arg ts "$(date +%s)" \
+  '{abi: $abi, lockedAt: ($ts | tonumber), packages: ($existing + $packages)}' > "$lock_tmp"
 mv "$lock_tmp" "$lock"
 trap - EXIT
 echo "wrote $lock ($(jq -r '.packages | length' "$lock") packages, abi=$abi)"

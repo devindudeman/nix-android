@@ -1,14 +1,15 @@
 # Developing nix-android
 
-Read [PRIMITIVES.md](./PRIMITIVES.md) before adding an option and
-[LIMITS.md](./LIMITS.md) before widening scope.
+Read [PRIMITIVES.md](./PRIMITIVES.md) before adding an option,
+[LIMITS.md](./LIMITS.md) before widening scope, and [IMPORT.md](./IMPORT.md)
+before changing device discovery or generated declarations.
 
 ## Architecture
 
 ```text
-device.nix ── evalModules ──> manifest.json ── converge.sh ──> adb ──> device
-              typed config     pure data         plan/apply
-              + locked APKs    + store paths     no Nix logic
+devices/<name>.nix ── evalModules ──> manifest.json ── converge.sh ──> adb ──> device
++ modules/options.nix  typed config     pure data         plan/apply
+                       + locked APKs    + store paths     no Nix logic
 ```
 
 The manifest/engine split is load-bearing. Nix owns option types, assertions,
@@ -25,10 +26,11 @@ and writes only with `--apply`. Keep source-specific logic out of the engine.
 | `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
 | `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, and `import` CLI |
 | `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
-| `scripts/import.sh` | Read-only installed-app inventory to starter Nix |
+| `scripts/import.sh` | Read-only capture orchestration and starter Nix rendering |
+| `scripts/package-snapshot.py` | AOSP package-protobuf decoder and normalized snapshot writer |
 | `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
-| `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, and atomic-failure resolver tests |
+| `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, atomic-failure, and lock merge/replace resolver tests |
 | `devices/bench.nix` | x86_64 AOSP mutation-test configuration |
 | `.github/workflows/ci.yml` | x86_64 Linux checks and Apple Silicon package/CLI gate |
 
@@ -67,7 +69,7 @@ For a clean CI-equivalent Linux run:
 
 ```console
 nix build \
-  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,update-lock-safety,validation} \
+  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,import-snapshot,update-lock-safety,validation} \
   --accept-flake-config --no-link
 nix build \
   .#packages.x86_64-linux.{android-rebuild,update-lock} \
@@ -114,9 +116,10 @@ The release persistence pass is:
 
 Run that gate twice on independent fresh userdata with `just bench-e2e 2`.
 It owns emulator-5554, enforces boot/readiness deadlines, verifies exact state,
-requires a new boot ID after graceful reboot, removes each temporary AVD, and
-waits for the ADB transport to disappear. Both cycles must pass before any
-real-phone mutation is proposed.
+requires a new boot ID after graceful reboot, exercises the structured importer
+and its attended-app coverage, removes each temporary AVD, and waits for the ADB
+transport to disappear. Both cycles must pass before any real-phone mutation is
+proposed.
 
 ## Engine traps already found
 

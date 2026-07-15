@@ -37,7 +37,7 @@
           attrsOf (submodule {
             options = {
               url = lib.mkOption {
-                type = str;
+                type = strMatching "https?://[^[:space:]]+";
                 description = "Base repo URL (serves signed entry.jar and index-v2.json).";
                 example = "https://app.futo.org/fdroid/repo";
               };
@@ -90,7 +90,7 @@
             };
           });
         default = { };
-        description = "Self-built / device-extracted APKs, keyed by Android package id. No lock entry — the APK file IS the pin.";
+        description = "Self-built / locally sourced APKs, keyed by Android package id. No lock entry — the APK file IS the pin. (Pulling APKs off a device is out of scope; see docs/LIMITS.md.)";
       };
 
       attended = lib.mkOption {

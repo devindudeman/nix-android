@@ -28,6 +28,15 @@ jq -n --arg preferred "$preferred" --arg other "$other" --arg sha "$apk_sha" '{
           file: {name: "/org.example.test_9.apk", sha256: $sha}
         }
       }
+    },
+    "org.example.second": {
+      versions: {
+        only: {
+          releaseChannels: [],
+          manifest: {versionCode: 3, versionName: "3", nativecode: [], signer: {sha256: [$preferred]}},
+          file: {name: "/org.example.second_3.apk", sha256: $sha}
+        }
+      }
     }
   }
 }' > "$repo/index-v2.json"
@@ -53,6 +62,24 @@ jq -e --arg preferred "$preferred" '
     and .preferredSigner == $preferred
     and .signerSha256 == [$preferred]
 ' "$tmp/lock.json" >/dev/null
+
+# Partial invocations merge into a same-ABI lock instead of wiping it;
+# cross-ABI merges fail closed; --replace rewrites; a no-arg refresh keeps
+# the lock's recorded ABI.
+XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+  --abi x86_64 --fdroid org.example.second "$repo_url" "$fingerprint" >/dev/null
+jq -e '.packages | has("org.example.test") and has("org.example.second")' "$tmp/lock.json" >/dev/null
+if XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+  --abi arm64-v8a --fdroid org.example.second "$repo_url" "$fingerprint" >/dev/null 2>&1; then
+  echo "cross-abi merge unexpectedly succeeded" >&2
+  exit 1
+fi
+jq -e '.abi == "x86_64" and (.packages | has("org.example.test"))' "$tmp/lock.json" >/dev/null
+XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+  --abi x86_64 --replace --fdroid org.example.test "$repo_url" "$fingerprint" >/dev/null
+jq -e '.packages | keys == ["org.example.test"]' "$tmp/lock.json" >/dev/null
+XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" >/dev/null
+jq -e '.abi == "x86_64" and (.packages | keys == ["org.example.test"])' "$tmp/lock.json" >/dev/null
 
 cp "$tmp/lock.json" "$tmp/atomic.json"
 cp "$tmp/atomic.json" "$tmp/atomic.before"
