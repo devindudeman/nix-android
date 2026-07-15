@@ -273,9 +273,19 @@ Remaining for Phase 1 proper:
       device-to-device without accounts. Personal-use migration only; app data
       still doesn't travel. Devin's real attended count: 6 apps.
 - [ ] devenv + pre-commit hygiene pass (flake-parts wiring per project-setup)
-- [ ] **Real-phone exit criterion: duo converges the Pixel's app set from a
-      git-tracked flake, twice, second run no-op — with Devin's go-ahead,
-      plan reviewed together first, cleanup="none".**
+- [x] Real-device read-only validation, BOTH device classes (2026-07-15):
+      Pixel 6 (GrapheneOS/A17) and Pixel 9 Pro (stock A16) imported to faithful
+      configs; live plan on the stock device over 174 declared apps = 0
+      installs / 0 removals / 1 available upgrade. First non-Graphene data
+      point: identical behavior.
+- [ ] `apps.fdroid.repos` — third-party F-Droid repos (FUTO, Gadgetbridge
+      nightly, IzzyOnDroid): same index-v2 format, per-repo URL + trust
+      anchor. Unblocks 2 apps on each of Devin's phones (attended-annotated
+      until then). Import can't infer repo-of-origin from installer — needs
+      curation notes either way.
+- [ ] **Real-phone WRITE exit criterion: converge a Devin-chosen payload onto
+      the Pixel 9 (plan reviewed together, cleanup="none", additive-only),
+      twice, second run no-op.** Payload decision pending.
 
 ### Phase 2 — settings, permissions, debloat
 

@@ -75,6 +75,24 @@ Pixel (`pm list packages --user 11` works) — unlike the Work profile (user 10,
 SecurityException). Scope: owner + Private space manageable; Work profile
 belongs to its MDM.
 
+## Session 3 — 2026-07-15 (real devices, read-only + first stock-Android data point)
+
+- **Stock Android 16 (Pixel 9 Pro, caiman): everything read-side works
+  identically to GrapheneOS** — `pm list -3 -i` inventory (184 apps), import
+  classification (157 Play → attended), lock resolution, manifest build, and
+  a live `plan` (result: 0 installs / 0 removals / 1 available upgrade across
+  174 declared apps — the config faithfully described the device).
+- **Installer attribution ≠ repo of origin:** apps installed by the F-Droid
+  *client* can come from third-party repos (FUTO keyboard, Gadgetbridge
+  nightly, IzzyOnDroid) and are NOT on f-droid.org — `update-lock` fails
+  loudly, import can't tell. Mitigation today: reclassify as attended.
+  Real fix: `apps.fdroid.repos` (same index-v2 format, per-repo URL) — noted
+  in PLAN.
+- GrapheneOS device (Pixel 6): three explicitly-approved uninstalls executed
+  cleanly (`uninstall --user 0`); `DELETE_FAILED_INTERNAL_ERROR` from
+  all-users uninstall on a multi-profile device is cosmetic — verify with a
+  user-0 query, not the exit message.
+
 ## Next session
 
 - [ ] Pixel no-op confirmations (with go-ahead): grant-what's-granted, ime-set-current

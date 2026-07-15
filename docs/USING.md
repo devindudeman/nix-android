@@ -77,9 +77,11 @@ app's installer: F-Droid clients → `apps.fdroid.packages`, Play/Aurora →
 `apps.attended`, Obtainium → `apps.release` stubs, everything else flagged
 for curation. Curate before converging:
 
-- **Not everything a F-Droid *client* installed is on f-droid.org** (e.g.
-  IzzyOnDroid repo apps). `android-rebuild update` fails loudly per missing
-  package — move those to `apps.release` or `apps.attended`.
+- **Not everything a F-Droid *client* installed is on f-droid.org** — apps
+  from third-party repos (IzzyOnDroid, FUTO, Gadgetbridge nightly, …) carry
+  the same installer tag. `android-rebuild update` fails loudly per missing
+  package — move those to `apps.release`/`apps.attended` (until
+  `apps.fdroid.repos` support lands).
 - **Same app, different source = different signature.** Converge refuses a
   signature-mismatched install rather than eating app data. Switching an
   existing app's source means uninstall/reinstall — your explicit decision.
