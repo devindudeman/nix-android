@@ -37,7 +37,11 @@
             inherit (cfg.device) name user;
           };
           apps = {
-            fdroid = map fetchApk cfg.apps.fdroid.packages;
+            # One unified list regardless of source — the engine doesn't care
+            # where an APK came from, only that it's a hash-verified store path.
+            managed = map fetchApk (
+              cfg.apps.fdroid.packages ++ builtins.attrNames cfg.apps.release
+            );
             inherit (cfg.apps) attended cleanup;
           };
         }

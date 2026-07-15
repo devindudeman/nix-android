@@ -13,6 +13,15 @@
         default = 0;
         description = "Android user profile to manage (owner = 0).";
       };
+      abi = lib.mkOption {
+        type = lib.types.enum [
+          "arm64-v8a"
+          "armeabi-v7a"
+          "x86_64"
+        ];
+        default = "arm64-v8a";
+        description = "Device ABI — selects which APK builds the lock resolves (arm64-v8a = real phones, x86_64 = the emulator bench).";
+      };
     };
 
     apps = {
@@ -20,6 +29,20 @@
         type = with lib.types; listOf str;
         default = [ ];
         description = "F-Droid package ids, pinned via apps.lock.json (pins are floors: converge upgrades to >= locked versionCode, never downgrades, never fights on-device updaters).";
+      };
+
+      release = lib.mkOption {
+        type =
+          with lib.types;
+          attrsOf (submodule {
+            options.github = lib.mkOption {
+              type = str;
+              description = "owner/repo whose GitHub releases ship this package's APK.";
+              example = "ImranR98/Obtainium";
+            };
+          });
+        default = { };
+        description = "Apps installed from GitHub release APKs (Obtainium-style), keyed by Android package id, pinned via apps.lock.json.";
       };
 
       attended = lib.mkOption {

@@ -45,7 +45,7 @@ while IFS=$'\t' read -r pkg code apk; do
   elif [ "$cur" -lt "$code" ]; then
     todo_upgrade+=("$pkg"$'\t'"$cur→$code"$'\t'"$apk")
   fi
-done < <(jq -r '.apps.fdroid[] | [.package, .versionCode, .apk] | @tsv' "$manifest")
+done < <(jq -r '.apps.managed[] | [.package, .versionCode, .apk] | @tsv' "$manifest")
 
 # Attended apps: assert presence only.
 while read -r pkg; do

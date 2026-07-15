@@ -49,7 +49,26 @@
           };
         in
         {
-          packages = {
+          packages = rec {
+            # The CLI, deliberately shaped like darwin-rebuild:
+            # android-rebuild build|plan|switch|update|import --flake .#device
+            android-rebuild = pkgs.writeShellApplication {
+              name = "android-rebuild";
+              runtimeInputs = with pkgs; [
+                android-tools
+                jq
+                aapt
+                curl
+                coreutils
+                gnused
+              ];
+              text = ''
+                export NIX_ANDROID_SRC=${inputs.self}
+                exec bash ${inputs.self}/scripts/android-rebuild.sh "$@"
+              '';
+            };
+            default = android-rebuild;
+
             # `nix run .#bench -- [--apply]` — converge the emulator bench device.
             bench = inputs.self.androidConfigurations.bench.converge;
           }

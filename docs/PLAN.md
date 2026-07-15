@@ -251,9 +251,14 @@ upgrade-to-floor / attended-assert / cleanup-uninstall). Verified: plan → appl
 "uninstall"` → remove → re-converge match). `nix run .#bench -- --serial …`.
 
 Remaining for Phase 1 proper:
-- [ ] `android-rebuild` CLI wrapper (build|switch|update|import subcommands)
-- [ ] `import`: read a connected device → starter device.nix
-- [ ] GitHub-release app source (`apps.release.*`)
+- [x] `android-rebuild` CLI (build|plan|switch|update|import) — packages.default,
+      tested e2e on bench 2026-07-15
+- [x] `import` — validated live on emulator; Pixel starter generated from the
+      saved inventory (`~/Documents/phone-migration/pixel6-starter.nix`)
+- [x] GitHub-release app source (`apps.release.<pkg>.github = "owner/repo"`) —
+      aapt2 reads versionCode + verifies package id from the APK; unified
+      `apps.managed` manifest list; Obtainium installs on bench
+- [x] devenv/pre-commit hygiene (flake-parts + devenv, name finalized nix-android)
 - [ ] Device-sourced apps (Phase 2+, for migration day): `pm path` + `adb pull`
       extracts installed APKs (incl. splits) from the old device,
       `install-multiple` onto the new — signature preserved, so Aurora/Play
