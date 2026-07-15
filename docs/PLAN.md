@@ -238,15 +238,26 @@ GrapheneOS-specific (migration day, on the Pixel):
 - [ ] Multi-profile (`--user N`) behavior for all of the above
 - [ ] nix-on-droid under hardened seccomp (issue #130 / PROOT_NO_SECCOMP=1) — nice-to-have
 
-### Phase 1 — MVP: apps only (the stated priority)
+### Phase 1 — MVP: apps only (IN PROGRESS — core loop DONE on bench 2026-07-15)
 
-Repo scaffolded (project-setup skill: CLAUDE.md + AGENTS.md symlink, devenv via
-flake-parts — this project ships flake outputs consumed downstream). Then:
-module system (`lib.evalModules`) with `apps.*` options only → manifest → engine
-`plan` + `apply` for install/uninstall → lock file + store-fetched APKs →
-`droid-rebuild build|switch|update` + the idempotence test. **Exit criterion:
-duo converges a real phone's app set from a git-tracked flake, twice, second
-run no-op.**
+**Working end-to-end on the emulator bench:** module system
+(`modules/options.nix`, `lib.mkDevice`) → manifest.json with store-fetched,
+hash-verified APKs (F-Droid index-v2 chain of trust: entry.json sha256 →
+index → per-APK sha256 in `apps.lock.json` via `scripts/update-lock.sh`,
+stable-channel filtering, ABI selection) → converge engine
+(`engine/converge.sh`: plan-by-default, `--apply` to execute; install /
+upgrade-to-floor / attended-assert / cleanup-uninstall). Verified: plan → apply
+(2 installs) → idempotent no-op, AND the removal path (undeclared + `cleanup =
+"uninstall"` → remove → re-converge match). `nix run .#bench -- --serial …`.
+
+Remaining for Phase 1 proper:
+- [ ] `droid-rebuild` CLI wrapper (build|switch|update|import subcommands)
+- [ ] `import`: read a connected device → starter device.nix
+- [ ] GitHub-release app source (`apps.release.*`)
+- [ ] devenv + pre-commit hygiene pass (flake-parts wiring per project-setup)
+- [ ] **Real-phone exit criterion: duo converges the Pixel's app set from a
+      git-tracked flake, twice, second run no-op — with Devin's go-ahead,
+      plan reviewed together first, cleanup="none".**
 
 ### Phase 2 — settings, permissions, debloat
 
