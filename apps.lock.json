@@ -1,6 +1,6 @@
 {
   "abi": "x86_64",
-  "indexTimestamp": 1784111199095,
+  "lockedAt": 1784135977,
   "packages": {
     "org.fdroid.fdroid": {
       "versionCode": 1023052,

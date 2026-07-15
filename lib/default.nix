@@ -57,7 +57,11 @@
             # One unified list regardless of source — the engine doesn't care
             # where an APK came from, only that it's a hash-verified store path.
             managed = map fetchApk (
-              cfg.apps.fdroid.packages ++ builtins.attrNames checkedRelease
+              lib.unique (
+                cfg.apps.fdroid.packages
+                ++ lib.concatMap (r: r.packages) (builtins.attrValues cfg.apps.fdroid.repos)
+                ++ builtins.attrNames checkedRelease
+              )
             );
             inherit (cfg.apps) attended cleanup;
           };

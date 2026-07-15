@@ -28,7 +28,28 @@
       fdroid.packages = lib.mkOption {
         type = with lib.types; listOf str;
         default = [ ];
-        description = "F-Droid package ids, pinned via apps.lock.json (pins are floors: converge upgrades to >= locked versionCode, never downgrades, never fights on-device updaters).";
+        description = "Package ids from the main f-droid.org repo, pinned via apps.lock.json (pins are floors: converge upgrades to >= locked versionCode, never downgrades, never fights on-device updaters).";
+      };
+
+      fdroid.repos = lib.mkOption {
+        type =
+          with lib.types;
+          attrsOf (submodule {
+            options = {
+              url = lib.mkOption {
+                type = str;
+                description = "Base repo URL (serves entry.json / index-v2.json).";
+                example = "https://app.futo.org/fdroid/repo";
+              };
+              packages = lib.mkOption {
+                type = listOf str;
+                default = [ ];
+                description = "Package ids to install from this repo.";
+              };
+            };
+          });
+        default = { };
+        description = "Third-party F-Droid repos (FUTO, IzzyOnDroid, Gadgetbridge nightly, …) — same index-v2 format as f-droid.org. Declaring the same package in two repos is undefined (last lock write wins); don't.";
       };
 
       release = lib.mkOption {

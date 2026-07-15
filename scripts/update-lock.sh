@@ -3,7 +3,10 @@
 # and write the lock file Nix reads to fetch APKs into the store.
 #
 # Usage: update-lock.sh --lock apps.lock.json [--abi arm64-v8a] \
-#          [pkg ...] [--github pkg=owner/repo ...]
+#          [pkg ...] [--fdroid pkg=repo-url ...] [--github pkg=owner/repo ...] \
+#          [--gitea pkg=host/owner/repo ...]
+#   Plain pkg args resolve against f-droid.org; --fdroid pins a package to a
+#   third-party F-Droid repo (same index-v2 format, per-repo verified cache).
 #   With no packages given, refreshes every package already in the lock.
 #
 # Chain of trust: entry.json carries index-v2.json's sha256; we verify it
@@ -23,52 +26,73 @@ repo=https://f-droid.org/repo
 lock=apps.lock.json
 abi=arm64-v8a
 pkgs=()
+fspecs=()
 ghspecs=()
 gtspecs=()
 while [ $# -gt 0 ]; do
   case $1 in
   --lock) lock=$2; shift 2 ;;
   --abi) abi=$2; shift 2 ;;
+  --fdroid) fspecs+=("$2"); shift 2 ;;
   --github) ghspecs+=("$2"); shift 2 ;;
   --gitea) gtspecs+=("$2"); shift 2 ;;
   *) pkgs+=("$1"); shift ;;
   esac
 done
-if [ ${#pkgs[@]} -eq 0 ] && [ ${#ghspecs[@]} -eq 0 ] && [ ${#gtspecs[@]} -eq 0 ] && [ -f "$lock" ]; then
+if [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
   mapfile -t pkgs < <(jq -r '.packages | to_entries[] | select(.value.source == null) | .key' "$lock")
+  mapfile -t fspecs < <(jq -r '.packages | to_entries[] | select(.value.source // "" | startswith("fdroid:")) | "\(.key)=\(.value.source | sub("^fdroid:"; ""))"' "$lock")
   mapfile -t ghspecs < <(jq -r '.packages | to_entries[] | select(.value.source // "" | startswith("github:")) | "\(.key)=\(.value.source | sub("^github:"; ""))"' "$lock")
   mapfile -t gtspecs < <(jq -r '.packages | to_entries[] | select(.value.source // "" | startswith("gitea:")) | "\(.key)=\(.value.source | sub("^gitea:"; ""))"' "$lock")
 fi
-[ $(( ${#pkgs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
+[ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
 
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/nix-android
 mkdir -p "$cache"
 
-entry=$(curl -fsS "$repo/entry.json")
-want=$(jq -r '.index.sha256' <<<"$entry")
-index="$cache/index-v2.json"
-if [ ! -f "$index" ] || [ "$(sha256sum "$index" | cut -d' ' -f1)" != "$want" ]; then
-  echo "fetching index-v2.json…" >&2
-  curl -fsS "$repo/index-v2.json" -o "$index"
-  got=$(sha256sum "$index" | cut -d' ' -f1)
-  [ "$got" = "$want" ] || { echo "index sha256 mismatch: $got != $want" >&2; exit 1; }
-fi
+# Fetch a repo's index-v2 with the entry.json sha256 chain, cached per repo.
+fetch_index() { # $1=repo-url → echoes verified index path
+  local r=$1 slug entry want index name
+  slug=$(sha256sum <<<"$r" | cut -c1-16)
+  index="$cache/index-$slug.json"
+  entry=$(curl -fsS "$r/entry.json")
+  want=$(jq -r '.index.sha256' <<<"$entry")
+  name=$(jq -r '.index.name' <<<"$entry")
+  if [ ! -f "$index" ] || [ "$(sha256sum "$index" | cut -d' ' -f1)" != "$want" ]; then
+    echo "fetching $r$name…" >&2
+    curl -fsS "$r$name" -o "$index"
+    local got
+    got=$(sha256sum "$index" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || { echo "index sha256 mismatch for $r: $got != $want" >&2; exit 1; }
+  fi
+  echo "$index"
+}
+
+resolve_fdroid() { # $1=pkg $2=repo-url $3=source-tag-or-empty
+  local p=$1 r=$2 srctag=$3 index
+  index=$(fetch_index "$r")
+  jq --arg p "$p" --arg abi "$abi" --arg repo "$r" --arg src "$srctag" '
+    .packages[$p] // error("package not in index \($repo): \($p)")
+    | .versions | to_entries | map(.value)
+    | map(select((.releaseChannels // []) | length == 0))
+    | map(select((.manifest.nativecode // []) as $n | ($n | length == 0) or ($n | index($abi))))
+    | sort_by(-.manifest.versionCode) | .[0]
+    // error("no stable \($abi)-compatible version: \($p)")
+    | {($p): ({
+        versionCode: .manifest.versionCode,
+        versionName: .manifest.versionName,
+        url: ($repo + .file.name),
+        sha256: .file.sha256,
+      } + (if $src != "" then {source: $src} else {} end))}' "$index"
+}
 
 resolved=$({
   for p in "${pkgs[@]}"; do
-    jq --arg p "$p" --arg abi "$abi" --arg repo "$repo" '
-      .packages[$p] // error("package not in index: \($p)")
-      | .versions | to_entries | map(.value)
-      | map(select((.releaseChannels // []) | length == 0))
-      | map(select((.manifest.nativecode // []) as $n | ($n | length == 0) or ($n | index($abi))))
-      | sort_by(-.manifest.versionCode) | .[0]
-      // error("no stable \($abi)-compatible version: \($p)")
-      | {($p): {
-          versionCode: .manifest.versionCode,
-          versionName: .manifest.versionName,
-          url: ($repo + .file.name),
-          sha256: .file.sha256,
-        }}' "$index"
+    resolve_fdroid "$p" "$repo" ""
+  done
+  for spec in "${fspecs[@]}"; do
+    p=${spec%%=*} rurl=${spec#*=}
+    resolve_fdroid "$p" "$rurl" "fdroid:$rurl"
   done
 
   # Shared resolver for GitHub + Gitea releases (compatible asset JSON shape).
@@ -119,7 +143,6 @@ resolved=$({
   done
 } | jq -s 'add')
 
-jq -n --argjson packages "$resolved" --arg abi "$abi" \
-  --arg ts "$(jq -r '.timestamp' <<<"$entry")" \
-  '{abi: $abi, indexTimestamp: ($ts | tonumber), packages: $packages}' > "$lock"
+jq -n --argjson packages "$resolved" --arg abi "$abi" --arg ts "$(date +%s)" \
+  '{abi: $abi, lockedAt: ($ts | tonumber), packages: $packages}' > "$lock"
 echo "wrote $lock ($(jq -r '.packages | length' "$lock") packages, abi=$abi)"
