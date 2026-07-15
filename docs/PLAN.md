@@ -254,6 +254,12 @@ Remaining for Phase 1 proper:
 - [ ] `droid-rebuild` CLI wrapper (build|switch|update|import subcommands)
 - [ ] `import`: read a connected device → starter device.nix
 - [ ] GitHub-release app source (`apps.release.*`)
+- [ ] Device-sourced apps (Phase 2+, for migration day): `pm path` + `adb pull`
+      extracts installed APKs (incl. splits) from the old device,
+      `install-multiple` onto the new — signature preserved, so Aurora/Play
+      keep updating them after. Makes attended (Play-catalog) apps portable
+      device-to-device without accounts. Personal-use migration only; app data
+      still doesn't travel. Devin's real attended count: 6 apps.
 - [ ] devenv + pre-commit hygiene pass (flake-parts wiring per project-setup)
 - [ ] **Real-phone exit criterion: duo converges the Pixel's app set from a
       git-tracked flake, twice, second run no-op — with Devin's go-ahead,
