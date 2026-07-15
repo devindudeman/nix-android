@@ -23,7 +23,6 @@
       imports = [ inputs.devenv.flakeModule ];
       systems = [
         "x86_64-linux"
-        "aarch64-linux"
         "aarch64-darwin"
       ];
 
@@ -34,6 +33,22 @@
           system = "x86_64-linux";
           modules = [ ./devices/bench.nix ];
           lockFile = ./apps.lock.json;
+        };
+        androidConfigurations.darwin-smoke = inputs.self.lib.mkDevice {
+          system = "aarch64-darwin";
+          modules = [
+            {
+              device.name = "darwin-smoke";
+              device.abi = "arm64-v8a";
+            }
+          ];
+          lockFile = builtins.toFile "nix-android-darwin-smoke-lock.json" (
+            builtins.toJSON {
+              abi = "arm64-v8a";
+              lockedAt = 0;
+              packages = { };
+            }
+          );
         };
       };
 
@@ -47,9 +62,34 @@
               android_sdk.accept_license = true;
             };
           };
+          androidSdk =
+            (pkgs.androidenv.composeAndroidPackages {
+              includeEmulator = true;
+              includeSystemImages = true;
+              platformVersions = [ "35" ];
+              systemImageTypes = [ "default" ]; # pure AOSP, closest to GrapheneOS's base
+              abiVersions = [ "x86_64" ];
+            }).androidsdk;
+          androidSdkRoot = "${androidSdk}/libexec/android-sdk";
         in
         {
           packages = rec {
+            update-lock = pkgs.writeShellApplication {
+              name = "nix-android-update-lock";
+              runtimeInputs = with pkgs; [
+                aapt
+                curl
+                coreutils
+                gnugrep
+                gnutar
+                gnused
+                jdk_headless
+                jq
+                unzip
+              ];
+              text = ''exec ${pkgs.bash}/bin/bash ${inputs.self}/scripts/update-lock.sh "$@"'';
+            };
+
             # The CLI, deliberately shaped like darwin-rebuild:
             # android-rebuild build|plan|switch|update|import --flake .#device
             android-rebuild = pkgs.writeShellApplication {
@@ -57,43 +97,325 @@
               runtimeInputs = with pkgs; [
                 android-tools
                 jq
-                aapt
-                curl
                 coreutils
                 gnused
               ];
               text = ''
                 export NIX_ANDROID_SRC=${inputs.self}
-                exec bash ${inputs.self}/scripts/android-rebuild.sh "$@"
+                export NIX_ANDROID_BASH=${pkgs.bash}/bin/bash
+                exec "$NIX_ANDROID_BASH" ${inputs.self}/scripts/android-rebuild.sh "$@"
               '';
             };
             default = android-rebuild;
-
-            # `nix run .#bench -- [--apply]` — converge the emulator bench device.
-            bench = inputs.self.androidConfigurations.bench.converge;
           }
           // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+            # `nix run .#bench -- [--apply]` — converge the emulator bench device.
+            bench = inputs.self.androidConfigurations.bench.converge;
+
             # Test bench: headless AOSP emulator (the "free-fire lane" —
             # mutation-class testing runs here, never on real hardware first).
-            emulator = pkgs.androidenv.emulateApp {
-              name = "nix-android-emu";
-              platformVersion = "35";
-              abiVersion = "x86_64";
-              systemImageType = "default"; # pure AOSP, closest to GrapheneOS's base
-              androidEmulatorFlags = "-no-window -no-audio -no-boot-anim";
+            emulator = pkgs.writeShellApplication {
+              name = "nix-android-emulator";
+              runtimeInputs = with pkgs; [
+                android-tools
+                coreutils
+                gnugrep
+                iproute2
+                util-linux
+              ];
+              text = ''
+                exec 9>/tmp/nix-android-emulator-5554.lock
+                flock -n 9 || { echo "another nix-android emulator owns port 5554" >&2; exit 1; }
+                devices=$(adb devices)
+                if grep -q '^emulator-5554[[:space:]]' <<<"$devices"; then
+                  echo "emulator-5554 is already attached" >&2
+                  exit 1
+                fi
+                if [ -n "$(ss -Hln 'sport = :5554 or sport = :5555')" ]; then
+                  echo "emulator console/adb ports 5554-5555 are already in use" >&2
+                  exit 1
+                fi
+
+                run_root=$(mktemp -d "''${TMPDIR:-/tmp}/nix-android-emulator.XXXXXX")
+                emulator_pid=
+                cleanup() {
+                  set +e
+                  if [ -n "$emulator_pid" ] && kill -0 "$emulator_pid" 2>/dev/null; then
+                    adb -s emulator-5554 emu kill >/dev/null 2>&1
+                    for _ in $(seq 1 20); do
+                      kill -0 "$emulator_pid" 2>/dev/null || break
+                      sleep 0.25
+                    done
+                    kill "$emulator_pid" 2>/dev/null
+                    wait "$emulator_pid" 2>/dev/null
+                  fi
+                  rm -rf -- "$run_root"
+                }
+                trap cleanup EXIT
+                trap 'exit 130' HUP INT TERM
+                if [ -n "''${NIX_ANDROID_RUN_ROOT_FILE:-}" ]; then
+                  printf '%s\n' "$run_root" > "$NIX_ANDROID_RUN_ROOT_FILE"
+                fi
+
+                export ANDROID_HOME=${androidSdkRoot}
+                export ANDROID_SDK_ROOT=$ANDROID_HOME
+                export ANDROID_USER_HOME=$run_root/user
+                export ANDROID_AVD_HOME=$ANDROID_USER_HOME/avd
+                mkdir -p "$ANDROID_AVD_HOME"
+                printf '\n' | ${androidSdk}/bin/avdmanager create avd --force \
+                  --name nix-android --package 'system-images;android-35;default;x86_64' \
+                  --path "$ANDROID_AVD_HOME/nix-android.avd" >/dev/null
+
+                "$ANDROID_HOME/emulator/emulator" -avd nix-android -port 5554 \
+                  -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data \
+                  -gpu swiftshader_indirect -memory 2048 &
+                emulator_pid=$!
+
+                deadline=$((SECONDS + 300))
+                until [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] \
+                  && pm=$(adb -s emulator-5554 shell pm path android 2>/dev/null) \
+                  && grep -q '^package:' <<<"$pm"; do
+                  kill -0 "$emulator_pid" 2>/dev/null || { wait "$emulator_pid"; exit $?; }
+                  [ "$SECONDS" -lt "$deadline" ] || { echo "emulator boot timed out after five minutes" >&2; exit 1; }
+                  sleep 2
+                done
+                adb -s emulator-5554 shell cmd package wait-for-handler --timeout 60000 >/dev/null
+                echo "nix-android bench ready at emulator-5554; Ctrl-C to stop" >&2
+                wait "$emulator_pid"
+              '';
             };
           };
 
           checks = {
-            # The manifest must evaluate and build from the committed lock.
+            formatting = pkgs.runCommand "nix-android-formatting" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
+              find ${inputs.self} -name '*.nix' -print0 | xargs -0 nixfmt --check
+              touch $out
+            '';
+            shellcheck =
+              pkgs.runCommand "nix-android-shellcheck" { nativeBuildInputs = [ pkgs.shellcheck ]; }
+                ''
+                  shellcheck ${inputs.self}/engine/*.sh ${inputs.self}/scripts/*.sh
+                  touch $out
+                '';
+            statix = pkgs.runCommand "nix-android-statix" { nativeBuildInputs = [ pkgs.statix ]; } ''
+              statix check ${inputs.self}
+              touch $out
+            '';
+            deadnix = pkgs.runCommand "nix-android-deadnix" { nativeBuildInputs = [ pkgs.deadnix ]; } ''
+              deadnix --fail ${inputs.self}
+              touch $out
+            '';
+            cli-safety = pkgs.runCommand "nix-android-cli-safety" { } ''
+              cli=${inputs.self.packages.${system}.android-rebuild}/bin/android-rebuild
+              "$cli" --help >/dev/null
+              env -i PATH=/nope "$cli" --help >/dev/null
+              ! "$cli" plan --flake ${inputs.self}#bench >/dev/null 2>&1
+              ! "$cli" switch --flake ${inputs.self}#bench >/dev/null 2>&1
+              ! "$cli" import >/dev/null 2>&1
+              ! "$cli" unknown >/dev/null 2>&1
+              ! "$cli" build --flake >/dev/null 2>&1
+              touch $out
+            '';
+            manifest-safety =
+              pkgs.runCommand "nix-android-manifest-safety" { nativeBuildInputs = [ pkgs.jq ]; }
+                ''
+                  echo '{"apps":{"cleanup":"uninstall"}}' > malformed.json
+                  ! ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh malformed.json --serial never-contact-this >/dev/null 2>error
+                  grep -q 'invalid or unsupported manifest' error
+
+                  jq -n '{
+                    manifestVersion: 1,
+                    device: {name: "test", user: 0, abi: "x86_64"},
+                    apps: {cleanup: "none", attended: [], managed: []},
+                    android: {
+                      darkMode: null, disabled: [], deviceidleExempt: [], roles: {},
+                      settings: {global: {}, secure: {}, system: {}}, permissions: {}
+                    }
+                  }' > valid.json
+                  mkdir fakebin
+                  printf '%s\n' '#!${pkgs.runtimeShell}' 'touch "$PWD/contacted"' 'exit 99' > fakebin/adb
+                  chmod +x fakebin/adb
+                  reject() {
+                    jq "$2" valid.json > "$1.json"
+                    ! PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
+                      "$1.json" --serial never-contact-this >/dev/null 2>error
+                    grep -q 'invalid or unsupported manifest' error
+                    test ! -e contacted
+                  }
+                  reject duplicate '.apps.managed = [
+                    {package:"org.example.app",versionCode:1,apk:"/one.apk"},
+                    {package:"org.example.app",versionCode:1,apk:"/two.apk"}]'
+                  reject permission-conflict '.android.permissions."org.example.app" = {
+                    grant:["android.permission.CAMERA"], revoke:["android.permission.CAMERA"]}'
+                  reject control-identifier '.apps.attended = ["org.example.app\n"]'
+                  reject empty-setting '.android.settings.global.example = ""'
+                  reject null-setting '.android.settings.global.example = "null"'
+                  ! PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
+                    valid.json --serial expected-contact >/dev/null 2>&1
+                  test -e contacted
+                  touch $out
+                '';
+            update-lock-safety =
+              let
+                locked = (builtins.fromJSON (builtins.readFile ./apps.lock.json)).packages."org.fdroid.fdroid";
+                fixtureApk = pkgs.fetchurl {
+                  inherit (locked) url sha256;
+                };
+              in
+              pkgs.runCommand "nix-android-update-lock-safety"
+                {
+                  nativeBuildInputs = with pkgs; [
+                    coreutils
+                    curl
+                    gnutar
+                    gnused
+                    jdk_headless
+                    jq
+                    unzip
+                  ];
+                }
+                ''
+                  ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-update-lock.sh \
+                    ${inputs.self.packages.${system}.update-lock}/bin/nix-android-update-lock \
+                    ${fixtureApk}
+                  touch $out
+                '';
+            validation =
+              let
+                rejectsWithLock =
+                  lockFile: module:
+                  !(builtins.tryEval
+                    (inputs.self.lib.mkDevice {
+                      inherit system;
+                      modules = [ module ];
+                      inherit lockFile;
+                    }).manifest.outPath
+                  ).success;
+                rejects = rejectsWithLock ./apps.lock.json;
+                lock = builtins.fromJSON (builtins.readFile ./apps.lock.json);
+                alterLock =
+                  package: attrs:
+                  builtins.toFile "nix-android-invalid-lock.json" (
+                    builtins.toJSON (
+                      lock
+                      // {
+                        packages = lock.packages // {
+                          "${package}" = lock.packages.${package} // attrs;
+                        };
+                      }
+                    )
+                  );
+              in
+              assert rejects {
+                device = {
+                  name = "wrong-user";
+                  user = 1;
+                  abi = "x86_64";
+                };
+              };
+              assert rejects {
+                device.name = "wrong-abi";
+                device.abi = "arm64-v8a";
+              };
+              assert rejects {
+                device.name = "duplicate-app";
+                device.abi = "x86_64";
+                apps.fdroid.packages = [ "org.fdroid.fdroid" ];
+                apps.attended = [ "org.fdroid.fdroid" ];
+              };
+              assert rejects {
+                device.name = "permission-conflict";
+                device.abi = "x86_64";
+                android.permissions."org.example.app" = {
+                  grant = [ "android.permission.POST_NOTIFICATIONS" ];
+                  revoke = [ "android.permission.POST_NOTIFICATIONS" ];
+                };
+              };
+              assert rejects {
+                device.name = "duplicate-permission";
+                device.abi = "x86_64";
+                android.permissions."org.example.app".grant = [
+                  "android.permission.CAMERA"
+                  "android.permission.CAMERA"
+                ];
+              };
+              assert rejects {
+                device.name = "release-source-conflict";
+                device.abi = "x86_64";
+                apps.release."org.example.app" = {
+                  github = "example/app";
+                  gitea = "git.example.com/example/app";
+                };
+              };
+              assert rejects {
+                device.name = "private-dns-conflict";
+                device.abi = "x86_64";
+                android.privateDns = "dns.example.com";
+                android.settings.global.private_dns_mode = "hostname";
+              };
+              assert rejects {
+                device.name = "stale-release-source";
+                device.abi = "x86_64";
+                apps.release."dev.imranr.obtainium.fdroid".gitea = "git.example.com/example/app";
+              };
+              assert rejectsWithLock
+                (alterLock "org.fdroid.fdroid" {
+                  repoFingerprint = "0000000000000000000000000000000000000000000000000000000000000000";
+                })
+                {
+                  device.name = "stale-repository-fingerprint";
+                  device.abi = "x86_64";
+                  apps.fdroid.packages = [ "org.fdroid.fdroid" ];
+                };
+              assert rejectsWithLock (alterLock "com.edde746.plezy" { apkPath = "../../escape.apk"; }) {
+                device.name = "unsafe-archive-member";
+                device.abi = "x86_64";
+                apps.release."com.edde746.plezy".github = "edde746/plezy";
+              };
+              assert rejects {
+                device.name = "invalid-package";
+                device.abi = "x86_64";
+                apps.attended = [ "not a package; touch /tmp/nope" ];
+              };
+              assert rejects {
+                device.name = "invalid-private-dns";
+                device.abi = "x86_64";
+                android.privateDns = "bad host name";
+              };
+              assert rejects {
+                device.name = "ambiguous-empty-setting";
+                device.abi = "x86_64";
+                android.settings.global.example = "";
+              };
+              assert rejects {
+                device.name = "ambiguous-null-setting";
+                device.abi = "x86_64";
+                android.settings.global.example = "null";
+              };
+              pkgs.runCommand "nix-android-validation" { } "touch $out";
+          }
+          // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+            # The bench manifest is a Linux-host derivation by design.
             bench-manifest = inputs.self.androidConfigurations.bench.manifest;
+          }
+          // pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
+            darwin-manifest = inputs.self.androidConfigurations.darwin-smoke.manifest;
+            darwin-converge = inputs.self.androidConfigurations.darwin-smoke.converge;
           };
 
+          formatter = pkgs.nixfmt-tree;
+
           devenv.shells.default = {
+            devenv.root =
+              let
+                pwd = builtins.getEnv "PWD";
+              in
+              if pwd != "" then pwd else toString inputs.self;
             packages = with pkgs; [
               android-tools
               jq
               aapt
+              just
             ];
             git-hooks.hooks = {
               # `nixfmt` = pkgs.nixfmt (the RFC-style formatter); the old
@@ -103,7 +425,7 @@
               deadnix.enable = true;
               shellcheck.enable = true;
             };
-            enterShell = ''echo "▸ nix-android dev shell — bench: nix run .#emulator, converge: nix run .#bench"'';
+            enterShell = ''echo "▸ nix-android dev shell — bench: just emu, converge: android-rebuild plan --flake .#bench --serial emulator-5554"'';
           };
         };
     };

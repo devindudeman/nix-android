@@ -1,141 +1,168 @@
 # Developing nix-android
 
-New here? This is the map. Read [PLAN.md](./PLAN.md) for the roadmap and
-philosophy, [PRIMITIVES.md](./PRIMITIVES.md) for the verified capability
-matrix, [USING.md](./USING.md) for the user-facing behavior you must not break.
+Read [PRIMITIVES.md](./PRIMITIVES.md) before adding an option and
+[LIMITS.md](./LIMITS.md) before widening scope.
 
-## Architecture in one diagram
+## Architecture
 
+```text
+device.nix ── evalModules ──> manifest.json ── converge.sh ──> adb ──> device
+              typed config     pure data         plan/apply
+              + locked APKs    + store paths     no Nix logic
 ```
-device.nix ──eval (Nix module system)──► manifest.json ──engine (bash)──► adb ──► device
-              lib/mkDevice                 pure data       plan / apply
-              modules/options.nix          + store APKs    engine/converge.sh
-```
 
-The **manifest/engine split is the one load-bearing decision**: the manifest
-is plain JSON (APKs as store paths, everything else data), the engine is a
-single bash script that reads it, diffs against device reality, prints a plan,
-and applies on `--apply`. Why: the engine reruns unmodified from Termux/rish
-on-device someday, and tests without Nix. Don't leak logic across the line.
+The manifest/engine split is load-bearing. Nix owns option types, assertions,
+source authentication, artifact fetching, and manifest construction. The Bash
+engine validates the complete JSON document, reads device state, prints a plan,
+and writes only with `--apply`. Keep source-specific logic out of the engine.
 
 ## File map
 
-| Path | What |
-|------|------|
-| `modules/options.nix` | The entire option surface. Every option MUST cite a verified primitive in PRIMITIVES.md |
-| `lib/default.nix` | `mkDevice`: evalModules → manifest derivation; APK fetching (F-Droid/release by lock hash, archives extracted in-store, local APKs badging-verified at build) |
-| `engine/converge.sh` | Plan-by-default converge. Explicit `--serial` always |
-| `scripts/update-lock.sh` | Resolves declared apps → `apps.lock.json` (F-Droid index-v2 with sha256 chain; GitHub/Gitea latest-release; aapt2 versionCode + package-id verification) |
-| `scripts/android-rebuild.sh` | The CLI: build/plan/switch/update/import |
-| `scripts/import.sh` | Device → starter device.nix (read-only) |
-| `scripts/atlas-probe.sh` | Read-only device capability capture |
-| `devices/bench.nix` | The emulator bench config — the e2e test target |
+| Path | Responsibility |
+| --- | --- |
+| `modules/options.nix` | Public option surface; every device option needs a verified primitive |
+| `lib/default.nix` | `mkDevice`, assertions, lock/source binding, store APKs, manifest, packaged engine |
+| `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
+| `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, and `import` CLI |
+| `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
+| `scripts/import.sh` | Read-only installed-app inventory to starter Nix |
+| `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
+| `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
+| `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, and atomic-failure resolver tests |
+| `devices/bench.nix` | x86_64 AOSP mutation-test configuration |
+| `.github/workflows/ci.yml` | x86_64 Linux checks and Apple Silicon package/CLI gate |
 
-## Ground rules
+## Non-negotiable safety rules
 
-1. **No option without a verified primitive.** Before adding any module
-   option: prove the read, the write, AND graceful-reboot persistence on the
-   bench; record it in PRIMITIVES.md; only then write the option. No
-   read-back command = no option (the engine must be able to diff it).
-2. **Plan-by-default is sacred.** Any new engine capability prints its plan
-   line and does nothing without `--apply`. Destructive actions additionally
-   hide behind explicit config (`cleanup = "uninstall"`) or flags.
-3. **Real hardware is production.** Mutation-class development happens on the
-   emulator (`nix run .#emulator` — fresh userdata every launch). A real
-   phone gets: read-only, no-op writes, or additive installs — and only with
-   its owner's explicit go-ahead. See CLAUDE.md's safety protocol.
-4. **Never fight the OS.** Pins are floors; on-device updaters win races;
-   signature mismatches refuse rather than clobber; write-behind subsystems
-   (deviceidle/appops/package-restrictions) mean no hard reboots after
-   mutations (PRIMITIVES.md §persistence).
-5. **Personal data stays out.** Device captures, inventories, private hosts
-   (Gitea URLs etc.) never land in this repo — generic examples only. This
-   repo is written for strangers.
+1. Every device operation names an adb serial. Never remove `--serial` from a
+   command or engine call.
+2. Real daily phones receive read-only probes unless emulator proof and the
+   owner's explicit mutation approval already exist.
+3. A new option requires a working read, write, real-change read-back, and
+   graceful-reboot persistence test on the emulator. Record the result in
+   `PRIMITIVES.md` in the same change.
+4. Plan is read-only. Apply behavior must remain behind `switch`/`--apply` and
+   destructive behavior behind explicit configuration.
+5. Raw phone captures are personal data. Store them under
+   `~/Documents/phone-migration/`, never in this repository.
+6. Never use an abrupt `adb reboot` after writes. Allow state to settle and use
+   a graceful user-requested reboot for persistence testing.
 
-## Dev loop
+## Development shell and checks
 
-```bash
-direnv allow                 # devenv shell: adb, jq, aapt2, pre-commit hooks
-nix run .#bench -- --serial emulator-5554           # plan
-nix run .#bench -- --serial emulator-5554 --apply   # converge
+```console
+direnv --version # contributor prerequisite
+direnv allow
+just fmt
+just check
 ```
 
-### Running the emulator bench SAFELY (learned the hard way — a host crash)
+`just check` builds native-host formatting, shellcheck, statix, deadnix,
+packaged CLI safety, strict-manifest, signed-lock resolver, and negative
+module-validation checks, plus the platform's positive controller build.
+The whole `nix flake check` remains intentionally unused because devenv task
+evaluation currently produces a spurious `path .drv is not valid` failure.
 
-`nix run .#emulator` naively is a trap on a laptop. Two hazards, both real:
+For a clean CI-equivalent Linux run:
 
-1. **It hard-crashed the host once.** The emulator with host-GPU falls back to
-   a Vulkan path (`VulkanAllocateHostMemory`) that balloons host RAM to 5–7 GB+
-   and can hang the whole machine (no OOM-kill — pinned shmem is unreclaimable,
-   so the box just dies). ALWAYS run it inside a memory-capped systemd scope so
-   a runaway emulator is killed instead of the host:
-   ```bash
-   systemd-run --user --unit=nixandroid-emu -p MemoryMax=12G -p MemorySwapMax=0 \
-     --setenv=ANDROID_SDK_ROOT="$sdk" \
-     --setenv=ANDROID_AVD_HOME="$HOME/.cache/nix-android/avd" \
-     --setenv=ANDROID_USER_HOME="$HOME/.cache/nix-android/androidhome" \
-     "$sdk/emulator/emulator" -avd nixa \
-       -no-window -no-audio -no-boot-anim -no-snapshot \
-       -gpu swiftshader_indirect -memory 2048 -port 5554
-   ```
-   Create the persistent AVD `nixa` once with `avdmanager create avd -n nixa -k
-   'system-images;android-35;default;x86_64'`. `$sdk` = the androidsdk store
-   path (grep `ANDROID_HOME=` out of `result/bin/run-test-emulator`).
-2. **Use `-gpu swiftshader_indirect`, not host GPU** — nixpkgs/upstream both
-   warn host-GPU gives black-screen/Vulkan balloon headless. SwiftShader is the
-   sanctioned headless renderer.
-3. **Run the `emulator` binary in the FOREGROUND as the unit's main process** —
-   the `run-test-emulator` wrapper backgrounds the emulator and exits, so under
-   systemd the cgroup tears down and kills it right after boot. Invoke the
-   binary directly so systemd supervises it.
+```console
+nix build \
+  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,update-lock-safety,validation} \
+  --accept-flake-config --no-link
+nix build \
+  .#packages.x86_64-linux.{android-rebuild,update-lock} \
+  --accept-flake-config --no-link
+```
 
-`adb -s emulator-5554 emu kill` (or `systemctl --user stop nixandroid-emu`) to
-tear down.
+The public host matrix is deliberately narrow: x86_64 Linux and Apple Silicon
+macOS. `mkDevice.system` is required so a Darwin caller cannot silently build a
+Linux engine. Packaged entry points use the Nix Bash path; never reintroduce an
+ambient `bash`, because Apple's system Bash lacks `mapfile` and
+`inherit_errexit`.
 
-### Bash gotchas the engine hit (don't reintroduce)
+## Emulator loop
 
-- **`adb` calls drain `while read` stdin.** `adb shell` reads stdin; inside a
-  `while read … done < <(…)` loop it eats the loop's input so only the first
-  item iterates. The engine routes every adb call through an `adb()` wrapper
-  that appends `</dev/null`.
-- **That wrapper must use `command`.** `adb_base=(adb …); adb(){ command …; }`
-  — without `command`, the function named `adb` calls itself forever.
-- **`IFS=$'\t' read` collapses empty fields.** Tab is whitespace-class, so a
-  tuple with an empty interior field (`a\t\tc`) loses it and shifts everything
-  left. The engine uses US (`$'\037'`) as the tuple separator instead.
-- **SystemUI-owned settings don't converge.** `sysui_qs_tiles` accepts a
-  no-op write but SystemUI reverts any real change — so it fails the idempotence
-  bar and is NOT a supported option. Test a *real* change + reboot, never a
-  no-op, before declaring a primitive verified.
+On x86_64 Linux:
 
-The e2e bar for any apps-path change: **plan → apply → verify → re-plan is a
-no-op** (idempotence), plus the removal path when relevant. The eval bar:
-`nix build .#checks.x86_64-linux.bench-manifest --impure --accept-flake-config`
-must build from the committed lock.
+```console
+just emu
+nix run .#android-rebuild -- \
+  plan --flake .#bench --serial emulator-5554
+nix run .#android-rebuild -- \
+  switch --flake .#bench --serial emulator-5554
+nix run .#android-rebuild -- \
+  plan --flake .#bench --serial emulator-5554
+adb -s emulator-5554 emu kill
+```
 
-Known wart: whole-tree `nix flake check` currently fails inside devenv's task
-eval ("path .drv is not valid") — build individual checks instead.
+`just emu` puts the headless AOSP emulator in a user systemd scope capped at
+12 GiB, disables swap growth for the scope, requests 2 GiB guest RAM, and uses
+SwiftShader rather than host Vulkan. Do not launch the flake emulator naked on
+a laptop; an earlier host-GPU run exhausted unreclaimable memory and hung the
+machine.
 
-## How to add things
+The release persistence pass is:
 
-**A module option** (Phase 2 pattern): bench-verify the primitive (write,
-read-back, graceful-reboot persistence) → PRIMITIVES.md row → option in
-`modules/options.nix` → field in the manifest (lib) → engine: read device
-state, diff, plan line, apply step → bench e2e including idempotence.
+1. plan a fresh emulator;
+2. switch;
+3. verify the declared state directly;
+4. re-plan and require no changes;
+5. allow state to settle, run
+   `adb -s emulator-5554 shell svc power reboot userrequested`, and wait for
+   boot completion;
+6. re-plan and require no changes again.
 
-**An app source**: resolver in `update-lock.sh` (must end with a sha256 for
-the downloaded artifact + aapt2 package-id/versionCode verification) → lock
-entry shape → `fetchApk`/manifest handling in `lib/default.nix` (store path,
-extraction if archived) → option in `modules/options.nix` → bench test with a
-public example app. The engine should not need changes — sources all converge
-into the uniform `apps.managed` list.
+Run that gate twice on independent fresh userdata with `just bench-e2e 2`.
+It owns emulator-5554, enforces boot/readiness deadlines, verifies exact state,
+requires a new boot ID after graceful reboot, removes each temporary AVD, and
+waits for the ADB transport to disappear. Both cycles must pass before any
+real-phone mutation is proposed.
 
-## Testing philosophy
+## Engine traps already found
 
-Golden rule: if it didn't run against a device (emulator counts), it isn't
-verified. The negative tests matter as much as the positive: wrong package id
-declared for a local APK must fail the build; a beta-only F-Droid app must
-fail the lock; a signature mismatch must refuse. When you find a new boundary
-(like the work-profile block), root-cause it to source (AOSP/app code), then
-record it in PRIMITIVES.md with evidence — LIMITS entries are generated
-knowledge, not vibes.
+- `adb` reads stdin. Every call goes through the wrapper that redirects
+  `/dev/null`, or it can drain a surrounding `while read` loop.
+- adb's client joins `adb shell ARG...` with spaces. Every remote argv call in
+  the engine goes through `adb_shell`, which constructs one POSIX-single-quoted
+  command. Local Bash quotes alone do not protect the device shell.
+- Tab is a whitespace-class `IFS` separator and collapses empty fields. Engine
+  tuples use ASCII Unit Separator (`\037`) after the schema rejects conflicting
+  control characters.
+- Process substitutions do not make `set -e` notice producer failures. The
+  strict manifest preflight runs before the first adb read, so malformed JSON
+  can never turn into an empty destructive declaration set.
+- Android writes several `/data/system` files asynchronously. Hard reboot tests
+  produced false persistence failures; graceful shutdown persisted them.
+- Keep shell-variable boundaries ASCII-obvious (`${name}` or ASCII punctuation).
+  Darwin's Nix Bash treated a variable immediately followed by a Unicode
+  ellipsis as a longer name under `set -u`; the physical-Mac gate caught it.
+
+## Adding an app source
+
+End with one uniform managed entry: package ID, integer versionCode, and a
+hash-addressed APK store path.
+
+- Authenticate repository metadata before trusting hashes.
+- Bind the lock entry to the configured source and trust anchor.
+- Fail atomically; an unsuccessful refresh must not replace the lock.
+- Validate release package ID with aapt2.
+- Treat archive member names as untrusted, require exactly one regular APK,
+  stream it with `tar --`, and shell-escape it again at build time.
+- Test correct resolution, wrong trust anchor, wrong package ID, duplicate
+  declarations, and stale-source rejection.
+
+## Adding a device option
+
+Follow the whole flow in one change:
+
+1. emulator read/write/read-back/persistence proof;
+2. a `PRIMITIVES.md` row;
+3. typed option and conflict assertions;
+4. manifest field;
+5. engine read, diff, plan line, and apply action;
+6. one small negative or idempotence check;
+7. user and developer documentation.
+
+The raw `android.settings` namespace is an expert escape hatch, not evidence
+that every settings key is supported. SystemUI-owned Quick Settings state is a
+known example that accepts a write and then reverts it.

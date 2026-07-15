@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: DeterminateSystems/determinate-nix-action@131015bad844610e5e6300f8a143bf625d3e74f4 # v3.17.0
+      - name: Run focused checks
+        run: >-
+          nix build
+          .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,update-lock-safety,validation}
+          --accept-flake-config --no-link
+      - name: Build release packages
+        run: >-
+          nix build
+          .#packages.x86_64-linux.{android-rebuild,update-lock}
+          --accept-flake-config --no-link
+      - name: Smoke-test packaged CLI outside the repository
+        run: |
+          cd "$(mktemp -d)"
+          nix run "$GITHUB_WORKSPACE#android-rebuild" --accept-flake-config -- \
+            build --flake "$GITHUB_WORKSPACE#bench"
+      - name: Smoke-test flake introspection
+        run: nix flake show --json --all-systems --accept-flake-config >/dev/null
+
+  darwin:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: DeterminateSystems/determinate-nix-action@131015bad844610e5e6300f8a143bf625d3e74f4 # v3.17.0
+      - name: Build Apple Silicon release packages
+        run: >-
+          nix build
+          .#packages.aarch64-darwin.{android-rebuild,update-lock}
+          --accept-flake-config --no-link
+      - name: Run device-free Darwin checks
+        run: >-
+          nix build
+          .#checks.aarch64-darwin.{darwin-manifest,darwin-converge,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,update-lock-safety,validation}
+          --accept-flake-config --no-link

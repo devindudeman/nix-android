@@ -6,12 +6,12 @@
     device = {
       name = lib.mkOption {
         type = lib.types.str;
-        description = "Device nickname; used in manifest and state paths.";
+        description = "Device nickname; used in manifest and derivation names.";
       };
       user = lib.mkOption {
         type = lib.types.int;
         default = 0;
-        description = "Android user profile to manage (owner = 0).";
+        description = "Android user profile to manage. Public v1 supports the owner profile (user 0) only.";
       };
       abi = lib.mkOption {
         type = lib.types.enum [
@@ -38,8 +38,13 @@
             options = {
               url = lib.mkOption {
                 type = str;
-                description = "Base repo URL (serves entry.json / index-v2.json).";
+                description = "Base repo URL (serves signed entry.jar and index-v2.json).";
                 example = "https://app.futo.org/fdroid/repo";
+              };
+              fingerprint = lib.mkOption {
+                type = strMatching "[0-9a-fA-F]{64}";
+                description = "SHA-256 fingerprint of the repository certificate that signs entry.jar, as 64 hexadecimal characters without separators.";
+                example = "39d47869d29cbfce4691d9f7e6946a7b6d7e6ff4883497e6e675744ecdfa6d6d";
               };
               packages = lib.mkOption {
                 type = listOf str;
@@ -49,7 +54,7 @@
             };
           });
         default = { };
-        description = "Third-party F-Droid repos (FUTO, IzzyOnDroid, Gadgetbridge nightly, …) — same index-v2 format as f-droid.org. Declaring the same package in two repos is undefined (last lock write wins); don't.";
+        description = "Third-party F-Droid repos (FUTO, IzzyOnDroid, Gadgetbridge nightly, …), authenticated by the certificate fingerprint of their signed index-v2 entry point. A package may be declared from exactly one source.";
       };
 
       release = lib.mkOption {
@@ -100,18 +105,21 @@
           "uninstall"
         ];
         default = "none";
-        description = "What converge does with installed-but-undeclared user apps. \"none\" = additive (default), \"uninstall\" = NixOS-style purity.";
+        description = "What converge does with installed-but-undeclared owner-user apps. \"none\" = additive (default); \"uninstall\" removes undeclared third-party apps after all other actions succeed.";
       };
     };
 
     # Phase-2 surface. Managed-key semantics throughout: converge only touches
     # what you declare — it never reverts device state you left undeclared.
     android = {
-      settings = lib.genAttrs [ "global" "secure" "system" ] (ns: lib.mkOption {
-        type = with lib.types; attrsOf (either str int);
-        default = { };
-        description = "`settings put ${ns}` key/values (compared via `settings get`).";
-      });
+      settings = lib.genAttrs [ "global" "secure" "system" ] (
+        ns:
+        lib.mkOption {
+          type = with lib.types; attrsOf (either str int);
+          default = { };
+          description = "Expert escape hatch for `settings put ${ns}` key/values (compared via `settings get`). Keys are Android-version-specific and must be independently verified for write access, read-back, and persistence; OS-owned keys can reject or revert writes.";
+        }
+      );
 
       darkMode = lib.mkOption {
         type = with lib.types; nullOr bool;
@@ -126,11 +134,14 @@
         example = "dns.example.com";
       };
 
-      defaultApps = lib.genAttrs [ "browser" "sms" "dialer" "home" ] (role: lib.mkOption {
-        type = with lib.types; nullOr str;
-        default = null;
-        description = "Package holding the ${role} role (`cmd role`). null = unmanaged.";
-      });
+      defaultApps = lib.genAttrs [ "browser" "sms" "dialer" "home" ] (
+        role:
+        lib.mkOption {
+          type = with lib.types; nullOr str;
+          default = null;
+          description = "Package holding the ${role} role (`cmd role`). null = unmanaged.";
+        }
+      );
 
       packages.disabled = lib.mkOption {
         type = with lib.types; listOf str;
@@ -162,7 +173,7 @@
       batteryOptimization.exempt = lib.mkOption {
         type = with lib.types; listOf str;
         default = [ ];
-        description = "Packages exempted from battery optimization (`cmd deviceidle whitelist +pkg`). Ensure-present only.";
+        description = "Packages exempted from battery optimization (`cmd deviceidle whitelist +pkg`). Ensure-present only. Android stores this as a global package/appId allowlist, so the effect is not confined to owner user 0 when the same package exists in another profile.";
       };
     };
   };

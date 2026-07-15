@@ -1,56 +1,101 @@
 # nix-android
 
-**nix-darwin, but for your phone.** Declare your Android device's state —
-installed apps, sources, settings, permissions — in a version-controlled Nix
-file, and converge any device toward it over adb:
+**nix-darwin, but for your phone.** Declare Android apps and reachable device
+state in Nix, inspect a read-only plan, then converge over adb.
 
+```console
+android-rebuild plan   --flake .#pixel --serial DEVICE_SERIAL
+android-rebuild switch --flake .#pixel --serial DEVICE_SERIAL
 ```
-android-rebuild switch --flake .#pixel
-```
 
-No root. No unlocked bootloader. No custom OS image. nix-android speaks to a
-**stock, locked, security-model-intact** device (GrapheneOS is the first-class
-target) at adb-shell privilege, and is loudly honest about what lives beyond
-that line. Not an OS builder — that's [robotnix](https://github.com/nix-community/robotnix);
-not a Nix userland on the phone — that's [nix-on-droid](https://github.com/nix-community/nix-on-droid).
-This is the missing third thing: **converge a running device toward a config file.**
+nix-android works at adb-shell privilege on a stock, locked-bootloader device.
+It requires neither root nor replacing the OS, weakening verified boot, or
+installing Nix on the phone. GrapheneOS is the first-class target; an AOSP emulator is the
+mutation test bench.
 
-> **Status: pre-release, under active development.** The core loop (module
-> system → manifest with store-fetched, hash-verified APKs → plan/apply
-> converge engine, idempotent) is working end-to-end against an emulator.
-> See `docs/PLAN.md` for the roadmap and `docs/PRIMITIVES.md` for the
-> verified adb capability matrix everything is built on.
+> **Status: alpha-ready.** The app and settings converge loop works end to end
+> on the AOSP bench, has completed an additive install plus a reversible setting
+> round trip on a locked GrapheneOS device, and passes the release packages and
+> device-free checks on a physical Apple Silicon Mac. The pinned `macos-15` job
+> repeats that gate after publication. See [docs/PLAN.md](docs/PLAN.md), and do
+> not aim an unreviewed `switch` at a daily phone.
 
-## Taste
+## What is declarative today?
+
+- F-Droid and third-party F-Droid repository apps
+- GitHub/Gitea release APKs and local APK files
+- attended Play/Aurora apps as presence assertions
+- raw Android settings keys, dark mode, and Private DNS
+- default browser, SMS, dialer, and home roles
+- runtime permission grants and revocations
+- package disablement and battery-optimization exemptions
+- optional cleanup of undeclared user-installed apps
+
+The default is additive: undeclared apps are left alone. Every device command
+requires an explicit adb serial, the declared ABI must match the target, and
+`plan` never writes to the device (it may evaluate, fetch, and build locally).
+See [docs/LIMITS.md](docs/LIMITS.md) for the exact boundary between reconciled,
+ensure-only, attended, and unreachable state.
+
+## A taste
 
 ```nix
 {
-  device.name = "pixel";
-  apps.fdroid.packages = [ "org.fdroid.fdroid" "com.termux" "app.comaps" ];
-  apps.attended = [ "com.spotify.music" ]; # Play-catalog: asserted, human-installed
-  apps.cleanup = "none";                   # or "uninstall" for NixOS-style purity
+  device = {
+    name = "pixel";
+    abi = "arm64-v8a";
+    user = 0;
+  };
+
+  apps.fdroid.packages = [
+    "org.fdroid.fdroid"
+    "com.termux"
+  ];
+  apps.attended = [ "com.spotify.music" ];
+  apps.cleanup = "none";
+
+  android = {
+    darkMode = true;
+    privateDns = "opportunistic";
+    permissions."com.termux".grant = [
+      "android.permission.POST_NOTIFICATIONS"
+    ];
+    batteryOptimization.exempt = [ "com.termux" ];
+  };
 }
 ```
 
-APKs resolve through F-Droid's signed index into `apps.lock.json` and are
-fetched by sha256 into the Nix store — your phone's app payload is a real Nix
-closure. Pins are floors: converge installs and upgrades, never downgrades,
-never fights on-device updaters.
+F-Droid locks are resolved through a certificate-authenticated `entry.jar`,
+the signed `entry.json` index hash, and the per-APK hash. GitHub/Gitea assets
+are package-ID checked when locked. Every resulting artifact is fetched by
+hash into the Nix store. The engine needs no network once the complete converge
+closure—including controller tools and APKs—is present locally. Missing paths
+require a fetch from nixpkgs, the recorded app source, or a configured binary
+cache.
 
-## Docs
+## Start here
 
-- **[docs/USING.md](docs/USING.md)** — user guide: quick start, the full
-  option surface, `import` from an existing phone, semantics and boundaries.
-- **[docs/DEVELOPING.md](docs/DEVELOPING.md)** — contributor guide:
-  architecture, ground rules, the dev loop, how to add options and sources.
-- **[docs/PLAN.md](docs/PLAN.md)** — roadmap · **[docs/PRIMITIVES.md](docs/PRIMITIVES.md)** — verified adb capability matrix.
+- [docs/USING.md](docs/USING.md) — bootstrap, complete option surface, CLI,
+  safety, and semantics
+- [docs/LIMITS.md](docs/LIMITS.md) — what adb-shell cannot or does not manage
+- [docs/DEVELOPING.md](docs/DEVELOPING.md) — architecture, checks, and emulator
+  workflow
+- [docs/PRIMITIVES.md](docs/PRIMITIVES.md) — device-tested adb capability matrix
+- [docs/PLAN.md](docs/PLAN.md) — release gate and post-0.1 roadmap
+
+nix-android can be its own configuration flake or an input to an existing
+flake. The latter adds `androidConfigurations.<device>` beside existing
+`nixosConfigurations` and `darwinConfigurations`; see the existing-flake and
+multi-controller examples in [docs/USING.md](docs/USING.md).
 
 ## Development
 
-```bash
-direnv allow      # devenv shell: adb, jq, aapt2, pre-commit hooks
-just              # task list
-nix run .#emulator   # headless AOSP bench (KVM)
-nix run .#bench -- --serial emulator-5554          # plan
-nix run .#bench -- --serial emulator-5554 --apply  # converge
+```console
+direnv --version # install direnv first if this fails
+direnv allow
+just check
+just emu # x86_64 Linux with systemd only
+nix run .#android-rebuild -- plan --flake .#bench --serial emulator-5554
 ```
+
+Licensed under the [MIT License](LICENSE).

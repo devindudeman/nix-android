@@ -2,6 +2,7 @@
 /.devenv
 /.devenv.flake.nix
 /.direnv
+/.pre-commit-config.yaml
 devenv.local.nix
 # secrets
 .env

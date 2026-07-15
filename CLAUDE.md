@@ -1,43 +1,73 @@
-# CLAUDE.md — working in the nix-android repo
+# Working in nix-android
 
-nix-darwin, but for GrapheneOS/Android: converge a stock, locked-bootloader
-device toward a version-controlled Nix file over adb at uid 2000 — no root,
-security model untouched. Name is final (chosen 2026-07-15); CLI is
-`android-rebuild`, outputs are `androidConfigurations.<device>`.
+nix-android converges reachable Android/GrapheneOS device state toward a Nix
+configuration over adb shell uid 2000. It does not require root, an unlocked
+bootloader, a custom OS, or Nix on the phone. The public API is
+`lib.mkDevice`, `androidConfigurations.<device>`, and `android-rebuild`.
 
-- **New here? Read `docs/DEVELOPING.md`** (architecture, ground rules, dev
-  loop, how-to-add). `docs/PLAN.md` = roadmap; `docs/USING.md` = user-facing
-  behavior; `docs/PRIMITIVES.md` = verified adb capability matrix — **every
-  module option must cite a verified primitive**, no options for unproven
-  capabilities.
-- **⚠️ Safety protocol (non-negotiable):** Devin's Pixel 6 (GrapheneOS, daily
-  use) gets read-only probes and no-op/trivially-reversible round-trips ONLY.
-  All mutation-class testing runs on the emulator first
-  (`nix run .#emulator`), and touches real hardware only after emulator proof
-  plus Devin's explicit go-ahead. Never uninstall/suspend/revoke on his real
-  apps. Raw device captures (app inventory, settings dumps) are personal data:
-  they live in `~/Documents/phone-migration/`, never in this repo.
+Read these before changing behavior:
 
-## Local development
+- `docs/DEVELOPING.md` — architecture, checks, and contribution workflow
+- `docs/PRIMITIVES.md` — executed adb capability evidence
+- `docs/USING.md` — public behavior and complete option surface
+- `docs/LIMITS.md` — exact reconciliation and no-root boundaries
+- `docs/PLAN.md` — first-release gate and deferred roadmap
 
-`direnv allow` → devenv shell (adb, jq, aapt2; nixfmt/statix/deadnix/shellcheck
-pre-commit). `just` lists tasks. Bench loop:
-`nix run .#emulator` (headless AOSP, fresh userdata each launch) →
-`nix run .#bench -- --serial emulator-5554 [--apply]`.
+Every new module option must cite an executed read/write/read-back/graceful-
+reboot primitive. Do not expose a setting merely because `settings put`
+returned success.
 
-## Layout
+## Real-phone safety protocol
 
-`modules/options.nix` (option surface) · `lib/` (mkDevice: evalModules →
-manifest.json, APKs as hash-verified store paths) · `engine/converge.sh`
-(plan-by-default; `--apply`) · `scripts/update-lock.sh` (F-Droid index-v2 →
-apps.lock.json) · `scripts/atlas-probe.sh` (read-only device capture) ·
-`devices/` (device configs; bench = emulator).
+Devin's Pixel 6 is a production daily-use GrapheneOS phone.
 
-## Don't
+- Without explicit approval for a specific mutation, use read-only probes only.
+- Run all mutation-class tests on the AOSP emulator first.
+- Never uninstall, suspend, revoke, change roles, or alter settings on the
+  Pixel as an inferred test step.
+- Every target-specific adb invocation names its serial; unscoped `adb devices`
+  is discovery only, and two devices are commonly attached.
+- Never hard-reboot after writes. Allow write-behind state to settle and use a
+  graceful user-requested reboot in emulator persistence tests.
+- Raw inventories, settings dumps, and Atlas captures belong under
+  `~/Documents/phone-migration/`, never in Git.
 
-- Don't run `nix flake check` whole — devenv's task eval currently fails with
-  a spurious "path .drv is not valid"; build individual checks instead
-  (`nix build .#checks.x86_64-linux.bench-manifest --impure --accept-flake-config`).
-- Don't drop `--serial` in engine/adb calls — two devices are often attached.
-- Don't hard-reboot after mutations (write-behind state loss — PRIMITIVES.md).
-- Public release is Phase 5: write code and docs as if strangers will read them.
+## Local workflow
+
+```console
+direnv allow
+just fmt
+just check
+just emu
+nix run .#android-rebuild -- plan --flake .#bench --serial emulator-5554
+```
+
+For mutation-class development, apply only on the emulator:
+
+```console
+nix run .#android-rebuild -- switch --flake .#bench --serial emulator-5554
+```
+
+A real-phone `switch` is allowed only after the same mutation class passes the
+emulator and the owner explicitly approves the exact reviewed plan. Keep
+`apps.cleanup = "none"` unless each proposed removal receives separate approval.
+
+Do not run whole-tree `nix flake check`; devenv task evaluation currently fails
+with a spurious `path .drv is not valid`. `just check` is the canonical focused
+gate.
+
+## Code map
+
+`modules/options.nix` defines the option surface. `lib/default.nix` evaluates
+modules, validates source/lock relationships, fetches APKs, and writes the
+versioned manifest. `engine/converge.sh` validates, plans, and applies the
+manifest. `scripts/update-lock.sh` authenticates signed F-Droid entry metadata
+and resolves release assets. `scripts/atlas-probe.sh` is read-only.
+
+Public v1 manages owner user 0 only. `mkDevice.system` is required and supported
+controller outputs are `x86_64-linux` and `aarch64-darwin`. Packaged scripts
+must use Nix's absolute Bash path, not ambient macOS Bash.
+
+Keep changes small, update nearby public/developer docs in the same pass, and
+leave one runnable check for non-trivial logic. Do not push until the release
+gate in `docs/PLAN.md` is actually satisfied and Devin asks to publish.

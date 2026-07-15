@@ -1,133 +1,95 @@
-# PRIMITIVES — verified adb capability matrix
+# Verified adb primitives
 
-> Phase 0 ground-truthing. Every row below was **actually executed**, not
-> recalled. Raw captures (inventory, `cmd -l`, settings dumps — personal data,
-> kept out of this public-mirrored repo) live in `~/Documents/phone-migration/`.
+Every option in `modules/options.nix` is backed by an executed read/write test.
+Raw captures contain personal device state and live only under
+`~/Documents/phone-migration/`; this document records the distilled evidence.
 
-**Session 1 — 2026-07-15.** Device: Pixel 6 (oriole), **GrapheneOS build
-2026071101** (Android 17 / SDK 37, patch 2026-07-05), uid 2000 over USB adb.
-Surface size: 333 `cmd` services, 401 settings keys, 35 user apps.
+## GrapheneOS read-only surface
 
-## Verified WORKING at shell (read + write + reversible round-trip)
+Device: Pixel 6 (`oriole`), GrapheneOS build `2026071101`, SDK 37, security
+patch `2026-07-05`, adb shell uid 2000.
 
-| Primitive | Read | Write | Notes |
-|-----------|------|-------|-------|
-| `cmd role get/add-role-holder` | ✓ | ✓ | Default browser/SMS/home/dialer — declarative default apps confirmed |
-| `settings put global/secure` | ✓ | ✓ | incl. `private_dns_mode`/`private_dns_specifier`, `sysui_qs_tiles` (full QS layout incl. `custom(...)` third-party tiles) |
-| `cmd uimode night` | ✓ | ✓ | Dark mode |
-| `cmd deviceidle whitelist +/-pkg` | ✓ | ✓ | Battery-optimization exemptions; add/remove round-trip clean |
-| `cmd wifi add-network / list-networks / forget-network` | ✓ | ✓ | **Declarative Wi-Fi confirmed on GrapheneOS** — dummy wpa2 network added, listed, forgotten cleanly. sops-PSK design is GO |
-| `ime list` | ✓ | untested | Keyboards enumerable; `set-default` next session |
-| `appops get` | ✓ | untested | Per-app op modes readable |
-| `pm list packages -3 --show-versioncode -i --user 0` | ✓ | — | Inventory incl. installer attribution |
-| GrapheneOS **Network** permission | ✓ | expected | = runtime `android.permission.INTERNET` (granted flags visible in dumpsys) → `pm grant/revoke` territory |
-| GrapheneOS **Sensors** permission | ✓ | expected | = runtime `android.permission.OTHER_SENSORS`, same mechanism |
+The 2026-07-15 Atlas rerun listed 333 `cmd` services and 401 current settings
+keys. After fixing adb's stdin-drain behavior, the capture contains exactly 333
+service headers for 333 listed services. A help section does not imply a
+writable or persistent interface.
 
-## Verified LIMITS
+## Verified read/write primitives
 
-## Atlas raw capture (2026-07-15, GrapheneOS 2026071101)
+| Primitive | Device evidence | Public option |
+| --- | --- | --- |
+| `adb install -r --user 0`, `adb uninstall --user 0` | AOSP 35 install/reinstall/removal round trips; additive F-Droid install and version read-back on locked GrapheneOS | managed apps and explicit cleanup |
+| `settings get/put --user 0 global/secure/system` | Private DNS and representative keys read/write; all three namespaces exercised on AOSP bench | `android.settings.*`, `android.privateDns` |
+| `cmd uimode night` | real-device off/on convergence with no-op read-back; bench idempotence and reboot persistence | `android.darkMode` |
+| `cmd role get-role-holders/add-role-holder --user 0` | real-device reversible role check; bench read/idempotence | `android.defaultApps.*` |
+| `pm grant/revoke --user 0` | AOSP POST_NOTIFICATIONS round trip reflected in dumpsys | `android.permissions.*` |
+| `pm disable-user --user 0` plus `pm list -d` | AOSP change/read-back/idempotence | `android.packages.disabled` |
+| `cmd deviceidle whitelist +/-package` | real-device reversible check; AOSP change/read-back/idempotence | `android.batteryOptimization.exempt` |
 
-`scripts/atlas-probe.sh` → `~/Documents/phone-migration/probes/`. **335 `cmd`
-services; 134 have no shell interface, ~200 do.** No graphene-named services —
-supports the exploit-protection-out-of-reach hypothesis. New find from the walk:
-`cmd locale` has clean get/set symmetry for **device locale AND per-app locales**
-(`set-app-locales`, `set-device-locale`) — strong module candidate; write test
-on emulator.
+Raw `android.settings` is intentionally an expert surface. This table proves
+the command path, not every Android-version-specific key. A key is suitable
+only after a real change reads back and survives a graceful reboot.
 
-| Boundary | Evidence |
-|----------|----------|
-| Work profile: mutations blocked, **inventory readable** | Root cause verified in AOSP UserController: shell is denied `--user` access to users carrying `DISALLOW_DEBUGGING_FEATURES` (set by managed provisioning; Shelter clears other restrictions but not this one — stock Android, not Graphene). BUT `dumpsys package <pkg>` reports per-user `installed=` state with no gate (verified live: GMS user0=false/user10=true) → read-only work-profile inventory works today. Future unlock: profile owner (Shelter patch) could `clearUserRestriction(DISALLOW_DEBUGGING_FEATURES)` — per API docs; untested. |
-| Secondary profiles unreachable | `pm` against user 10 (Work profile) → `SecurityException: Shell does not have permission to access user 10`. Converge scope = owner (user 0) only; Work profile belongs to its MDM; Private space (user 11) presumed same — verify |
-| GrapheneOS per-app exploit protection (memtag etc.) | Not present in any `settings` namespace — storage location unknown, likely out of shell reach. Dig later; provisional LIMITS entry |
+GrapheneOS Network and Sensors controls map to runtime
+`android.permission.INTERNET` and `android.permission.OTHER_SENSORS` in package
+state. The public engine uses the same verified `pm grant/revoke` mechanism,
+but no destructive permission test was performed on the daily phone.
 
-## Session 2 — 2026-07-15 (emulator bench, AOSP API 35 x86_64 userdebug)
-
-Bench: `nix run .#emulator` (headless, KVM on duo). All probes ran with explicit
-`-s emulator-5554`; adb refuses untargeted commands with two devices attached —
-extra guardrail. Test payload: F-Droid.apk (12 MB).
-
-All verified on the bench, full write round-trips:
+## Other verified candidates without modules
 
 | Primitive | Result |
-|-----------|--------|
-| Silent `adb install` / `uninstall` / reinstall | ✓ zero prompts, versionCode readable |
-| `pm grant/revoke` (POST_NOTIFICATIONS) | ✓ reflected in dumpsys immediately |
-| `appops set/get` round-trip | ✓ |
-| `ime set` | ✓ "Input method … selected" |
-| `cmd netpolicy add/remove restrict-background-blacklist <uid>` | ✓ |
-| `pm suspend/unsuspend` | ✓ suspended=true visible in pm dump |
-| `cmd locale set-app-locales` set/get/clear | ✓ per-app locale fully scriptable |
-| `cmd package get-app-links` | ✓ read incl. **signer cert hash** — feeds the engine's signature-mismatch detection |
+| --- | --- |
+| `cmd wifi add-network/list-networks/forget-network` | dummy WPA2 network added, observed, and removed on GrapheneOS |
+| `ime list`, `ime set` | enumeration on GrapheneOS; selection round trip on AOSP |
+| `appops get/set` | AOSP mode round trip |
+| `cmd netpolicy add/remove restrict-background-blacklist` | AOSP round trip |
+| `pm suspend/unsuspend` | AOSP suspended state visible in package dump |
+| `cmd locale set-app-locales/get-app-locales` | AOSP set/get/clear round trip |
+| `cmd package get-app-links` | exposes signer information only for applicable app-link packages; not a general installed-signer API |
 
-**⚠ Persistence nuance (the session's big find):** after an abrupt `adb reboot`,
-only `settings put` survived — deviceidle whitelist, per-app locale,
-`pm disable-user`, and appops all reverted (while installed apps survived, so
-/data was intact). With a ~90 s settle + graceful `svc power reboot
-userrequested`, **everything persisted**. Interpretation: those subsystems
-write-behind their /data/system XMLs and flush on clean shutdown; the settings
-provider commits synchronously. Engine rules: (1) never hard-reboot right after
-converge; (2) persistence tests must use graceful reboots. Normal power-menu
-reboots are graceful, so real-world risk is low. (Settle-vs-graceful not
-bisected — recipe recorded as both.)
+These are candidates, not undocumented options. They still need the full
+version/persistence design and an engine idempotence test.
 
-**LIMITS correction:** Private space (user 11) **is shell-enumerable** on the
-Pixel (`pm list packages --user 11` works) — unlike the Work profile (user 10,
-SecurityException). Scope: owner + Private space manageable; Work profile
-belongs to its MDM.
+## Rejected and bounded primitives
 
-## Session 3 — 2026-07-15 (real devices, read-only + first stock-Android data point)
+| Boundary | Evidence |
+| --- | --- |
+| Quick Settings layout | `settings put secure sysui_qs_tiles` accepted a write, then SystemUI restored its own value. It fails read-back/idempotence and has no option. |
+| Work profile | package inventory is visible through dumpsys, but shell mutations against the managed user returned `SecurityException` because `DISALLOW_DEBUGGING_FEATURES` applies. |
+| Private Space | package enumeration worked on the tested GrapheneOS build, unlike the work profile. It remains outside public v1 pending broader multi-user proof. |
+| GrapheneOS exploit protection | no writable state was found in the settings or `cmd` surface. |
+| App data and protected identity state | no adb-shell primitive bypasses Android backup opt-out, Keystore, or eSIM boundaries. |
 
-- **Stock Android 16 (Pixel 9 Pro, caiman): everything read-side works
-  identically to GrapheneOS** — `pm list -3 -i` inventory (184 apps), import
-  classification (157 Play → attended), lock resolution, manifest build, and
-  a live `plan` (result: 0 installs / 0 removals / 1 available upgrade across
-  174 declared apps — the config faithfully described the device).
-- **Installer attribution ≠ repo of origin:** apps installed by the F-Droid
-  *client* can come from third-party repos (FUTO keyboard, Gadgetbridge
-  nightly, IzzyOnDroid) and are NOT on f-droid.org — `update-lock` fails
-  loudly, import can't tell. Mitigation today: reclassify as attended.
-  Real fix: `apps.fdroid.repos` (same index-v2 format, per-repo URL) — noted
-  in PLAN.
-- GrapheneOS device (Pixel 6): three explicitly-approved uninstalls executed
-  cleanly (`uninstall --user 0`); `DELETE_FAILED_INTERNAL_ERROR` from
-  all-users uninstall on a multi-profile device is cosmetic — verify with a
-  user-0 query, not the exit message.
+## Persistence finding
 
-## Session 4 — 2026-07-15 (Phase 2 converge, bench)
+On the AOSP bench, an abrupt `adb reboot` immediately after writes preserved
+settings and installed apps but lost recently changed device-idle, app-op,
+locale, and package-restriction state. After allowing state to settle and using
+`svc power reboot userrequested`, the same state persisted. These services use
+write-behind files under `/data/system`.
 
-**6 converge categories verified idempotent** (plan → apply → re-plan no-op) on
-AOSP 35 bench: `settings put` (global/secure/system), `cmd uimode night`
-(darkMode), private DNS (settings sugar), `pm disable-user` (packages.disabled),
-`pm grant`/`revoke` (permissions), `cmd deviceidle whitelist` (batteryOptimization),
-`cmd role add-role-holder` (defaultApps, read+idempotence — a real role *change*
-needs 2 candidate apps, not on the single-SMS-app image; write was Pixel-verified
-session 1).
+Rules derived from the test:
 
-**REJECTED: quick-settings tiles.** `settings put secure sysui_qs_tiles`
-accepts a no-op write but **SystemUI reverts any real change** — wrote
-`internet,bt,flashlight,dark`, device snapped back to the full default list.
-Fails read-back/idempotence → not a supported option. Lesson: a no-op write
-succeeding does NOT verify a primitive; test a real change (session-1 marked this
-"verified" on a no-op — wrong). Possible future path: `cmd statusbar`.
+1. never hard-reboot immediately after converge;
+2. use graceful user-requested reboot for persistence tests;
+3. require a post-reboot no-op plan before calling a primitive persistent.
 
-**Engine bugs found by the idempotence bar** (all fixed, see DEVELOPING.md
-"Bash gotchas"): adb-wrapper infinite recursion; `IFS=$'\t' read` collapsing
-empty interior fields (→ `settings put key ''`); adb draining while-read stdin.
+## Stock Android read-side
 
-**Emulator hard-crashed the host once** (host-GPU Vulkan `VulkanAllocateHostMemory`
-balloon → unreclaimable shmem → hang, no OOM log). Fixed operationally: run in a
-memory-capped systemd scope + `-gpu swiftshader_indirect` + foreground binary
-(recipe in DEVELOPING.md). Not a nix-android bug — a bench-operation hazard.
+A separate stock Android 16 Pixel accepted the same explicit-serial import and
+plan read paths for owner-user package inventory. This is one read-side data
+point, not a blanket compatibility claim for every OEM Android build.
 
-## Next session
+## Engine bugs caught by hardware-shaped tests
 
-- [ ] Pixel no-op confirmations (with go-ahead): grant-what's-granted, ime-set-current
-- [ ] (emu) `pm hide`, `cmd package set-app-links --package` write side
-- [ ] (emu) `cmd role` write round-trip (role service on emulator), `settings put system`
-- [ ] F-Droid index-v2 → versionCode/APK-URL/sha256 resolution (pure curl+jq, no device)
-- [ ] Obtainium export round-trip (has an app list on the Pixel? read-only export)
-- [ ] Atlas classification pass: cmd-help.txt → docs/ATLAS.md skeleton
-- [ ] **Phase 1 start**: module system skeleton (`lib.evalModules` → manifest.json golden test)
+- adb consumed a process-substitution loop's stdin, so only its first item ran;
+  all engine adb calls now read from `/dev/null`.
+- tab-separated `read` collapsed empty setting fields; internal tuples now use
+  ASCII Unit Separator.
+- adb joins `shell` arguments before the remote shell parses them; the engine
+  now builds one single-quoted remote command.
+- malformed JSON in a process substitution could bypass `set -e`; a complete
+  manifest schema check now runs before the first adb read.
 
-Deprioritized: Wi-Fi module (verified working, stays a feature, not on Devin's
-personal critical path).
+The mandatory release bar remains plan → apply → direct verification → no-op
+plan → graceful reboot → no-op plan on the AOSP bench.
