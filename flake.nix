@@ -79,6 +79,7 @@
               name = "nix-android-update-lock";
               runtimeInputs = with pkgs; [
                 aapt
+                apksigner
                 curl
                 coreutils
                 gnugrep
@@ -98,6 +99,7 @@
               runtimeInputs = with pkgs; [
                 android-tools
                 coreutils
+                curl
                 gawk
                 gnugrep
                 gnused
@@ -225,6 +227,7 @@
                   nativeBuildInputs = [
                     pkgs.bash
                     pkgs.coreutils
+                    pkgs.curl
                     pkgs.gnugrep
                     pkgs.gnused
                     pkgs.jq
@@ -386,8 +389,11 @@
               pkgs.runCommand "nix-android-update-lock-safety"
                 {
                   nativeBuildInputs = with pkgs; [
+                    aapt
+                    apksigner
                     coreutils
                     curl
+                    gnugrep
                     gnutar
                     gnused
                     jdk_headless
@@ -398,7 +404,8 @@
                 ''
                   ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-update-lock.sh \
                     ${inputs.self.packages.${system}.update-lock}/bin/nix-android-update-lock \
-                    ${fixtureApk}
+                    ${fixtureApk} \
+                    ${inputs.self}/scripts/update-lock.sh
                   touch $out
                 '';
             validation =

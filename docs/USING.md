@@ -506,11 +506,58 @@ nix run .#android-rebuild -- suggest-sources --flake .#pixel
 
 It is read-only and needs no device. For each `apps.play` and `apps.attended`
 entry it checks the main f-droid.org archive and IzzyOnDroid — reusing the same
-signed `entry.jar` and index-v2 verification `update` performs — and prints the
-available packages plus a ready-to-paste `apps.fdroid` block. Availability is a
-suggestion, not a guarantee of the same app or signer: move an entry only after
-you recognize it, then run `update` (which re-verifies and pins each APK) before
-converging. Packages not found on either repo stay `apps.play`/`apps.attended`.
+signed `entry.jar` and index-v2 verification `update` performs, including the
+signing-lineage and full lock-field completeness the resolver requires, so a
+suggestion is never something `update` would then reject. It prints the
+migration: the packages to remove from `apps.play`/`apps.attended` and the
+`apps.fdroid` block to add. Availability is a suggestion, not a guarantee of the
+same app or signer: move an entry only after you recognize it, then run `update`
+(which re-verifies and pins each APK) before converging. Packages not found stay
+`apps.play`/`apps.attended`.
+
+GitHub and Gitea releases have no signed package-id-to-repo index, so a repo is
+never trusted from its name alone — the model is broad, fallible discovery
+followed by package-id verification and a human signer check.
+
+**Verify** a repo you already know with `--release-hint`. It resolves that
+release and matches the APK's package id (the same check `update` enforces,
+trying each release flavor until one matches):
+
+```console
+nix run .#android-rebuild -- suggest-sources --flake .#pixel \
+  --release-hint org.example.app=owner/repo \
+  --release-hint com.example.other=git.example.com/owner/repo
+```
+
+`owner/repo` is GitHub; `host/owner/repo` is Gitea. The resolver requires the
+release APK to carry a valid signature and records every signing-certificate
+SHA-256 digest; a confirmed hint is rendered as an `apps.release` entry with
+those digests shown alongside as **advisory evidence**. This establishes
+**package-id compatibility, not source identity**: a different signer's APK with
+the same package id installs on a clean phone, and the signer also governs
+signature-level permissions and shared-uid identity (nix-android does not yet
+enforce signer continuity — see [LIMITS.md](./LIMITS.md)). Confirm the shown
+signer is one you trust before relying on it. An unverifiable hint warns (with the underlying reason) and stays
+`apps.play`/`apps.attended`. An explicit hint takes precedence even when the
+package is also on F-Droid (your explicit intent wins; the F-Droid availability
+is noted).
+
+**Discover** candidate repos you do not know with `--discover`, which looks up
+each unresolved candidate in the crowdsourced [Obtainium
+catalog](https://github.com/ImranR98/apps.obtainium.imranr.dev) (keyed by
+package id) and proposes GitHub/Codeberg repos to verify:
+
+```console
+nix run .#android-rebuild -- suggest-sources --flake .#pixel --discover
+```
+
+Discovery is opt-in because it sends your candidate package ids to a third-party
+host over the network. Its output is deliberately **not** promoted into the
+migration: the catalog is untrusted and a package-id match alone does not prove
+signer continuity (which nix-android does not yet enforce, see
+[LIMITS.md](./LIMITS.md)). Each proposal is printed with the `--release-hint`
+command to confirm it — recognize the app and ideally check its signer, then
+verify, then add.
 For the field-by-field ADB read/write/import classification, see
 [CAPABILITIES.md](./CAPABILITIES.md).
 

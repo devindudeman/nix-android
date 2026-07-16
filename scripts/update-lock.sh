@@ -54,7 +54,12 @@ inspect_release_asset() { # $1=package $2=downloaded asset $3=display name
   local -a apkpaths
   sha=$(sha256sum "$asset" | cut -d' ' -f1)
   if [[ $display == *.tar.gz ]]; then
-    mapfile -t apkpaths < <(tar -tzf "$asset" | grep '\.apk$' || true)
+    # Bound enumeration so a decompression bomb with millions of members cannot
+    # stall the scan; a real single-apk archive lists far fewer entries.
+    local entries member_size
+    entries=$(tar -tzf "$asset" 2>/dev/null | head -n 10001 | wc -l)
+    [ "$entries" -le 10000 ] || { echo "archive has too many members: $display" >&2; return 1; }
+    mapfile -t apkpaths < <(tar -tzf "$asset" 2>/dev/null | grep '\.apk$' || true)
     [ "${#apkpaths[@]}" -eq 1 ] || { echo "expected exactly one .apk inside $display, found ${#apkpaths[@]}" >&2; return 1; }
     apkpath=${apkpaths[0]}
     if [[ $apkpath == /* || $apkpath == -* ]] || [[ /$apkpath/ == */../* ]]; then
@@ -63,18 +68,38 @@ inspect_release_asset() { # $1=package $2=downloaded asset $3=display name
     fi
     listing=$(tar -tzvf "$asset" -- "$apkpath")
     [ "${listing:0:1}" = - ] || { echo ".apk archive member is not a regular file: $apkpath" >&2; return 1; }
+    # Cap the uncompressed member size (field 3 of tar -tzv) so a small archive
+    # cannot expand into an arbitrarily large APK on disk.
+    member_size=$(awk 'NR==1{print $3}' <<<"$listing")
+    [[ $member_size =~ ^[0-9]+$ ]] && [ "$member_size" -le $((300 * 1024 * 1024)) ] \
+      || { echo "archive member size unknown or exceeds 300M: $apkpath" >&2; return 1; }
     tmp=$(mktemp -d)
     apkfile="$tmp/app.apk"
     tar -xzOf "$asset" -- "$apkpath" > "$apkfile"
   fi
   badging=$(aapt2 dump badging "$apkfile") || { [ -z "${tmp:-}" ] || rm -rf "$tmp"; return 1; }
-  [ -z "${tmp:-}" ] || rm -rf "$tmp"
   got_pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
-  [ "$got_pkg" = "$p" ] || { echo "package mismatch: declared $p, APK says $got_pkg" >&2; return 1; }
-  jq -n --arg sha "$sha" --arg apkpath "$apkpath" \
+  [ "$got_pkg" = "$p" ] || { echo "package mismatch: declared $p, APK says $got_pkg" >&2; [ -z "${tmp:-}" ] || rm -rf "$tmp"; return 1; }
+  # Source identity is the signing certificate, not the package id. Require a
+  # valid signature and record every signer SHA-256 so callers can confirm the
+  # signer they trust (package-id match alone is only compatibility).
+  local certs signers_json
+  if ! certs=$(apksigner verify --print-certs "$apkfile" 2>/dev/null); then
+    echo "APK signature did not verify for $p" >&2; [ -z "${tmp:-}" ] || rm -rf "$tmp"; return 1
+  fi
+  [ -z "${tmp:-}" ] || rm -rf "$tmp"
+  # apksigner prints either "Signer #N certificate SHA-256 digest: <hex>" or,
+  # for v3.1 key rotation, "Signer (minSdkVersion=.., maxSdkVersion=..)
+  # certificate SHA-256 digest: <hex>". Match both by anchoring on the digest
+  # line, not the signer prefix; the {64} length excludes SHA-1/MD5 lines.
+  signers_json=$(sed -n 's/.*certificate SHA-256 digest:[[:space:]]*\([0-9A-Fa-f]\{64\}\).*/\1/p' <<<"$certs" \
+    | tr 'A-F' 'a-f' | sort -u | jq -R . | jq -sc .)
+  [ "$(jq -r 'length' <<<"$signers_json")" -gt 0 ] \
+    || { echo "no APK signer certificate for $p" >&2; return 1; }
+  jq -n --arg sha "$sha" --arg apkpath "$apkpath" --argjson signers "$signers_json" \
     --arg code "$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$badging")" \
     --arg name "$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")" \
-    '{sha256: $sha, apkPath: $apkpath, versionCode: ($code | tonumber), versionName: $name}'
+    '{sha256: $sha, apkPath: $apkpath, versionCode: ($code | tonumber), versionName: $name, signerSha256: $signers}'
 }
 
 while [ $# -gt 0 ]; do
@@ -276,11 +301,14 @@ resolved=$({
   # Shared resolver for GitHub + Gitea releases (compatible asset JSON shape).
   # Assets may be bare .apk or a .tar.gz containing one (recorded as apkPath).
   resolve_release() { # $1=pkg $2=api-url $3=source-tag
-    local p=$1 api=$2 srctag=$3 rel asset asset_name url tmp inspected apkpath sha
-    rel=$(curl --proto '=https' --tlsv1.2 -fsS "$api")
-    # Prefer a universal APK (no abi in the name) → abi-suffixed APK →
-    # abi-matching .tar.gz → universal .tar.gz.
-    asset=$(jq -c --arg abi "$abi" '
+    local p=$1 api=$2 srctag=$3 rel assets asset_name url tmp inspected apkpath sha matched tried=0
+    rel=$(curl --proto '=https' --tlsv1.2 -fsS --max-time 60 --max-filesize 10M "$api")
+    # Rank candidate assets: universal APK (no abi in the name) → abi-suffixed
+    # APK → abi-matching .tar.gz → universal .tar.gz. A release may carry
+    # several flavors (e.g. app-release.apk and app-fdroid-release.apk); the
+    # package id — not the filename — decides, so try them in order until one
+    # matches instead of guessing the first.
+    assets=$(jq -c --arg abi "$abi" '
       def architecture: "arm64|aarch64|armeabi|armv7|x86|x64|amd64";
       def wanted:
         if $abi == "arm64-v8a" then "arm64|aarch64"
@@ -292,21 +320,35 @@ resolved=$({
          + [$apks[] | select(.name | test(wanted; "i"))]
          + [$tars[] | select(.name | test(wanted; "i"))]
          + [$tars[] | select(.name | test(architecture; "i") | not)])
-      | .[0] // error("no suitable .apk/.tar.gz asset")
-      | {name, url: .browser_download_url}' <<<"$rel")
-    asset_name=$(jq -r .name <<<"$asset")
-    url=$(jq -r .url <<<"$asset")
-    [[ $url == https://* ]] || { echo "release asset URL is not HTTPS: $url" >&2; exit 1; }
+      | map({name, url: .browser_download_url})' <<<"$rel")
+    [ "$(jq -r 'length' <<<"$assets")" -gt 0 ] || { echo "no suitable .apk/.tar.gz asset in release for $p" >&2; exit 1; }
     tmp=$(mktemp -d)
-    curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$tmp/asset"
-    inspected=$(inspect_release_asset "$p" "$tmp/asset" "$asset_name")
+    matched=
+    # Bound the work an untrusted release can impose: at most 8 candidate
+    # downloads, each time- and size-capped.
+    while IFS=$'\t' read -r asset_name url; do
+      [ -z "$asset_name" ] && continue
+      [[ $url == https://* ]] || { echo "release asset URL is not HTTPS: $url" >&2; rm -rf "$tmp"; exit 1; }
+      [ "$tried" -lt 8 ] || { echo "gave up after $tried release assets for $p" >&2; break; }
+      tried=$((tried + 1))
+      curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --max-filesize 500M "$url" -o "$tmp/asset" \
+        || { echo "download failed or exceeded limits for $asset_name" >&2; continue; }
+      # inspect_release_asset returns non-zero (not exit) on a package-id,
+      # signature, or archive mismatch, so a wrong-flavor asset advances the loop.
+      if inspected=$(inspect_release_asset "$p" "$tmp/asset" "$asset_name" 2>/dev/null); then
+        matched=$url
+        break
+      fi
+    done < <(jq -r '.[] | [.name, .url] | @tsv' <<<"$assets")
     rm -rf "$tmp"
+    [ -n "$matched" ] || { echo "no release asset matched package id $p (tried $tried)" >&2; exit 1; }
     sha=$(jq -r .sha256 <<<"$inspected")
     apkpath=$(jq -r .apkPath <<<"$inspected")
-    jq -n --arg p "$p" --arg src "$srctag" --arg url "$url" --arg sha "$sha" --arg apkpath "$apkpath" \
+    jq -n --arg p "$p" --arg src "$srctag" --arg url "$matched" --arg sha "$sha" --arg apkpath "$apkpath" \
+      --argjson signers "$(jq -c .signerSha256 <<<"$inspected")" \
       --arg code "$(jq -r .versionCode <<<"$inspected")" \
       --arg name "$(jq -r .versionName <<<"$inspected")" \
-      '{($p): ({versionCode: ($code | tonumber), versionName: $name, url: $url, sha256: $sha, source: $src}
+      '{($p): ({versionCode: ($code | tonumber), versionName: $name, url: $url, sha256: $sha, signerSha256: $signers, source: $src}
                + (if $apkpath != "" then {apkPath: $apkpath} else {} end))}'
   }
 

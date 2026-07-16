@@ -30,8 +30,9 @@ pairs must fail closed instead of ignoring desired state.
 | `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
 | `engine/read-state.sh` | Shared device-output parsers, sourced by the engine and the bench oracle |
 | `scripts/test-read-state.sh` | Raw-output golden fixtures pinning every shared parser (`engine-parsers` check) |
-| `scripts/suggest-sources.sh` | Read-only de-Play curation: which `apps.play`/`apps.attended` entries are on a hash-lockable F-Droid source (reuses `update-lock --fetch-index`) |
+| `scripts/suggest-sources.sh` | Read-only de-Play curation: F-Droid membership, `--discover` (Obtainium catalog proposals), and `--release-hint` GitHub/Gitea verification (reuses `update-lock --fetch-index` and the resolver) |
 | `scripts/fdroid-eligibility.sh` | Shared jq version/lineage selector, sourced by `update-lock.sh` (pins) and `suggest-sources.sh` (reports) so availability never diverges from lockability |
+| `scripts/smoke-suggest-sources.sh` | Manual live check of release-hint verification against a real public GitHub release (network; not in CI) |
 | `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `assist`, `bootstrap`, `import`, and `suggest-sources` CLI |
 | `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
 | `scripts/import.sh` | Read-only capture orchestration and starter Nix rendering |

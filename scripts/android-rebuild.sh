@@ -29,11 +29,15 @@ Usage:
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
                          [--obtainium-export PATH] [--app-manager-export PATH]
-  android-rebuild suggest-sources --flake REF#DEVICE
+  android-rebuild suggest-sources --flake REF#DEVICE [--discover] [--release-hint PKG=owner/repo ...]
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
 suggest-sources is read-only and device-free: it reports which apps.play /
-apps.attended entries are published on a hash-lockable F-Droid source.
+apps.attended entries are published on a hash-lockable F-Droid source, checks
+any --release-hint GitHub/Gitea repo for package-id compatibility (recording its
+signer for you to confirm), and with --discover proposes candidate repos from
+the Obtainium catalog (a network query to a third-party host with your candidate
+package ids).
 EOF
 }
 
@@ -53,12 +57,19 @@ app_manager_export=
 watch=0
 flake_set=0
 lock_set=0
+release_hints=()
+discover=0
 while [ $# -gt 0 ]; do
   case $1 in
   --flake)
     [ $# -ge 2 ] || { echo "--flake requires a value" >&2; exit 2; }
     flakeref=$2; flake_set=1; shift 2
     ;;
+  --release-hint)
+    [ $# -ge 2 ] || { echo "--release-hint requires PKG=owner/repo" >&2; exit 2; }
+    release_hints+=("$2"); shift 2
+    ;;
+  --discover) discover=1; shift ;;
   --serial)
     [ $# -ge 2 ] || { echo "--serial requires a value" >&2; exit 2; }
     serial=$2; shift 2
@@ -113,6 +124,14 @@ if [ -n "$app_manager_export" ] && [ "$cmd" != import ]; then
 fi
 if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
   echo "--watch is only valid with assist" >&2
+  exit 2
+fi
+if [ "${#release_hints[@]}" -gt 0 ] && [ "$cmd" != suggest-sources ]; then
+  echo "--release-hint is only valid with suggest-sources" >&2
+  exit 2
+fi
+if [ "$discover" -eq 1 ] && [ "$cmd" != suggest-sources ]; then
+  echo "--discover is only valid with suggest-sources" >&2
   exit 2
 fi
 
@@ -171,8 +190,10 @@ suggest-sources)
     --apply 'c: c.apps.play ++ c.apps.attended' --json | jq -r '.[]')
   abi=$(nix eval "${nixargs[@]}" "$attr.config" --apply 'c: c.device.abi' --raw)
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)/bin/nix-android-update-lock
-  exec "$nix_android_bash" "$src/scripts/suggest-sources.sh" \
-    --resolver "$resolver" --abi "$abi" <<<"$candidates"
+  suggest_args=(--resolver "$resolver" --abi "$abi")
+  [ "$discover" -eq 0 ] || suggest_args+=(--discover)
+  for h in ${release_hints[@]+"${release_hints[@]}"}; do suggest_args+=(--release-hint "$h"); done
+  exec "$nix_android_bash" "$src/scripts/suggest-sources.sh" "${suggest_args[@]}" <<<"$candidates"
   ;;
 update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \

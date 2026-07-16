@@ -103,13 +103,20 @@ that, not against surface breadth.
   completeness). It prints the migration the user applies by hand — the list
   to remove from `apps.play`/`apps.attended` and the `apps.fdroid` block to
   add — then `update` pins them. Against a 186-app import it surfaced 30.
+- **Release-source discovery and verification.** The model is broad, fallible
+  discovery then package-id verification and a human signer check. `--discover`
+  looks up each unresolved candidate in the crowdsourced Obtainium catalog
+  (both `configs[]` and `config` schemas, keyed by package id) and proposes
+  GitHub/Codeberg repos — opt-in, because it queries a third-party host with
+  the candidate package ids, and never auto-promoted since the catalog is
+  untrusted. `--release-hint PKG=owner/repo` (GitHub) or `PKG=host/owner/repo`
+  (Gitea) confirms a repo through the real resolver, matching the apk package
+  id (iterating release flavors until one matches) and surfacing the resolved
+  signer for the user to confirm. Package-id match is compatibility, not source
+  identity; signer continuity is not yet enforced.
 
 ### Next
 
-- **Release-source discovery.** Extend `suggest-sources` to also report when a
-  candidate is published as a GitHub/Gitea release (the `apps.release`
-  sources), not only F-Droid repos. Needs a metadata match story that does not
-  guess the wrong upstream.
 - **Optional Device Owner lane (emulator prototype).** `dpm set-device-owner`
   during a wiped-device bootstrap is the only no-root path to silent install
   and true cleanup, and its "no accounts on device" precondition is naturally

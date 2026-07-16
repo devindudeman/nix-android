@@ -2,10 +2,13 @@
 # Offline, executable regression test for the signed F-Droid resolver.
 set -euo pipefail
 
-updater=${1:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT}
-fixture_apk=${2:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT FIXTURE_APK}
+updater=${1:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT FIXTURE_APK [RAW_SCRIPT]}
+fixture_apk=${2:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT FIXTURE_APK [RAW_SCRIPT]}
+raw_script=${3:-}   # the update-lock.sh source, for the fake-curl release test
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# The nix build sandbox's $HOME is unwritable; aapt2/java need a writable one.
+export HOME="$tmp"
 repo="$tmp/repo"
 mkdir -p "$repo" "$tmp/jar"
 
@@ -130,6 +133,48 @@ done
 if "$updater" --inspect-release-asset org.example.wrong "$fixture_apk" >/dev/null 2>&1; then
   echo "release APK package mismatch unexpectedly succeeded" >&2
   exit 1
+fi
+
+# Multi-flavor iteration: a release whose first ranked asset is the WRONG
+# package (e.g. app-fdroid-release.apk beside app-release.apk) must fall through
+# to the correct one instead of failing on the first. Driven through the raw
+# script with a fake curl so it is fully offline and deterministic.
+if [ -n "$raw_script" ]; then
+  fakebin="$tmp/fakebin"; mkdir -p "$fakebin"
+  bash_path=$(command -v bash)
+  # Both asset names are arch-less, so ranking keeps their listed order:
+  # the wrong flavor is offered first.
+  jq -n '{assets: [
+    {name: "app-wrongflavor-release.apk", browser_download_url: "https://fake.example/wrong.apk"},
+    {name: "app-release.apk", browser_download_url: "https://fake.example/right.apk"}
+  ]}' > "$tmp/release.json"
+  cat > "$fakebin/curl" <<EOF
+#!$bash_path
+set -euo pipefail
+url=""; out=""; prev=""
+for a in "\$@"; do
+  case "\$a" in https://*) url="\$a" ;; esac
+  [ "\$prev" = -o ] && out="\$a"
+  prev="\$a"
+done
+case "\$url" in
+  *releases/latest) cat "$tmp/release.json" ;;
+  *wrong.apk) printf 'not-an-apk' > "\$out" ;;   # aapt fails -> inspection fails
+  *right.apk) cp "$fixture_apk" "\$out" ;;         # matches org.fdroid.fdroid
+  *) echo "fake curl: unexpected url \$url" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$fakebin/curl"
+  PATH="$fakebin:$PATH" bash "$raw_script" --lock "$tmp/flavor.lock.json" \
+    --abi x86_64 --replace --github "org.fdroid.fdroid=owner/repo" >/dev/null
+  got_url=$(jq -r '.packages["org.fdroid.fdroid"].url' "$tmp/flavor.lock.json")
+  [ "$got_url" = "https://fake.example/right.apk" ] \
+    || { echo "multi-flavor iteration picked '$got_url', expected the correct-flavor asset" >&2; exit 1; }
+  # The real apksigner-extracted signer digest(s) must be recorded, full 64-hex.
+  jq -e '.packages["org.fdroid.fdroid"].signerSha256
+    | type == "array" and length >= 1
+    and all(.[]; test("^[0-9a-f]{64}$"))' "$tmp/flavor.lock.json" >/dev/null \
+    || { echo "release lock is missing valid signerSha256 digests" >&2; exit 1; }
 fi
 
 echo "signed F-Droid and release-asset resolver tests passed"
