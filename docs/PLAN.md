@@ -108,8 +108,10 @@ that, not against surface breadth.
   looks up each unresolved candidate in the crowdsourced Obtainium catalog
   (both `configs[]` and `config` schemas, keyed by package id) and proposes
   GitHub/Codeberg repos — opt-in, because it queries a third-party host with
-  the candidate package ids, and never auto-promoted since the catalog is
-  untrusted. `--release-hint PKG=owner/repo` (GitHub) or `PKG=host/owner/repo`
+  the candidate package ids. A raw catalog proposal is never promoted on the
+  catalog's word; `--discover --verify` promotes one only after the real
+  resolver confirms the apk package id and surfaces its signer for review.
+  `--release-hint PKG=owner/repo` (GitHub) or `PKG=host/owner/repo`
   (Gitea) confirms a repo through the real resolver, matching the apk package
   id (iterating release flavors until one matches) and surfacing the resolved
   signer for the user to confirm. Package-id match is compatibility, not source

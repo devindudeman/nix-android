@@ -3,12 +3,12 @@
 <!-- Generated from modules/options.nix — do not edit by hand.
      Regenerate with `just options-doc`. -->
 
-Every option maps to an adb primitive with executed read/write/read-back
-evidence (see [PRIMITIVES.md](./PRIMITIVES.md)); the citation lives in each
-option's description below. Managed-key semantics throughout: converge only
-touches what you declare and never reverts undeclared device state. App version
-pins are floors — converge installs/upgrades to at least the locked version and
-never downgrades.
+Most options map to an adb device primitive with executed read/write/read-back
+evidence; [PRIMITIVES.md](./PRIMITIVES.md) is that evidence matrix. A few are
+controller-side only (e.g. device identity). Managed-key semantics throughout:
+converge only touches what you declare and never reverts undeclared device
+state. App version pins are floors — converge installs/upgrades to at least the
+locked version and never downgrades.
 
 ## android\.packages\.disabled
 
@@ -916,5 +916,3 @@ signed integer
 ```nix
 0
 ```
-
-

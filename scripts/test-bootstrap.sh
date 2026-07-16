@@ -60,8 +60,10 @@ export TEST_COUNT=$tmp/count TEST_CAPTURES=$tmp/captures
 "$bash_bin" "$bootstrap" "$tmp/manifest.json" --serial fixture >/dev/null
 [ "$(cat "$TEST_COUNT")" -eq 3 ]
 grep -Fxq -- '--validate-only' "$tmp/captures/engine-1.args"
-grep -Fq -- '--apply --serial fixture' "$tmp/captures/engine-2.args"
-grep -Fq -- '--apply --serial fixture' "$tmp/captures/engine-3.args"
+# Phase one (reduced scaffold) applies but must NOT record a generation;
+# only phase three, the complete declared state, carries --record.
+grep -Fxq -- '--apply --serial fixture' "$tmp/captures/engine-2.args"
+grep -Fxq -- '--apply --record --serial fixture' "$tmp/captures/engine-3.args"
 cmp "$tmp/manifest.json" "$tmp/captures/engine-1.json"
 cmp "$tmp/manifest.json" "$tmp/captures/engine-3.json"
 jq -e '

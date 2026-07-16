@@ -1,7 +1,8 @@
-# Your device configuration. Everything below is the complete option surface;
-# the active block is deliberately tiny so `nix flake init` gives you a valid,
-# empty config. Uncomment what you want, then run `update` to lock app sources
-# and `plan` to preview. Two shortcuts to a fuller start:
+# Your device configuration. The commented blocks below cover the main option
+# groups; the full, generated reference is docs/OPTIONS.md upstream. The active
+# block is deliberately tiny so `nix flake init` gives you a valid, empty
+# config. Uncomment what you want, then run `update` to lock app sources and
+# `plan` to preview. Two shortcuts to a fuller start:
 #   - `android-rebuild import --serial <SERIAL>` reads a live device into a
 #     draft config you paste here.
 #   - `android-rebuild suggest-sources --flake .#phone` finds F-Droid/GitHub

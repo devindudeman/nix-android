@@ -5,18 +5,25 @@
 # Safety posture (docs/PLAN.md): pins are floors — installs and upgrades only,
 # never downgrades; removals only when the manifest says cleanup=uninstall.
 #
-# Usage: converge.sh <manifest.json> [--apply] [--serial <adb-serial>]
+# Usage: converge.sh <manifest.json> [--apply] [--record] [--serial <adb-serial>]
 #        converge.sh <manifest.json> --validate-only
+#
+# --record (only valid with --apply) writes a generation receipt. It is opt-in
+# so intermediate applies — notably bootstrap's reduced phase-one manifest —
+# never register as the latest converged state; only a full switch or bootstrap's
+# final phase records.
 set -euo pipefail
 
 manifest=${1:?usage: converge.sh <manifest.json> [--apply] [--serial S]}
 shift
 apply=0
+record=0
 validate_only=0
 serial=${ANDROID_SERIAL:-}
 while [ $# -gt 0 ]; do
   case $1 in
   --apply) apply=1; shift ;;
+  --record) record=1; shift ;;
   --validate-only) validate_only=1; shift ;;
   --serial)
     [ $# -ge 2 ] || { echo "--serial requires a value" >&2; exit 2; }
@@ -25,6 +32,7 @@ while [ $# -gt 0 ]; do
   *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+[ "$record" -eq 0 ] || [ "$apply" -eq 1 ] || { echo "--record requires --apply" >&2; exit 2; }
 
 # Shared device-output parsers (also sourced by the bench oracle so the two
 # sides cannot drift). Defines writable_permission_flags.
@@ -538,7 +546,7 @@ for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  
 for t in "${todo_remove[@]}";  do echo "remove   $t"; done
 setting_field() { jq -Rr --argjson i "$2" '@base64d | fromjson | .[$i]' <<<"$1"; }
 # A permission/appop line for a package this run installs or upgrades is
-# reasserted *after* the install (which resets that state), not independent
+# reasserted *after* the install (which can reset that state), not independent
 # drift. Annotate it so the plan reads as a trustworthy pre-switch preview.
 induced() { [ -n "${changing[$1]:-}" ] && printf ' (after %s)' "${changing[$1]}"; return 0; }
 for t in "${todo_setting[@]}"; do
@@ -584,7 +592,7 @@ fi
 if [ "$plan_lines" -eq 0 ]; then
   echo "✓ device matches manifest"
   # A no-op switch still confirms convergence — record it as a generation.
-  [ "$apply" -eq 1 ] && record_generation 0
+  [ "$record" -eq 1 ] && record_generation 0
   exit 0
 fi
 
@@ -707,4 +715,5 @@ for pkg in "${todo_remove[@]}"; do
   adb uninstall --user "$user" "$pkg" >/dev/null
 done
 echo "✓ applied $plan_lines changes"
-record_generation "$plan_lines"
+[ "$record" -eq 1 ] && record_generation "$plan_lines"
+exit 0

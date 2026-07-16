@@ -33,7 +33,11 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/suggest-sources.sh` | Read-only de-Play curation: F-Droid membership, `--discover` (Obtainium catalog proposals), and `--release-hint` GitHub/Gitea verification (reuses `update-lock --fetch-index` and the resolver) |
 | `scripts/fdroid-eligibility.sh` | Shared jq version/lineage selector, sourced by `update-lock.sh` (pins) and `suggest-sources.sh` (reports) so availability never diverges from lockability |
 | `scripts/smoke-suggest-sources.sh` | Manual live check of release-hint verification against a real public GitHub release (network; not in CI) |
-| `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `assist`, `bootstrap`, `import`, and `suggest-sources` CLI |
+| `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `status`, `generations`, `assist`, `bootstrap`, `import`, and `suggest-sources` CLI |
+| `engine/generations.sh` | Switch-receipt ledger (`record_generation`), sourced by the engine; backs `status`/`generations` (`generations` check) |
+| `scripts/test-generations.sh` | Device-free receipt-ledger tests: numbering, JSONL round-trip, manifest copy (`generations` check) |
+| `scripts/render-options-doc.sh` | Renders `docs/OPTIONS.md` from `nixosOptionsDoc` output; shared by `just options-doc` and the `options-doc` check |
+| `templates/default/` | `nix flake init -t` scaffold (consumer flake + self-documenting `phone.nix`); built by the `template` check |
 | `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
 | `scripts/import.sh` | Read-only capture orchestration and starter Nix rendering |
 | `scripts/package-snapshot.py` | AOSP package-protobuf decoder and normalized snapshot writer |
@@ -42,6 +46,7 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/assist-play.sh` | Official Play listing queue; watch mode advances only after package presence |
 | `scripts/bootstrap.sh` | Resumable managed-APK, Play-consent, and full-state orchestration |
 | `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
+| `docs/OPTIONS.md` | Generated option reference (regenerate with `just options-doc`; the `options-doc` check guards drift) |
 | `docs/CAPABILITIES.md` | Public ADB read/write/semantics/import coverage map |
 | `docs/SUPPORT.md` | Stock-Pixel/GrapheneOS support contract and executed evidence matrix |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
@@ -76,8 +81,9 @@ just check
 
 `just check` builds native-host formatting, shellcheck, statix, deadnix,
 packaged CLI safety, strict-manifest, import rendering, Play-assist and
-bootstrap safety, signed-lock resolver, and negative module-validation checks, plus the
-platform's positive controller build.
+bootstrap safety, signed-lock resolver, generation-ledger, `nix flake init`
+template, generated-option-reference drift, and negative module-validation
+checks, plus the platform's positive controller build.
 The whole `nix flake check` remains intentionally unused because devenv task
 evaluation currently produces a spurious `path .drv is not valid` failure.
 
@@ -92,7 +98,7 @@ For a clean CI-equivalent Linux run:
 
 ```console
 nix build \
-  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,engine-parsers,suggest-sources,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation} \
+  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,engine-parsers,generations,template,options-doc,suggest-sources,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation} \
   --accept-flake-config --no-link
 nix build \
   .#packages.x86_64-linux.{android-rebuild,update-lock} \

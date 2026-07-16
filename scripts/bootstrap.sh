@@ -57,4 +57,6 @@ echo "== phase 2/3: Play consent queue =="
 "$bash_bin" "$assist" "$manifest" --serial "$serial" --watch
 
 echo "== phase 3/3: complete declared state =="
-"$bash_bin" "$engine" "$manifest" --apply --serial "$serial"
+# Only the final phase records a generation: an interrupted bootstrap must never
+# leave the reduced phase-one scaffold as the latest converged state.
+"$bash_bin" "$engine" "$manifest" --apply --record --serial "$serial"

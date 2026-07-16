@@ -194,7 +194,8 @@ build)
 plan | switch)
   conv=$(nix build "${nixargs[@]}" "$attr.converge" --no-link --print-out-paths)
   apply=()
-  [ "$cmd" = switch ] && apply=(--apply)
+  # switch records a generation receipt; plan never mutates or records.
+  [ "$cmd" = switch ] && apply=(--apply --record)
   exec "$conv"/bin/* "${engine_args[@]}" "${apply[@]}"
   ;;
 assist)

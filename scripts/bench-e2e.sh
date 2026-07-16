@@ -282,7 +282,15 @@ for run in $(seq 1 "$runs"); do
   # reasserted after that install — plan must annotate the induced effect.
   grep -q 'grant    org.fdroid.fdroid android.permission.POST_NOTIFICATIONS (after install)' <<<"$plan" \
     || { echo "fresh-device plan did not annotate the install-induced grant" >&2; exit 1; }
+  # bootstrap must record exactly one generation (its final phase), never the
+  # reduced phase-one scaffold — an interrupted bootstrap must not leave a
+  # partial manifest as the latest converged state.
+  gen_log="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/bench/log.jsonl"
+  gens_before=$( [ -f "$gen_log" ] && wc -l <"$gen_log" || echo 0)
   nix run .#android-rebuild --accept-flake-config -- bootstrap --flake .#bench --serial "$serial"
+  gens_after=$( [ -f "$gen_log" ] && wc -l <"$gen_log" || echo 0)
+  [ "$((gens_after - gens_before))" -eq 1 ] \
+    || { echo "bootstrap recorded $((gens_after - gens_before)) generations; only the final phase may record" >&2; exit 1; }
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
 
