@@ -14,7 +14,23 @@ which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 
 ## Create a device configuration
 
-Create a configuration flake:
+The fastest start is the template, which scaffolds a working flake plus a
+`phone.nix` that documents the entire option surface inline:
+
+```console
+mkdir my-phone && cd my-phone
+nix flake init -t github:devindudeman/nix-android
+git init && git add -A   # Nix only sees git-tracked files
+nix flake lock && git add flake.lock
+```
+
+Then edit `phone.nix` (set `device.abi`, uncomment the apps you want) and skip
+to *Resolve the declared app sources* below. Two faster ways to populate it:
+`android-rebuild import --serial SERIAL` reads a live device into a draft config,
+and `android-rebuild suggest-sources` finds F-Droid/GitHub sources for Play apps.
+
+The rest of this section explains what the template writes, if you would rather
+assemble it by hand.
 
 ```console
 mkdir my-phone && cd my-phone

@@ -29,6 +29,24 @@
       flake = {
         lib = import ./lib { inherit (inputs) nixpkgs; };
 
+        # `nix flake init -t github:devindudeman/nix-android` — a starter config
+        # repo whose phone.nix documents the full option surface inline.
+        templates.default = {
+          path = ./templates/default;
+          description = "Declarative Android/GrapheneOS device config via nix-android";
+          welcomeText = ''
+            # nix-android device config
+
+            Next steps:
+            - `git init && git add -A` (Nix only sees git-tracked files)
+            - edit `phone.nix` (device.abi + the apps you want)
+            - `nix run .#android-rebuild -- update --flake .#phone`
+            - `nix run .#android-rebuild -- plan --flake .#phone --serial <SERIAL>`
+
+            `phone.nix` documents every option inline. See README.md.
+          '';
+        };
+
         androidConfigurations.bench = inputs.self.lib.mkDevice {
           system = "x86_64-linux";
           modules = [ ./devices/bench.nix ];
@@ -235,6 +253,18 @@
                   bash ${inputs.self}/scripts/test-generations.sh
                   touch $out
                 '';
+            # The `nix flake init` scaffold must stay valid against the real
+            # option surface: build the template device's manifest so a renamed
+            # or removed option fails here instead of in a fresh user's repo.
+            template = pkgs.runCommand "nix-android-template" { } ''
+              cp ${
+                (inputs.self.lib.mkDevice {
+                  inherit system;
+                  modules = [ ./templates/default/phone.nix ];
+                  lockFile = ./templates/default/apps.lock.json;
+                }).manifest
+              } "$out"
+            '';
             suggest-sources =
               pkgs.runCommand "nix-android-suggest-sources"
                 {

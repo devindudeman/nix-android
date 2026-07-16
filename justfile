@@ -19,7 +19,7 @@ fmt:
 # public release checks (whole-flake check is blocked by devenv task evaluation)
 check:
     set -e; system=$(nix eval --impure --raw --expr builtins.currentSystem); \
-      nix build ".#checks.$system.formatting" ".#checks.$system.shellcheck" ".#checks.$system.engine-parsers" ".#checks.$system.generations" ".#checks.$system.suggest-sources" ".#checks.$system.statix" \
+      nix build ".#checks.$system.formatting" ".#checks.$system.shellcheck" ".#checks.$system.engine-parsers" ".#checks.$system.generations" ".#checks.$system.template" ".#checks.$system.suggest-sources" ".#checks.$system.statix" \
         ".#checks.$system.deadnix" ".#checks.$system.cli-safety" ".#checks.$system.manifest-safety" \
         ".#checks.$system.import-snapshot" ".#checks.$system.assist-safety" \
         ".#checks.$system.bootstrap-safety" \

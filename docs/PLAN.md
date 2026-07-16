@@ -124,6 +124,14 @@ that, not against surface breadth.
   app data, downgrade an app, or invert ensure-only state, and does not yet
   offer a rollback verb. The receipt logic is unit-tested device-free
   (`test-generations.sh`).
+- **Flake `templates` + self-documenting scaffold.** `nix flake init -t
+  github:devindudeman/nix-android` writes a starter config repo: a consumer
+  `flake.nix` pinning the CLI, a `phone.nix` that documents the complete option
+  surface inline (minimal active block so it evaluates as-is), a starter lock,
+  `.gitignore`, and a quickstart README. The `template` check builds the
+  scaffold's manifest through `mkDevice`, so a renamed or removed option fails
+  CI here instead of in a fresh user's repo. Device auto-population is left to
+  the existing `import` command rather than duplicated.
 
 ### Next
 
@@ -148,7 +156,7 @@ that, not against surface breadth.
 
 ### Deferred
 
-- generated option reference and an exported flake `templates` consumer output
+- generated option reference rendered from the typed module options
 - broader resolver regression fixtures for release-asset selection and the
   no-`preferredSigner` multiple-lineage rejection path
 - a rollback verb over recorded generations, documenting that it cannot restore
