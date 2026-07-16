@@ -604,16 +604,31 @@ for t in "${todo_grant[@]}"; do
   if ! adb_shell pm grant --user "$user" "$p" "$m"; then
     # A managed app installed earlier in this apply may have turned $m into an
     # already-granted install-time permission (planning read the device before
-    # the install). Accept the failure only when the device now reports the
-    # permission granted; anything else is a real error.
+    # the install). Accept the failure only when the managed user's runtime
+    # block or the package install-permission block reports granted — never
+    # another user's state.
     post_dump=$(adb_shell dumpsys package "$p" | tr -d '\r')
-    grep -Fq "  $m: granted=true" <<<"$post_dump" \
-      || { echo "pm grant failed and $m is not granted for $p" >&2; exit 1; }
+    post_user=$(permission_user_block "$user" <<<"$post_dump") || post_user=
+    post_install=$(install_permission_block <<<"$post_dump")
+    grep -Fq "  $m: granted=true" <<<"$post_user"$'\n'"$post_install" \
+      || { echo "pm grant failed and $m is not granted for $p (user $user)" >&2; exit 1; }
   fi
 done
 for t in "${todo_revoke[@]}"; do
   IFS=$US read -r p m <<<"$t"
-  adb_shell pm revoke --user "$user" "$p" "$m"
+  if ! adb_shell pm revoke --user "$user" "$p" "$m"; then
+    # Reached only for packages absent at plan time (installed this apply):
+    # an install-time permission cannot be revoked and the declared state is
+    # unreachable. Fail with the classification instead of a bare pm error.
+    post_dump=$(adb_shell dumpsys package "$p" | tr -d '\r')
+    post_install=$(install_permission_block <<<"$post_dump")
+    if grep -Fq "  $m: granted=" <<<"$post_install"; then
+      echo "cannot revoke install-time permission $m for $p: not runtime-changeable" >&2
+    else
+      echo "pm revoke failed for $p $m (user $user)" >&2
+    fi
+    exit 1
+  fi
 done
 for t in "${todo_permflag[@]}"; do
   IFS=$US read -r p m cur_csv want_csv <<<"$t"

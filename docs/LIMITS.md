@@ -36,6 +36,11 @@ runtime, stock Android does not. A declared grant of an install-time
 permission Android already granted is satisfied; a grant of an ungranted
 install-time permission or a revoke of any install-time permission fails
 during plan, because `pm grant`/`pm revoke` cannot change install-time state.
+That plan-time classification only covers packages installed when plan reads
+the device. A package first installed by the same apply is classified after
+its install: an impossible grant is accepted only when the install granted
+the permission for the managed user, and an impossible revoke stops the
+sequential apply at that step with a clear message.
 
 `android.darkMode` is the user-scope exception: Android's `cmd uimode night`
 interface has no `--user` argument. The v1 engine requires the declared user to

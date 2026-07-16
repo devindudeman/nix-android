@@ -20,7 +20,7 @@ jobs:
       - name: Run focused checks
         run: >-
           nix build
-          .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation}
+          .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,engine-parsers,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation}
           --accept-flake-config --no-link
       - name: Build release packages
         run: >-
@@ -48,5 +48,5 @@ jobs:
       - name: Run device-free Darwin checks
         run: >-
           nix build
-          .#checks.aarch64-darwin.{darwin-manifest,darwin-converge,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation}
+          .#checks.aarch64-darwin.{darwin-manifest,darwin-converge,formatting,shellcheck,engine-parsers,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation}
           --accept-flake-config --no-link

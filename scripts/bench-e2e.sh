@@ -70,26 +70,13 @@ role_id() {
 }
 
 # The oracle reads the device through the engine's own parsers so the two
-# sides cannot silently drift; the fixture below still pins the parser's
-# multi-user behavior independently of any engine bug.
+# sides cannot silently drift. Because a shared parser bug would make the
+# implementation and the oracle agree incorrectly, every shared parser is
+# pinned against raw-output golden fixtures first (also a `just check` gate).
+bash "$(dirname "${BASH_SOURCE[0]}")/test-read-state.sh" >/dev/null
 # shellcheck source-path=SCRIPTDIR/../engine
 # shellcheck source=read-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../engine/read-state.sh"
-
-permission_scope_fixture=$(permission_user_block 0 <<'EOF'
-    User 10: installed=true
-      runtime permissions:
-        android.permission.CAMERA: granted=false, flags=[]
-    User 0: installed=true
-      runtime permissions:
-        android.permission.CAMERA: granted=true, flags=[ USER_SET]
-EOF
-)
-grep -Fq 'android.permission.CAMERA: granted=true' <<<"$permission_scope_fixture"
-if grep -Fq 'granted=false' <<<"$permission_scope_fixture"; then
-  echo "permission user-block parser crossed into another profile" >&2
-  exit 1
-fi
 
 verify_state() {
   local manifest=$1 pkg want got ns key permission role dump packages line found component domain links selected enabled_imes

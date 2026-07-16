@@ -204,6 +204,21 @@
                   shellcheck -x ${inputs.self}/engine/*.sh ${inputs.self}/scripts/*.sh
                   touch $out
                 '';
+            engine-parsers =
+              pkgs.runCommand "nix-android-engine-parsers"
+                {
+                  nativeBuildInputs = [
+                    pkgs.bash
+                    pkgs.coreutils
+                    pkgs.gawk
+                    pkgs.gnugrep
+                    pkgs.gnused
+                  ];
+                }
+                ''
+                  bash ${inputs.self}/scripts/test-read-state.sh
+                  touch $out
+                '';
             statix = pkgs.runCommand "nix-android-statix" { nativeBuildInputs = [ pkgs.statix ]; } ''
               statix check ${inputs.self}
               touch $out
@@ -625,7 +640,12 @@
               nixfmt.enable = true;
               statix.enable = true;
               deadnix.enable = true;
-              shellcheck.enable = true;
+              shellcheck = {
+                enable = true;
+                # -x follows the shared engine/read-state.sh source; without it
+                # the hook only passes when that file happens to be staged too.
+                args = [ "-x" ];
+              };
             };
             enterShell = ''echo "▸ nix-android dev shell — bench: just emu, converge: android-rebuild plan --flake .#bench --serial emulator-5554"'';
           };

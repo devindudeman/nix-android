@@ -267,6 +267,11 @@ example `android.permission.INTERNET` on stock Android, where it is not the
 runtime permission GrapheneOS makes it) is recognized as satisfied; a grant of
 an ungranted install-time permission, or any revoke of an install-time
 permission, fails during plan because `pm grant`/`pm revoke` cannot change it.
+Plan-time classification requires the package to be installed when plan reads
+the device: for a managed app first installed during the same apply, an
+impossible install-time grant is accepted only if the install itself granted
+it, and an impossible install-time revoke fails during apply with that
+classification.
 
 `android.locales` owns the exact locale list for each named package; `[]`
 returns that app to the system language. Input methods use Android component

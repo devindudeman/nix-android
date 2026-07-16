@@ -450,11 +450,16 @@ def render_with_coverage(snapshot):
             permission = state.get("permission")
             if not isinstance(permission, str) or not PERMISSION_NAME.fullmatch(permission):
                 continue
-            if state.get("granted") and permission not in rendered_grant_sets.get(name, set()):
-                # The matching grant was omitted (restricted or unknown
-                # restriction evidence). Rendering the flags alone would assert
-                # policy such as user-fixed on a permission this configuration
-                # leaves denied — the inverse of the observed state.
+            if not (
+                state.get("granted")
+                and permission in rendered_grant_sets.get(name, set())
+            ):
+                # Flags are rendered only when the declaration also reproduces
+                # the row's grant state. A granted-but-omitted row would assert
+                # user-fixed on a permission the config leaves denied, and a
+                # denied row has no rendered revoke (import never infers one),
+                # so its flags could pin the wrong state on a target where the
+                # permission happens to be granted.
                 omitted_flag_rows += 1
                 continue
             observed_flags = set(state.get("flags", []))
@@ -488,13 +493,13 @@ def render_with_coverage(snapshot):
     )
     if omitted_flag_rows:
         report.append(
-            f"{omitted_flag_rows} permission-flag row(s) were preserved and omitted because the matching granted permission was not declared"
+            f"{omitted_flag_rows} permission-flag row(s) were preserved and omitted because the declaration does not reproduce the row's grant state"
         )
         fact(
             "android.permissions.flagsForOmittedGrants",
             "ambiguous",
             omitted_flag_rows,
-            "flags without their granted state would invert source intent (e.g. user-fixed on a denied permission)",
+            "flags without their reproduced grant state could pin the wrong state (import never infers revocations)",
         )
     if android_owned_permission_flags:
         report.append(

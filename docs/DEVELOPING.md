@@ -29,6 +29,7 @@ pairs must fail closed instead of ignoring desired state.
 | `lib/default.nix` | `mkDevice`, assertions, lock/source binding, store APKs, manifest, packaged engine |
 | `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
 | `engine/read-state.sh` | Shared device-output parsers, sourced by the engine and the bench oracle |
+| `scripts/test-read-state.sh` | Raw-output golden fixtures pinning every shared parser (`engine-parsers` check) |
 | `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `assist`, `bootstrap`, and `import` CLI |
 | `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
 | `scripts/import.sh` | Read-only capture orchestration and starter Nix rendering |

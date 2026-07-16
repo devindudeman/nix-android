@@ -132,8 +132,18 @@ for fixture in fixtures.values():
     for operation, mode in expected["appOps"].items():
         assert f'android.appOps."{package}"."{operation}" = "{mode}";' in fixture_rendered
     for state in expected["permissionDetails"]:
-        for flag in state["flags"]:
-            assert flag.lower().replace("_", "-") in fixture_rendered
+        # Flags render only when the declaration reproduces the row's grant
+        # state; a denied row has no rendered revoke, so its flags stay
+        # evidence (stockPixel's denied USER_FIXED row must NOT render).
+        if state["granted"]:
+            for flag in state["flags"]:
+                assert flag.lower().replace("_", "-") in fixture_rendered
+        else:
+            for flag in state["flags"]:
+                writable = flag.lower().replace("_", "-")
+                assert (
+                    f'"{writable}"' not in fixture_rendered
+                ), f"denied-row flag {flag} was rendered"
     if any(state["granted"] for state in expected["permissionDetails"]):
         granted = next(
             state["permission"]
@@ -600,8 +610,9 @@ assert (
     "  ];"
 ) in incomplete_rendered
 assert "restriction evidence was incomplete" in incomplete_rendered
+# CAMERA (granted, grant omitted) plus the denied CAR_FUEL row.
 assert (
-    "1 permission-flag row(s) were preserved and omitted because the matching granted permission was not declared"
+    "2 permission-flag row(s) were preserved and omitted because the declaration does not reproduce the row's grant state"
     in incomplete_rendered
 )
 assert any(
@@ -612,7 +623,7 @@ assert any(
 assert any(
     fact["surface"] == "android.permissions.flagsForOmittedGrants"
     and fact["status"] == "ambiguous"
-    and fact["itemCount"] == 1
+    and fact["itemCount"] == 2
     for fact in incomplete_coverage["facts"]
 )
 
