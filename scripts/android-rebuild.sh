@@ -29,15 +29,18 @@ Usage:
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
                          [--obtainium-export PATH] [--app-manager-export PATH]
-  android-rebuild suggest-sources --flake REF#DEVICE [--discover] [--release-hint PKG=owner/repo ...]
+  android-rebuild suggest-sources --flake REF#DEVICE [--discover [--verify]]
+    [--repo URL FINGERPRINT LABEL ...] [--release-hint PKG=owner/repo ...]
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
 suggest-sources is read-only and device-free: it reports which apps.play /
-apps.attended entries are published on a hash-lockable F-Droid source, checks
-any --release-hint GitHub/Gitea repo for package-id compatibility (recording its
-signer for you to confirm), and with --discover proposes candidate repos from
-the Obtainium catalog (a network query to a third-party host with your candidate
-package ids).
+apps.attended entries are published on a hash-lockable F-Droid source. Add
+--repo to also check a third-party F-Droid repo (e.g. FUTO). --release-hint
+checks a named GitHub/Gitea repo for package-id compatibility (recording its
+signer for you to confirm). --discover proposes candidate repos from the
+Obtainium catalog (a network query to a third-party host with your candidate
+package ids); add --verify to resolve those proposals into verified
+apps.release entries.
 EOF
 }
 
@@ -59,6 +62,8 @@ flake_set=0
 lock_set=0
 release_hints=()
 discover=0
+verify=0
+repo_specs=()
 while [ $# -gt 0 ]; do
   case $1 in
   --flake)
@@ -70,6 +75,11 @@ while [ $# -gt 0 ]; do
     release_hints+=("$2"); shift 2
     ;;
   --discover) discover=1; shift ;;
+  --verify) verify=1; shift ;;
+  --repo)
+    [ $# -ge 4 ] || { echo "--repo requires URL FINGERPRINT LABEL" >&2; exit 2; }
+    repo_specs+=("$2" "$3" "$4"); shift 4
+    ;;
   --serial)
     [ $# -ge 2 ] || { echo "--serial requires a value" >&2; exit 2; }
     serial=$2; shift 2
@@ -134,6 +144,14 @@ if [ "$discover" -eq 1 ] && [ "$cmd" != suggest-sources ]; then
   echo "--discover is only valid with suggest-sources" >&2
   exit 2
 fi
+if [ "$verify" -eq 1 ] && [ "$cmd" != suggest-sources ]; then
+  echo "--verify is only valid with suggest-sources" >&2
+  exit 2
+fi
+if [ "${#repo_specs[@]}" -gt 0 ] && [ "$cmd" != suggest-sources ]; then
+  echo "--repo is only valid with suggest-sources" >&2
+  exit 2
+fi
 
 case $cmd in
 import)
@@ -192,6 +210,13 @@ suggest-sources)
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)/bin/nix-android-update-lock
   suggest_args=(--resolver "$resolver" --abi "$abi")
   [ "$discover" -eq 0 ] || suggest_args+=(--discover)
+  [ "$verify" -eq 0 ] || suggest_args+=(--verify)
+  # --repo triples: URL FP LABEL, URL FP LABEL, ...
+  i=0
+  while [ "$i" -lt "${#repo_specs[@]}" ]; do
+    suggest_args+=(--repo "${repo_specs[$i]}" "${repo_specs[$((i + 1))]}" "${repo_specs[$((i + 2))]}")
+    i=$((i + 3))
+  done
   for h in ${release_hints[@]+"${release_hints[@]}"}; do suggest_args+=(--release-hint "$h"); done
   exec "$nix_android_bash" "$src/scripts/suggest-sources.sh" "${suggest_args[@]}" <<<"$candidates"
   ;;

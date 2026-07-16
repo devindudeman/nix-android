@@ -85,6 +85,7 @@ if [ "\$1" = --fetch-index ]; then
   case "\$2" in
     *malformed*) echo "$tmp/malformed.json" ;;
     *emptyidx*)  echo "$tmp/empty.json" ;;
+    *f-droid.org*) echo "$tmp/main.json" ;;  # the real default main archive
     *main*) echo "$tmp/main.json" ;;
     *izzy*) echo "$tmp/izzy.json" ;;
     *bad*)  echo "boom" >&2; exit 1 ;;
@@ -142,6 +143,7 @@ official_fp=43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab
 run() { # abi extra-args... ; candidates on stdin
   local abi=$1; shift
   bash "$suggest" --resolver "$tmp/resolver" --abi "$abi" \
+    --no-default-repos \
     --repo "https://main.fdroid.example/repo" "$official_fp" f-droid.org \
     --repo "https://izzy.example/repo" "$(printf '%064d' 2)" IzzyOnDroid \
     "$@" <<<"$candidates"
@@ -198,6 +200,7 @@ grep -q 'apps.fdroid.packages = \[' <<<"$out" || { echo "no fdroid.packages bloc
 grep -q 'apps.fdroid.repos.izzyondroid = {' <<<"$out" || { echo "no izzy repo block" >&2; exit 1; }
 # a custom (non-official) first repo must NOT become apps.fdroid.packages
 custom=$(bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
+  --no-default-repos \
   --repo "https://izzy.example/repo" "$(printf '%064d' 2)" IzzyOnDroid <<<"$candidates")
 grep -q 'apps.fdroid.packages = \[' <<<"$custom" && { echo "non-official repo rendered as official packages" >&2; exit 1; }
 grep -q 'apps.fdroid.repos.izzyondroid = {' <<<"$custom" || { echo "custom-only repo not rendered as a repos block" >&2; exit 1; }
@@ -210,6 +213,7 @@ grep -q 'org.example.universal *f-droid.org' <<<"$out" || { echo "universal miss
 
 # --- a repo whose index cannot be verified is skipped with a warning ----------
 warn=$(bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
+  --no-default-repos \
   --repo "https://bad.example/repo" "$(printf '%064d' 3)" Bad \
   --repo "https://main.example/repo" "$(printf '%064d' 1)" main \
   <<<"$candidates" 2>&1)
@@ -218,6 +222,7 @@ grep -q 'org.example.universal *main' <<<"$warn" || { echo "did not continue pas
 
 # --- an index that fetches but does not parse is skipped, not "all missing" ---
 parse=$(bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
+  --no-default-repos \
   --repo "https://malformed.example/repo" "$(printf '%064d' 4)" Malformed \
   --repo "https://main.fdroid.example/repo" "$official_fp" f-droid.org \
   <<<"$candidates" 2>&1)
@@ -226,10 +231,20 @@ grep -q 'org.example.universal *f-droid.org' <<<"$parse" || { echo "did not cont
 
 # --- an index with no packages object fails closed (not "all unavailable") ----
 emptyidx=$(bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
+  --no-default-repos \
   --repo "https://emptyidx.example/repo" "$(printf '%064d' 5)" EmptyIdx \
   <<<"$candidates" 2>&1) && rc=0 || rc=$?
 grep -q 'skipping EmptyIdx' <<<"$emptyidx" || { echo "empty-packages index did not warn" >&2; exit 1; }
 [ "${rc:-0}" -ne 0 ] || { echo "empty-only checked set should have errored" >&2; exit 1; }
+
+# --- --repo ADDS to the defaults, it does not replace them --------------------
+# No --no-default-repos here: the real f-droid.org default (mapped to main.json)
+# must still be checked alongside the extra repo, so a default-only package is
+# found even though the extra repo cannot resolve it.
+appended=$(printf 'org.example.universal\n' | bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
+  --repo "https://extra.example/repo" "$(printf '%064d' 7)" Extra 2>/dev/null)
+grep -q 'org.example.universal *f-droid.org' <<<"$appended" \
+  || { echo "--repo replaced the default repos instead of appending" >&2; exit 1; }
 
 # --- discovery: both catalog schemas, unsupported kinds skipped, malformed
 #     tolerated, unanchored junk rejected ---------------------------------------
@@ -261,6 +276,20 @@ grep -q 'com.google.play.only *owner/repo' <<<"$disc" || { echo "scan aborted on
 grep -q 'UNVERIFIED' <<<"$disc" || { echo "discovery candidates not marked unverified" >&2; exit 1; }
 grep -q 'apps.release."com.google.play.only"' <<<"$disc" && { echo "discovered candidate was auto-promoted (must stay unverified)" >&2; exit 1; }
 grep -q 'queried the Obtainium catalog' "$tmp/disc.err" || { echo "no privacy note for --discover" >&2; exit 1; }
+# --discover --verify promotes a catalog proposal to a verified apps.release
+# (fake resolver treats a "good" repo as a package-id match).
+printf '{"configs":[{"url":"https://github.com/owner/good"}]}' > "$catalog/complex/verify.me.json"
+ver=$(printf 'verify.me\n' | bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a --discover --verify \
+  --catalog-base "file://$catalog" \
+  --repo "https://main.fdroid.example/repo" "$official_fp" f-droid.org 2>"$tmp/ver.err")
+grep -q 'apps.release."verify.me".github = "owner/good";' <<<"$ver" \
+  || { echo "--verify did not promote a discovered candidate" >&2; exit 1; }
+awk '/Candidate release/{c=1} /verify one with/{c=0} c' <<<"$ver" | grep -q 'verify.me' \
+  && { echo "verified candidate still listed as an unverified proposal" >&2; exit 1; }
+# --verify requires --discover
+bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a --verify </dev/null 2>/dev/null \
+  && { echo "--verify without --discover should error" >&2; exit 1; }
+
 # discovery is opt-in: without --discover, no catalog query
 nodisc=$(printf 'com.google.play.only\n' | bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
   --catalog-base "file://$catalog" \
@@ -286,6 +315,7 @@ grep -q 'nothing to migrate\|no apps.play' <<<"$empty_out" || { echo "empty case
 
 # --- every checked repo failing is a hard error -------------------------------
 if bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
+  --no-default-repos \
   --repo "https://bad.example/repo" "$(printf '%064d' 3)" Bad \
   <<<"$candidates" >/dev/null 2>&1; then
   echo "all-repos-failed did not error" >&2

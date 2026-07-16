@@ -508,9 +508,11 @@ It is read-only and needs no device. For each `apps.play` and `apps.attended`
 entry it checks the main f-droid.org archive and IzzyOnDroid — reusing the same
 signed `entry.jar` and index-v2 verification `update` performs, including the
 signing-lineage and full lock-field completeness the resolver requires, so a
-suggestion is never something `update` would then reject. It prints the
-migration: the packages to remove from `apps.play`/`apps.attended` and the
-`apps.fdroid` block to add. Availability is a suggestion, not a guarantee of the
+suggestion is never something `update` would then reject. Add `--repo URL
+FINGERPRINT LABEL` to also check a third-party F-Droid repo you use (e.g. FUTO's
+`https://app.futo.org/fdroid/repo`); the LABEL renders as an
+`apps.fdroid.repos.<name>` block. It prints the migration: the packages to
+remove from `apps.play`/`apps.attended` and the `apps.fdroid` block to add. Availability is a suggestion, not a guarantee of the
 same app or signer: move an entry only after you recognize it, then run `update`
 (which re-verifies and pins each APK) before converging. Packages not found stay
 `apps.play`/`apps.attended`.
@@ -552,12 +554,23 @@ nix run .#android-rebuild -- suggest-sources --flake .#pixel --discover
 ```
 
 Discovery is opt-in because it sends your candidate package ids to a third-party
-host over the network. Its output is deliberately **not** promoted into the
+host over the network. By default its output is **not** promoted into the
 migration: the catalog is untrusted and a package-id match alone does not prove
 signer continuity (which nix-android does not yet enforce, see
-[LIMITS.md](./LIMITS.md)). Each proposal is printed with the `--release-hint`
-command to confirm it — recognize the app and ideally check its signer, then
-verify, then add.
+[LIMITS.md](./LIMITS.md)). Add `--verify` to resolve each proposal and promote
+the package-id matches to verified `apps.release` entries (with signers), in one
+command:
+
+```console
+nix run .#android-rebuild -- suggest-sources --flake .#pixel --discover --verify
+```
+
+Still confirm the shown signer is one you trust. A candidate that is not in the
+Obtainium catalog (or fails to resolve) is not proposed; if you already know its
+repo, name it with `--release-hint <pkg>=<owner/repo>`, or recover your own
+Obtainium sources by passing your Obtainium export to `import --obtainium-export
+<file>`, which renders a supported release straight to `apps.release` when the
+package's current installer corroborates Obtainium delivery.
 For the field-by-field ADB read/write/import classification, see
 [CAPABILITIES.md](./CAPABILITIES.md).
 

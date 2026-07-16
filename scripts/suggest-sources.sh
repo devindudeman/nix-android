@@ -14,7 +14,7 @@
 # package id. That is not source identity — a same-id apk from another signer
 # installs on a clean phone, and the signer also governs signature permissions
 # and shared-uid identity — so the resolved signer is surfaced for the user to
-# confirm, and nothing is auto-promoted from discovery.
+# confirm. --discover proposals are advisory unless --verify resolves them.
 #
 # Trust: index fetches and release resolution go through the packaged
 # update-lock, which authenticates each repo's signed entry.jar / index hash
@@ -42,9 +42,9 @@ repos=(
   "https://f-droid.org/repo${US}${official_fdroid_fp}${US}f-droid.org"
   "https://apt.izzysoft.de/fdroid/repo${US}3bf0d6abfeae2f401707b6d966be743bf0eee49c2561b9ba39073711f628937a${US}IzzyOnDroid"
 )
-repos_overridden=0
 hints=()   # user-named release candidates: "pkg=owner/repo" or "pkg=host/owner/repo"
 discover=0
+verify=0
 # The Obtainium crowdsourced catalog, keyed by package id. Untrusted discovery
 # data: it only proposes a candidate repo. Verifying that repo checks package-id
 # compatibility, not source identity — the user still confirms the signer.
@@ -62,10 +62,13 @@ while [ $# -gt 0 ]; do
     abi=$2; shift 2
     ;;
   --repo)
+    # ADD a repo to the defaults (f-droid.org + IzzyOnDroid). Use
+    # --no-default-repos first to check only the given repos (tests do this).
     [ $# -ge 4 ] || { echo "--repo requires URL FINGERPRINT LABEL" >&2; exit 2; }
-    [ "$repos_overridden" -eq 1 ] || repos=()
-    repos_overridden=1
     repos+=("${2}${US}${3}${US}${4}"); shift 4
+    ;;
+  --no-default-repos)
+    repos=(); shift
     ;;
   --release-hint)
     # A GitHub/Gitea release repo to VERIFY (not discover): PKG=owner/repo for
@@ -80,6 +83,11 @@ while [ $# -gt 0 ]; do
     # propose repos to verify. This sends the candidate package ids to a
     # third-party host over the network — off by default for that reason.
     discover=1; shift
+    ;;
+  --verify)
+    # Resolve each --discover proposal and promote package-id matches to a
+    # verified apps.release (downloads each candidate's apk).
+    verify=1; shift
     ;;
   --catalog-base)
     [ $# -ge 2 ] || { echo "--catalog-base requires a URL" >&2; exit 2; }
@@ -96,6 +104,7 @@ done
 
 [ -n "$resolver" ] || { echo "suggest-sources requires --resolver PATH (or NIX_ANDROID_RESOLVER)" >&2; exit 2; }
 [ -x "$resolver" ] || { echo "resolver is not executable: $resolver" >&2; exit 2; }
+[ "$verify" -eq 0 ] || [ "$discover" -eq 1 ] || { echo "--verify only applies with --discover" >&2; exit 2; }
 
 mapfile -t candidates < <(grep -E '^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$' || true)
 if [ "${#candidates[@]}" -eq 0 ]; then
@@ -153,58 +162,58 @@ for spec in "${repos[@]}"; do
   done <<<"$subset"
 done
 
-# Verify each --release-hint by asking the real resolver to lock it: success
-# means the release resolves AND its apk package id matches the candidate.
-# This is package-id COMPATIBILITY, not proof of source identity — a same-id
-# apk from a different signer installs fine on a clean phone; the signer is
-# what protects updates. So the resolved signer is surfaced for the user to
-# confirm, and F-Droid is not silently preferred over an explicit hint. Runs
-# independently of the F-Droid indexes.
+# Ask the real resolver to lock a candidate repo: success means the release
+# resolves AND its apk package id matches. This is package-id COMPATIBILITY, not
+# proof of source identity — a same-id apk from a different signer installs fine
+# on a clean phone; the signer is what protects updates. So the resolved signer
+# is surfaced for the user to confirm, and F-Droid is not silently preferred
+# over an explicit choice. Shared by --release-hint and --discover --verify.
 declare -A release_kind=()   # pkg -> "github" | "gitea"
 declare -A release_spec=()   # pkg -> owner/repo | host/owner/repo
 declare -A release_signer=() # pkg -> resolved signer sha256 (for the user to confirm)
-if [ "${#hints[@]}" -gt 0 ]; then
-  hint_lock=$(mktemp -d)
-  for hint in "${hints[@]}"; do
-    p=${hint%%=*} rest=${hint#*=}
-    [[ $p =~ ^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$ ]] || { echo "warning: ignoring malformed release hint: $hint" >&2; continue; }
-    printf '%s' "$rest" | grep -Eq '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$' || { echo "warning: ignoring malformed repo in hint: $hint" >&2; continue; }
-    if [[ " ${candidates[*]} " != *" $p "* ]]; then
-      echo "warning: release hint $p is not an apps.play/apps.attended entry — skipping" >&2
-      continue
-    fi
-    # GitHub = owner/repo (one slash); Gitea = host/owner/repo (two+).
-    if [ "$(tr -cd '/' <<<"$rest" | wc -c)" -eq 1 ]; then kind=github; else kind=gitea; fi
-    # Keep the resolver's own diagnostic (rate limit, transport, mismatch)
-    # instead of flattening every failure to "no matching apk".
-    if "$resolver" --lock "$hint_lock/lock.json" --abi "$abi" --replace \
-        "--$kind" "$p=$rest" >/dev/null 2>"$hint_lock/err"; then
-      # Require the resolver to have recorded at least one signer before
-      # promoting; render all of them (v3.1 key rotation and multi-signer apks
-      # have more than one). Checked before touching F-Droid state below.
-      signers=$(jq -r --arg p "$p" '.packages[$p].signerSha256 // [] | join(", ")' "$hint_lock/lock.json" 2>/dev/null || true)
-      if [ -z "$signers" ]; then
-        echo "warning: $p at $rest verified but recorded no signer — not promoting" >&2
-        continue
-      fi
-      # An explicit hint expresses intent, so it wins even when F-Droid also
-      # has the package id (F-Droid availability is not signer equivalence).
-      if [ -n "${hit_label[$p]:-}" ]; then
-        prev=${hit_label[$p]}
-        repo_hits[$prev]=$({ grep -vxF "$p" <<<"${repo_hits[$prev]:-}" || true; })
-        echo "note: $p is also on $prev, but the explicit hint $rest was verified and takes precedence" >&2
-      fi
-      release_kind[$p]=$kind
-      release_spec[$p]=$rest
-      release_signer[$p]=$signers
-      hit_label[$p]="$kind release"
-    else
-      reason=$({ grep -v '^$' "$hint_lock/err" || true; } | tail -1)
-      echo "warning: could not verify $p at $rest — keeping as play/attended${reason:+ (${reason})}" >&2
-    fi
-  done
-  rm -rf "$hint_lock"
-fi
+hint_lock=$(mktemp -d)
+trap 'rm -rf "$hint_lock"' EXIT
+verify_and_promote() { # pkg kind spec  -> 0 promoted / 1 not
+  local p=$1 kind=$2 spec=$3 signers reason prev
+  # Keep the resolver's own diagnostic (rate limit, transport, mismatch).
+  if ! "$resolver" --lock "$hint_lock/lock.json" --abi "$abi" --replace \
+      "--$kind" "$p=$spec" >/dev/null 2>"$hint_lock/err"; then
+    reason=$({ grep -v '^$' "$hint_lock/err" || true; } | tail -1)
+    echo "warning: could not verify $p at $spec — keeping as play/attended${reason:+ (${reason})}" >&2
+    return 1
+  fi
+  # Require at least one recorded signer; render all (v3.1 rotation / multi-signer).
+  signers=$(jq -r --arg p "$p" '.packages[$p].signerSha256 // [] | join(", ")' "$hint_lock/lock.json" 2>/dev/null || true)
+  if [ -z "$signers" ]; then
+    echo "warning: $p at $spec verified but recorded no signer — not promoting" >&2
+    return 1
+  fi
+  # An explicit/verified release wins even when F-Droid also has the package id
+  # (F-Droid availability is not signer equivalence); drop it from that block.
+  if [ -n "${hit_label[$p]:-}" ] && [ "${hit_label[$p]}" != "$kind release" ]; then
+    prev=${hit_label[$p]}
+    repo_hits[$prev]=$({ grep -vxF "$p" <<<"${repo_hits[$prev]:-}" || true; })
+    echo "note: $p is also on $prev, but $spec was verified and takes precedence" >&2
+  fi
+  release_kind[$p]=$kind
+  release_spec[$p]=$spec
+  release_signer[$p]=$signers
+  hit_label[$p]="$kind release"
+  return 0
+}
+
+for hint in ${hints[@]+"${hints[@]}"}; do
+  p=${hint%%=*} rest=${hint#*=}
+  [[ $p =~ ^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$ ]] || { echo "warning: ignoring malformed release hint: $hint" >&2; continue; }
+  printf '%s' "$rest" | grep -Eq '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$' || { echo "warning: ignoring malformed repo in hint: $hint" >&2; continue; }
+  if [[ " ${candidates[*]} " != *" $p "* ]]; then
+    echo "warning: release hint $p is not an apps.play/apps.attended entry — skipping" >&2
+    continue
+  fi
+  # GitHub = owner/repo (one slash); Gitea = host/owner/repo (two+).
+  if [ "$(tr -cd '/' <<<"$rest" | wc -c)" -eq 1 ]; then kind=github; else kind=gitea; fi
+  verify_and_promote "$p" "$kind" "$rest" || true
+done
 
 # Discovery: for candidates still without a source, look up a candidate repo in
 # the Obtainium catalog. This is UNTRUSTED, UNVERIFIED discovery data — it only
@@ -249,6 +258,20 @@ if [ "$discover" -eq 1 ]; then
     done
   done
   echo "note: --discover queried the Obtainium catalog for ${discover_queried} package id(s) over the network." >&2
+fi
+
+# --verify turns discovery proposals into results: resolve each candidate repo
+# and, on a package-id match, promote it to a verified apps.release (with its
+# signer). Without --verify, candidates stay advisory (verify by hand). The
+# still-untrusted-source caveat holds — the user confirms the signer.
+if [ "$verify" -eq 1 ] && [ "${#candidate_kind[@]}" -gt 0 ]; then
+  for p in "${candidates[@]}"; do
+    [ -n "${candidate_kind[$p]:-}" ] || continue
+    [ -n "${release_kind[$p]:-}" ] && continue   # an explicit hint already won
+    if verify_and_promote "$p" "${candidate_kind[$p]}" "${candidate_spec[$p]}"; then
+      unset "candidate_kind[$p]"   # promoted → no longer an unverified proposal
+    fi
+  done
 fi
 
 # Nothing to report only when nothing at all was produced.
