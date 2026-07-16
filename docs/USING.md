@@ -12,7 +12,7 @@ The controller platform is a required `mkDevice` argument because it determines
 which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 `"aarch64-darwin"`.
 
-## Bootstrap a device configuration
+## Create a device configuration
 
 Create a configuration flake:
 
@@ -76,8 +76,8 @@ the JSON.
 
 `update` accepts `--lock PATH` when the lock is not `./apps.lock.json`; the
 path is resolved from the directory where `android-rebuild` runs. `build`,
-`plan`, and `switch` always read the lock pinned by `mkDevice.lockFile` and
-reject `--lock`.
+`plan`, `switch`, `assist`, and `bootstrap` always read the lock pinned by
+`mkDevice.lockFile` and reject `--lock`.
 
 ## Add nix-android to an existing flake
 
@@ -191,8 +191,13 @@ host-specific modules.
     # public repo; package ID and versionCode are read with aapt2 at build time.
     local."com.example.mine".apk = /absolute/path/to/mine.apk;
 
-    # Human-installed packages are presence assertions.
-    attended = [ "com.spotify.music" ];
+    # Play packages are presence assertions. `assist --watch` opens their
+    # official Play listings in order; Android still requires user consent.
+    play = [ "com.spotify.music" ];
+
+    # Packages installed by any other human-operated source are also
+    # presence assertions.
+    attended = [ "com.example.other-store-app" ];
 
     # Safe default. "uninstall" removes undeclared third-party owner apps.
     cleanup = "none";
@@ -262,8 +267,12 @@ and compares `device.abi` with `ro.product.cpu.abi` on the selected target.
 `plan` is device-read-only, although Nix may fetch or build missing store paths
 on the controller. `switch` computes the same plan and applies it. Review every
 line before switching a real device, then run `plan` again; a converged device
-prints `✓ device matches manifest`. Missing attended apps abort before any
-device writes.
+prints `✓ device matches manifest`. Missing Play or other attended apps abort
+before any device writes.
+
+`bootstrap` is also a mutating command. It exists for a wiped or newly prepared
+device and applies a reviewed declaration in resumable phases; it is not a
+replacement for reviewing `plan` first.
 
 `switch` is sequential, not transactional. If a later adb action fails, earlier
 actions remain applied; re-run `plan` to see the remainder. Managed permission
@@ -275,6 +284,84 @@ Do not hard-reboot immediately after a switch. Android package restrictions,
 app-ops, and device-idle state use write-behind storage. Use a normal power-menu
 reboot. In an emulator-only persistence test, after allowing state to settle,
 use `adb -s emulator-5554 shell svc power reboot userrequested`.
+
+## Install declared Play apps
+
+When `plan` reports a missing `apps.play` package, open its exact official Play
+listing with:
+
+```console
+nix run .#android-rebuild -- \
+  assist --flake .#pixel --serial SERIAL
+
+# Keep the command running and advance after each on-device installation.
+nix run .#android-rebuild -- \
+  assist --watch --flake .#pixel --serial SERIAL
+```
+
+Like `plan` and `switch`, `assist` checks the selected device ABI against the
+manifest before acting.
+
+Without `--watch`, each invocation opens only the first missing package in the
+installed Play Store and reports how many follow it. With `--watch`, the helper
+polls owner-user package presence, detects the completed on-device install, and
+opens the next declaration. It never advances merely because the listing was
+opened. The same listing remains first until its package is installed.
+nix-android does not sign in, supply Google
+credentials, click the install button, accept permissions, or bypass licensing;
+the person holding the unlocked phone completes the normal Play flow. Watch mode
+times out after 30 minutes per package by default and is safely resumable by
+rerunning the command. Run `plan` again afterward.
+
+The declaration is a package-ID presence assertion, not a provenance check.
+Convergence does not verify Play entitlement, installer/update owner, signing
+identity, enabled state, or version for `apps.play` entries. The assistant also
+routes to the installed package named `com.android.vending`; adb shell exposes
+no verified general primitive here for authenticating that package's signer.
+
+On GrapheneOS, the initial app installation still requires explicit consent.
+Sandboxed Google Play can perform unattended updates afterward when Play was
+the last installer. See GrapheneOS's
+[sandboxed Google Play documentation](https://grapheneos.org/usage#sandboxed-google-play)
+and Android's official
+[Google Play linking documentation](https://developer.android.com/distribute/marketing-tools/linking-to-google-play).
+
+## Rebuild a wiped phone
+
+First prepare the OS, enable USB debugging, authorize the controller, and
+review the complete plan. On GrapheneOS, install and configure sandboxed Google
+Play yourself if the declaration contains `apps.play`; nix-android does not
+bootstrap Google services or an account.
+
+```console
+nix run .#android-rebuild -- \
+  plan --flake .#pixel --serial SERIAL
+
+nix run .#android-rebuild -- \
+  bootstrap --flake .#pixel --serial SERIAL
+```
+
+`bootstrap` validates the full manifest without contacting adb, then proceeds
+in three resumable phases:
+
+1. Install or upgrade hash-addressed managed APKs. This derived phase forces
+   `apps.cleanup = "none"`, removes attended assertions, and applies no Android
+   settings, roles, permissions, disablement, or battery exemptions.
+2. Run the Play queue in watch mode. Each missing official listing opens in
+   declaration order, but installation remains an explicit on-device action.
+3. Apply the complete manifest through the normal convergence engine, including
+   Android state and any explicitly enabled cleanup.
+
+If Play Store is unavailable, a Play install times out, an adb action fails, or
+a generic `apps.attended` entry is still absent, bootstrap stops. Earlier
+completed phases remain applied; rerunning the same command rechecks them and
+continues from the remaining drift. A missing generic attended entry must be
+installed through its declared human source before phase three can proceed.
+Cleanup still runs last and never runs in phase one.
+
+This reconstructs declared reachable state, not app data, account sessions,
+Keystore material, eSIMs, or OS setup. Finish with a fresh `plan` and require
+`✓ device matches manifest`.
 
 ## Import an existing phone
 
@@ -294,9 +381,10 @@ nix run .#android-rebuild -- \
 Import is read-only. It decodes AOSP's structured package dump into a versioned
 snapshot containing package versions, split and per-user state, install-source
 evidence, and granted runtime-permission observations. The generated Nix is
-more conservative: every managed-user third-party app becomes an attended
-presence assertion, while likely main-F-Droid and Obtainium entries appear
-only as commented curation candidates. Installer attribution cannot prove a
+more conservative: packages attributed to `com.android.vending` become
+`apps.play` presence assertions and all other managed-user third-party apps
+become `apps.attended`. Likely main-F-Droid and Obtainium entries also appear
+as commented curation candidates. Installer attribution cannot prove a
 repository, release URL, or signing trust anchor.
 
 The snapshot and generated inventory are personal data. Keep both out of a

@@ -136,7 +136,9 @@ for run in $(seq 1 "$runs"); do
   launcher_pid=$!
   wait_ready >/dev/null
 
-  adb shell settings put --user 0 global stay_on_while_plugged_in 77
+  # Use a private test key as the write sentinel. Android's power manager can
+  # asynchronously normalize stay_on_while_plugged_in during early boot.
+  adb shell settings put --user 0 global nix_android_quote_test preflight-sentinel
   jq '.device.abi = "arm64-v8a"' "$manifest" > "$tmp/wrong-abi-$run.json"
   if bash engine/converge.sh "$tmp/wrong-abi-$run.json" --apply --serial "$serial" \
     >"$tmp/wrong-abi-$run.out" 2>&1; then
@@ -151,7 +153,7 @@ for run in $(seq 1 "$runs"); do
     echo "missing attended package unexpectedly applied" >&2
     exit 1
   fi
-  grep -q 'attended app(s) missing' "$tmp/missing-attended-$run.out"
+  grep -q '1 attended and 0 Play app(s) missing' "$tmp/missing-attended-$run.out"
   while read -r pkg; do
     packages=$(adb shell pm list packages --user 0 "$pkg" | tr -d '\r')
     if grep -Fqx "package:$pkg" <<<"$packages"; then
@@ -159,8 +161,29 @@ for run in $(seq 1 "$runs"); do
       exit 1
     fi
   done < <(jq -r '.apps.managed[].package' "$manifest")
-  got=$(adb shell settings get --user 0 global stay_on_while_plugged_in | tr -d '\r')
-  [ "$got" = 77 ] || { echo "failed preflight wrote stay_on_while_plugged_in=$got" >&2; exit 1; }
+  got=$(adb shell settings get --user 0 global nix_android_quote_test | tr -d '\r')
+  [ "$got" = preflight-sentinel ] || { echo "failed attended preflight wrote nix_android_quote_test=$got" >&2; exit 1; }
+
+  jq '
+    .apps.play += ["org.example.play"] |
+    .android.disabled += ["org.example.play"] |
+    .android.deviceidleExempt += ["org.example.play"] |
+    .android.permissions."org.example.play" = {
+      grant: ["android.permission.POST_NOTIFICATIONS"], revoke: []
+    }
+  ' "$manifest" > "$tmp/missing-play-$run.json"
+  if bash engine/converge.sh "$tmp/missing-play-$run.json" --apply --serial "$serial" \
+    > "$tmp/missing-play-$run.out" 2>&1; then
+    echo "missing Play package unexpectedly applied" >&2
+    exit 1
+  fi
+  grep -q 'PLAY     org.example.play' "$tmp/missing-play-$run.out"
+  grep -q 'disable  org.example.play' "$tmp/missing-play-$run.out"
+  grep -q 'grant    org.example.play android.permission.POST_NOTIFICATIONS' "$tmp/missing-play-$run.out"
+  grep -q 'idle-ok  org.example.play' "$tmp/missing-play-$run.out"
+  grep -q '1 Play app(s) missing' "$tmp/missing-play-$run.out"
+  got=$(adb shell settings get --user 0 global nix_android_quote_test | tr -d '\r')
+  [ "$got" = preflight-sentinel ] || { echo "failed Play preflight wrote nix_android_quote_test=$got" >&2; exit 1; }
 
   # Current device values are untrusted too. A Unit Separator used to corrupt
   # the engine's internal tuple even though desired values correctly reject it.
@@ -168,9 +191,16 @@ for run in $(seq 1 "$runs"); do
 
   plan=$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")
   grep -q -- '-- plan only (' <<<"$plan" || { echo "fresh device unexpectedly had no plan" >&2; exit 1; }
-  nix run .#android-rebuild --accept-flake-config -- switch --flake .#bench --serial "$serial"
+  nix run .#android-rebuild --accept-flake-config -- bootstrap --flake .#bench --serial "$serial"
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
+
+  # A Play declaration must protect an installed third-party package from
+  # explicit cleanup even though no APK is attached to that declaration.
+  jq '.apps.play += [.apps.managed[0].package] |
+    .apps.managed = .apps.managed[1:] | .apps.cleanup = "uninstall"' \
+    "$manifest" > "$tmp/play-cleanup-$run.json"
+  [ "$(bash engine/converge.sh "$tmp/play-cleanup-$run.json" --serial "$serial")" = "✓ device matches manifest" ]
 
   old_boot=$(adb shell cat /proc/sys/kernel/random/boot_id | tr -d '\r')
   # adbd may disconnect before returning the command status. The new boot ID
@@ -181,7 +211,7 @@ for run in $(seq 1 "$runs"); do
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
 
   # Import must survive the real AOSP package proto and represent every
-  # managed-user third-party app conservatively as attended.
+  # managed-user third-party app conservatively as Play or attended.
   imported=$tmp/imported-$run.nix
   snapshot=$tmp/snapshot-$run.json
   nix run .#android-rebuild --accept-flake-config -- \
@@ -189,9 +219,10 @@ for run in $(seq 1 "$runs"); do
   jq -e '.schemaVersion == 1 and .device.abi == "x86_64"' "$snapshot" >/dev/null
   jq -S '[.packages[] | select(.thirdPartyForManagedUser) | .name]' \
     "$snapshot" > "$tmp/snapshot-attended-$run.json"
-  nix eval --impure --json --expr "(import $imported).apps.attended" \
+  nix eval --impure --json --expr \
+    "let c = import $imported; in c.apps.attended ++ c.apps.play" \
     > "$tmp/generated-attended-$run.json"
-  jq -S . "$tmp/generated-attended-$run.json" > "$tmp/generated-attended-sorted-$run.json"
+  jq -S 'sort' "$tmp/generated-attended-$run.json" > "$tmp/generated-attended-sorted-$run.json"
   cmp "$tmp/snapshot-attended-$run.json" "$tmp/generated-attended-sorted-$run.json"
 
   run_root=$(cat "$root_file")
@@ -212,4 +243,4 @@ for run in $(seq 1 "$runs"); do
   fi
 done
 
-echo "✓ $runs fresh emulator cycles passed apply, reboot persistence, no-op, and cleanup"
+echo "✓ $runs fresh emulator cycles passed bootstrap, reboot persistence, no-op, and cleanup"

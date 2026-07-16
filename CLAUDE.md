@@ -46,10 +46,11 @@ For mutation-class development, apply only on the emulator:
 
 ```console
 nix run .#android-rebuild -- switch --flake .#bench --serial emulator-5554
+nix run .#android-rebuild -- bootstrap --flake .#bench --serial emulator-5554
 ```
 
-A real-phone `switch` is allowed only after the same mutation class passes the
-emulator and the owner explicitly approves the exact reviewed plan. Keep
+A real-phone `switch` or `bootstrap` is allowed only after the same mutation
+class passes the emulator and the owner explicitly approves the exact reviewed plan. Keep
 `apps.cleanup = "none"` unless each proposed removal receives separate approval.
 
 Do not run whole-tree `nix flake check`; devenv task evaluation currently fails
@@ -62,7 +63,8 @@ gate.
 modules, validates source/lock relationships, fetches APKs, and writes the
 versioned manifest. `engine/converge.sh` validates, plans, and applies the
 manifest. `scripts/update-lock.sh` authenticates signed F-Droid entry metadata
-and resolves release assets. `scripts/atlas-probe.sh` is read-only.
+and resolves release assets. `scripts/bootstrap.sh` phases wiped-device
+reconstruction without weakening convergence preflights. `scripts/atlas-probe.sh` is read-only.
 
 Public v1 manages owner user 0 only. `mkDevice.system` is required and supported
 controller outputs are `x86_64-linux` and `aarch64-darwin`. Packaged scripts

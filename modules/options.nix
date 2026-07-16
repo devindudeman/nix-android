@@ -96,7 +96,13 @@
       attended = lib.mkOption {
         type = with lib.types; listOf str;
         default = [ ];
-        description = "Declared-but-human-installed (Play/Aurora — not headlessly fetchable). Converge asserts presence and prints a TODO list for the missing.";
+        description = "Declared-but-human-installed packages without a more specific source. Converge asserts presence and prints a TODO list for the missing.";
+      };
+
+      play = lib.mkOption {
+        type = with lib.types; listOf str;
+        default = [ ];
+        description = "Google Play packages asserted present but installed with explicit user consent. Missing entries can be opened one at a time with `android-rebuild assist`; Play remains responsible for delivery, licensing, and updates.";
       };
 
       cleanup = lib.mkOption {

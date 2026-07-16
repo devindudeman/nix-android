@@ -4,6 +4,8 @@
 #   android-rebuild build  --flake .#pixel            eval + fetch closure, no device
 #   android-rebuild plan   --flake .#pixel --serial S     diff manifest vs device
 #   android-rebuild switch --flake .#pixel --serial S     plan + apply
+#   android-rebuild assist --flake .#pixel --serial S     open next missing Play app
+#   android-rebuild bootstrap --flake .#pixel --serial S  phased wiped-device rebuild
 #   android-rebuild update --flake .#pixel [--lock PATH]  refresh apps.lock.json
 #   android-rebuild import --serial S [--snapshot-out PATH]  device → starter Nix + optional JSON
 #
@@ -21,6 +23,8 @@ Usage:
   android-rebuild build  --flake REF#DEVICE
   android-rebuild plan   --flake REF#DEVICE --serial SERIAL
   android-rebuild switch --flake REF#DEVICE --serial SERIAL
+  android-rebuild assist --flake REF#DEVICE --serial SERIAL [--watch]
+  android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
   android-rebuild import --serial SERIAL [--snapshot-out PATH]
 
@@ -38,6 +42,7 @@ flakeref="."
 serial=${ANDROID_SERIAL:-}
 lock=apps.lock.json
 snapshot_out=
+watch=0
 flake_set=0
 lock_set=0
 while [ $# -gt 0 ]; do
@@ -58,6 +63,7 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || { echo "--snapshot-out requires a value" >&2; exit 2; }
     snapshot_out=$2; shift 2
     ;;
+  --watch) watch=1; shift ;;
   -h | --help) usage; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -73,6 +79,10 @@ if [ -n "$snapshot_out" ] && [ "$cmd" != import ]; then
   echo "--snapshot-out is only valid with import" >&2
   exit 2
 fi
+if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
+  echo "--watch is only valid with assist" >&2
+  exit 2
+fi
 
 case $cmd in
 import)
@@ -82,11 +92,11 @@ import)
   [ -z "$snapshot_out" ] || import_args+=(--snapshot-out "$snapshot_out")
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
-build | plan | switch | update) ;;
+build | plan | switch | assist | bootstrap | update) ;;
 *) echo "unknown command: $cmd" >&2; usage >&2; exit 2 ;;
 esac
 
-if [ "$cmd" = plan ] || [ "$cmd" = switch ]; then
+if [ "$cmd" = plan ] || [ "$cmd" = switch ] || [ "$cmd" = assist ] || [ "$cmd" = bootstrap ]; then
   [ -n "$serial" ] || { echo "$cmd requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
 fi
 
@@ -110,6 +120,16 @@ plan | switch)
   apply=()
   [ "$cmd" = switch ] && apply=(--apply)
   exec "$conv"/bin/* "${engine_args[@]}" "${apply[@]}"
+  ;;
+assist)
+  manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  assist_args=()
+  [ "$watch" -eq 0 ] || assist_args+=(--watch)
+  exec "$nix_android_bash" "$src/scripts/assist-play.sh" "$manifest" --serial "$serial" "${assist_args[@]}"
+  ;;
+bootstrap)
+  manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  exec "$nix_android_bash" "$src/scripts/bootstrap.sh" "$manifest" --serial "$serial"
   ;;
 update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \

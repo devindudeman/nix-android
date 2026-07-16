@@ -10,6 +10,11 @@ spec = importlib.util.spec_from_file_location("package_snapshot", path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
+render_path = Path(__file__).with_name("render-import.py")
+render_spec = importlib.util.spec_from_file_location("render_import", render_path)
+renderer = importlib.util.module_from_spec(render_spec)
+render_spec.loader.exec_module(renderer)
+
 dump = module.package_dump_class()()
 package = dump.packages.add()
 package.name = "org.example.app"
@@ -72,3 +77,23 @@ except ValueError:
     pass
 else:
     raise AssertionError("unsafe package name was accepted")
+
+try:
+    module.normalize(decoded, {"org.example.omitted"}, snapshot["device"])
+except ValueError as error:
+    assert "protobuf omitted third-party package" in str(error)
+else:
+    raise AssertionError("partial package protobuf was accepted")
+
+play = decoded.packages.add()
+play.name = "com.example.play"
+play.installer_name = "com.android.vending"
+rendered_snapshot = module.normalize(
+    decoded,
+    {"org.example.app", "com.example.play"},
+    snapshot["device"],
+)
+rendered = renderer.render(rendered_snapshot)
+assert 'apps.play = [\n    "com.example.play"\n  ];' in rendered
+assert 'apps.attended = [\n    "org.example.app"\n  ];' in rendered
+assert rendered.index('"com.example.play"') < rendered.index('"org.example.app"')

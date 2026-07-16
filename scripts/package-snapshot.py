@@ -161,13 +161,26 @@ def optional(message, name):
 
 
 def normalize(dump, third_party, device):
+    invalid_third_party = sorted(
+        name for name in third_party if not PACKAGE_NAME.fullmatch(name)
+    )
+    if invalid_third_party:
+        raise ValueError(
+            f"invalid package name in third-party inventory: {invalid_third_party[0]!r}"
+        )
+    decoded_names = {package.name for package in dump.packages if package.name}
+    missing_third_party = sorted(third_party - decoded_names)
+    if missing_third_party:
+        raise ValueError(
+            "package protobuf omitted third-party package: "
+            f"{missing_third_party[0]}"
+        )
+
     packages = []
     for package in dump.packages:
         if not package.name:
             continue
         is_third_party = package.name in third_party
-        if is_third_party and not PACKAGE_NAME.fullmatch(package.name):
-            raise ValueError(f"invalid Android package name in protobuf: {package.name!r}")
         install_source = None
         if package.HasField("install_source"):
             source = package.install_source

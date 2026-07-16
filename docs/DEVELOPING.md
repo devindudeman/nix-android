@@ -16,6 +16,8 @@ The manifest/engine split is load-bearing. Nix owns option types, assertions,
 source authentication, artifact fetching, and manifest construction. The Bash
 engine validates the complete JSON document, reads device state, prints a plan,
 and writes only with `--apply`. Keep source-specific logic out of the engine.
+Any semantic field addition must bump `manifestVersion`; old and new engine
+pairs must fail closed instead of ignoring desired state.
 
 ## File map
 
@@ -24,10 +26,13 @@ and writes only with `--apply`. Keep source-specific logic out of the engine.
 | `modules/options.nix` | Public option surface; every device option needs a verified primitive |
 | `lib/default.nix` | `mkDevice`, assertions, lock/source binding, store APKs, manifest, packaged engine |
 | `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
-| `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, and `import` CLI |
+| `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `assist`, `bootstrap`, and `import` CLI |
 | `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
 | `scripts/import.sh` | Read-only capture orchestration and starter Nix rendering |
 | `scripts/package-snapshot.py` | AOSP package-protobuf decoder and normalized snapshot writer |
+| `scripts/render-import.py` | Deterministic snapshot-to-Nix renderer and attended-source classification |
+| `scripts/assist-play.sh` | Official Play listing queue; watch mode advances only after package presence |
+| `scripts/bootstrap.sh` | Resumable managed-APK, Play-consent, and full-state orchestration |
 | `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
 | `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, atomic-failure, and lock merge/replace resolver tests |
@@ -43,8 +48,8 @@ and writes only with `--apply`. Keep source-specific logic out of the engine.
 3. A new option requires a working read, write, real-change read-back, and
    graceful-reboot persistence test on the emulator. Record the result in
    `PRIMITIVES.md` in the same change.
-4. Plan is read-only. Apply behavior must remain behind `switch`/`--apply` and
-   destructive behavior behind explicit configuration.
+4. Plan is read-only. Apply behavior must remain behind `switch`, `bootstrap`,
+   or internal `--apply`, and destructive behavior behind explicit configuration.
 5. Raw phone captures are personal data. Store them under
    `~/Documents/phone-migration/`, never in this repository.
 6. Never use an abrupt `adb reboot` after writes. Allow state to settle and use
@@ -60,8 +65,9 @@ just check
 ```
 
 `just check` builds native-host formatting, shellcheck, statix, deadnix,
-packaged CLI safety, strict-manifest, signed-lock resolver, and negative
-module-validation checks, plus the platform's positive controller build.
+packaged CLI safety, strict-manifest, import rendering, Play-assist and
+bootstrap safety, signed-lock resolver, and negative module-validation checks, plus the
+platform's positive controller build.
 The whole `nix flake check` remains intentionally unused because devenv task
 evaluation currently produces a spurious `path .drv is not valid` failure.
 
@@ -69,7 +75,7 @@ For a clean CI-equivalent Linux run:
 
 ```console
 nix build \
-  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,import-snapshot,update-lock-safety,validation} \
+  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation} \
   --accept-flake-config --no-link
 nix build \
   .#packages.x86_64-linux.{android-rebuild,update-lock} \
@@ -91,7 +97,7 @@ just emu
 nix run .#android-rebuild -- \
   plan --flake .#bench --serial emulator-5554
 nix run .#android-rebuild -- \
-  switch --flake .#bench --serial emulator-5554
+  bootstrap --flake .#bench --serial emulator-5554
 nix run .#android-rebuild -- \
   plan --flake .#bench --serial emulator-5554
 adb -s emulator-5554 emu kill
@@ -106,7 +112,7 @@ machine.
 The release persistence pass is:
 
 1. plan a fresh emulator;
-2. switch;
+2. bootstrap the fresh device;
 3. verify the declared state directly;
 4. re-plan and require no changes;
 5. allow state to settle, run
@@ -117,9 +123,10 @@ The release persistence pass is:
 Run that gate twice on independent fresh userdata with `just bench-e2e 2`.
 It owns emulator-5554, enforces boot/readiness deadlines, verifies exact state,
 requires a new boot ID after graceful reboot, exercises the structured importer
-and its attended-app coverage, removes each temporary AVD, and waits for the ADB
-transport to disappear. Both cycles must pass before any real-phone mutation is
-proposed.
+and its Play/attended coverage, proves cleanup preserves a Play declaration,
+proves the phased bootstrap path, removes each temporary AVD, and waits for the
+ADB transport to disappear. Both
+cycles must pass before any real-phone mutation is proposed.
 
 ## Engine traps already found
 
@@ -140,7 +147,7 @@ proposed.
   Darwin's Nix Bash treated a variable immediately followed by a Unicode
   ellipsis as a longer name under `set -u`; the physical-Mac gate caught it.
 
-## Adding an app source
+## Adding a fetched app source
 
 End with one uniform managed entry: package ID, integer versionCode, and a
 hash-addressed APK store path.
@@ -153,6 +160,12 @@ hash-addressed APK store path.
   stream it with `tar --`, and shell-escape it again at build time.
 - Test correct resolution, wrong trust anchor, wrong package ID, duplicate
   declarations, and stale-source rejection.
+
+Attended sources are deliberately different: they create no APK store path and
+never automate a consent screen. `apps.play` only asserts package presence and
+lets `assist` open the official listing. Any new attended source must preserve
+explicit user consent, participate in duplicate-source and cleanup safety, and
+have source-specific diagnostics plus an offline command fixture.
 
 ## Adding a device option
 

@@ -19,6 +19,7 @@ writable or persistent interface.
 | Primitive | Device evidence | Public option |
 | --- | --- | --- |
 | `adb install -r --user 0`, `adb uninstall --user 0` | AOSP 35 install/reinstall/removal round trips; additive F-Droid install and version read-back on locked GrapheneOS | managed apps and explicit cleanup |
+| `pm list packages --show-versioncode --user 0` | AOSP bench and GrapheneOS owner-user package presence; unlike `-3`, includes preinstalled/system packages | `apps.play`, `apps.attended`, and managed-app diffing |
 | `settings get/put --user 0 global/secure/system` | Private DNS and representative keys read/write; all three namespaces exercised on AOSP bench | `android.settings.*`, `android.privateDns` |
 | `cmd uimode night` | real-device off/on convergence with no-op read-back; bench idempotence and reboot persistence | `android.darkMode` |
 | `cmd role get-role-holders/add-role-holder --user 0` | real-device reversible role check; bench read/idempotence | `android.defaultApps.*` |
@@ -34,6 +35,33 @@ GrapheneOS Network and Sensors controls map to runtime
 `android.permission.INTERNET` and `android.permission.OTHER_SENSORS` in package
 state. The public engine uses the same verified `pm grant/revoke` mechanism,
 but no destructive permission test was performed on the daily phone.
+
+## User-confirmed Play assistance
+
+The Pixel's read-only `am help` output on 2026-07-16 verified that
+`start-activity` accepts an explicit `--user`, action, data URI, and target
+package. An offline fake-adb fixture verifies that `android-rebuild assist`
+opens exactly one
+`https://play.google.com/store/apps/details?id=<package>` URI in
+`com.android.vending`, refuses unsafe package IDs before adb, and performs no
+launch when all declarations are present or the selected device ABI differs.
+The fixture also proves `assist --watch` opens multiple declarations in order
+only after `pm list packages --user 0` reports each preceding package present.
+On 2026-07-16, the authorized two-app acceptance run on a stock Android 16
+Pixel 9 Pro opened Wikipedia (`org.wikipedia`) and then Mullvad VPN
+(`net.mullvad.mullvadvpn`). The owner confirmed each installation in Play;
+watch mode advanced only after package presence appeared. The final plan was a
+no-op, and `pm list packages -i --user 0` attributed both installs to
+`com.android.vending`. No settings, roles, permissions, cleanup, or unrelated
+app declarations were present in the private test manifest.
+
+This is assistance, not silent installation: Android/Play owns authentication,
+licensing, delivery, and the install confirmation. The supported public
+consumer integration is the official listing link. Fully managed Android
+devices have separate enterprise `FORCE_INSTALLED` policy machinery, which is
+outside nix-android's stock locked-device boundary. See the official
+[Play linking guide](https://developer.android.com/distribute/marketing-tools/linking-to-google-play)
+and [Android Management policy reference](https://developers.google.com/android/management/reference/rest/v1/enterprises.policies).
 
 ## Other verified candidates without modules
 

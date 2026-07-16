@@ -6,19 +6,89 @@
 # never downgrades; removals only when the manifest says cleanup=uninstall.
 #
 # Usage: converge.sh <manifest.json> [--apply] [--serial <adb-serial>]
+#        converge.sh <manifest.json> --validate-only
 set -euo pipefail
 
 manifest=${1:?usage: converge.sh <manifest.json> [--apply] [--serial S]}
 shift
 apply=0
+validate_only=0
 serial=${ANDROID_SERIAL:-}
 while [ $# -gt 0 ]; do
   case $1 in
   --apply) apply=1; shift ;;
-  --serial) serial=$2; shift 2 ;;
+  --validate-only) validate_only=1; shift ;;
+  --serial)
+    [ $# -ge 2 ] || { echo "--serial requires a value" >&2; exit 2; }
+    serial=$2; shift 2
+    ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# The engine is also a standalone trust boundary. Validate the complete shape
+# before the first device read; process-substitution failures do not trigger
+# `set -e`, and an empty declaration set must never reach cleanup=uninstall.
+if ! jq -e '
+  def strings: type == "array" and all(.[]; type == "string");
+  def package: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+\\z");
+  def permission: type == "string" and test("^[A-Za-z0-9_.]+\\z");
+  def packages: strings and all(.[]; package);
+  def is_unique: length == (unique | length);
+  (keys == ["android", "apps", "device", "manifestVersion"])
+  and .manifestVersion == 2
+  and (.device | type == "object"
+    and (keys == ["abi", "name", "user"])
+    and (.name | type == "string" and test("^[A-Za-z0-9._-]+\\z"))
+    and .user == 0
+    and (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64")))
+  and (.apps | type == "object"
+    and (keys == ["attended", "cleanup", "managed", "play"])
+    and (.cleanup | IN("none", "uninstall"))
+    and (.attended | packages)
+    and (.play | packages)
+    and (.managed | type == "array" and all(.[];
+      type == "object"
+      and (keys == ["apk", "package", "versionCode"])
+      and (.package | package)
+      and (.versionCode | type == "number" and . >= 0 and floor == .)
+      and (.apk | type == "string" and startswith("/")))))
+  and (.android | type == "object"
+    and (keys == ["darkMode", "deviceidleExempt", "disabled", "permissions", "roles", "settings"])
+    and (.darkMode | . == null or type == "boolean")
+    and (.disabled | packages)
+    and (.deviceidleExempt | packages)
+    and (.roles | type == "object" and all(to_entries[];
+      (.key | IN("browser", "sms", "dialer", "home"))
+      and (.value | package)))
+    and (.settings | type == "object"
+      and (keys == ["global", "secure", "system"])
+      and all(to_entries[];
+      (.key | IN("global", "secure", "system"))
+      and (.value | type == "object" and all(to_entries[];
+        (.key | type == "string" and test("^[A-Za-z0-9_.-]+\\z"))
+        and (.value | type == "string" and length > 0 and . != "null"
+          and (contains("\u0000") | not)
+          and (contains("\n") | not)
+          and (contains("\r") | not)
+          and (contains("\u001f") | not))))))
+    and (.permissions | type == "object" and all(to_entries[];
+      (.key | package)
+      and (.value | type == "object"
+        and (keys == ["grant", "revoke"])
+        and (.grant | strings and all(.[]; permission))
+        and (.revoke | strings and all(.[]; permission))
+        and ((.grant + .revoke) | is_unique)))))
+  and (([.apps.managed[].package] + .apps.attended + .apps.play) | is_unique)
+' "$manifest" >/dev/null; then
+  echo "invalid or unsupported manifest: $manifest" >&2
+  exit 2
+fi
+
+if [ "$validate_only" -eq 1 ]; then
+  [ "$apply" -eq 0 ] || { echo "--validate-only cannot be combined with --apply" >&2; exit 2; }
+  exit 0
+fi
 
 [ -n "$serial" ] || { echo "converge requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
 adb_base=(adb -s "$serial")
@@ -43,56 +113,6 @@ adb_shell() {
 # whitespace and never appears in package names / setting values.
 US=$'\037'
 
-# The engine is also a standalone trust boundary. Validate the complete shape
-# before the first device read; process-substitution failures do not trigger
-# `set -e`, and an empty declaration set must never reach cleanup=uninstall.
-if ! jq -e '
-  def strings: type == "array" and all(.[]; type == "string");
-  def package: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+\\z");
-  def permission: type == "string" and test("^[A-Za-z0-9_.]+\\z");
-  def packages: strings and all(.[]; package);
-  def is_unique: length == (unique | length);
-  .manifestVersion == 1
-  and (.device | type == "object"
-    and (.name | type == "string" and test("^[A-Za-z0-9._-]+\\z"))
-    and .user == 0
-    and (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64")))
-  and (.apps | type == "object"
-    and (.cleanup | IN("none", "uninstall"))
-    and (.attended | packages)
-    and (.managed | type == "array" and all(.[];
-      type == "object"
-      and (.package | package)
-      and (.versionCode | type == "number" and . >= 0 and floor == .)
-      and (.apk | type == "string" and startswith("/")))))
-  and (.android | type == "object"
-    and (.darkMode | . == null or type == "boolean")
-    and (.disabled | packages)
-    and (.deviceidleExempt | packages)
-    and (.roles | type == "object" and all(to_entries[];
-      (.key | IN("browser", "sms", "dialer", "home"))
-      and (.value | package)))
-    and (.settings | type == "object" and all(to_entries[];
-      (.key | IN("global", "secure", "system"))
-      and (.value | type == "object" and all(to_entries[];
-        (.key | type == "string" and test("^[A-Za-z0-9_.-]+\\z"))
-        and (.value | type == "string" and length > 0 and . != "null"
-          and (contains("\u0000") | not)
-          and (contains("\n") | not)
-          and (contains("\r") | not)
-          and (contains("\u001f") | not))))))
-    and (.permissions | type == "object" and all(to_entries[];
-      (.key | package)
-      and (.value | type == "object"
-        and (.grant | strings and all(.[]; permission))
-        and (.revoke | strings and all(.[]; permission))
-        and ((.grant + .revoke) | is_unique)))))
-  and (([.apps.managed[].package] + .apps.attended) | is_unique)
-' "$manifest" >/dev/null; then
-  echo "invalid or unsupported manifest: $manifest" >&2
-  exit 2
-fi
-
 user=$(jq -r '.device.user' "$manifest")
 [ "$user" = 0 ] || { echo "public v1 supports device.user = 0 only" >&2; exit 2; }
 expected_abi=$(jq -r '.device.abi' "$manifest")
@@ -102,8 +122,10 @@ actual_abi=$(adb_shell getprop ro.product.cpu.abi | tr -d '\r')
   exit 2
 }
 
-# Device reality: user-installed packages with versionCodes.
-installed=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+# Device reality. Presence assertions include preinstalled/system Play apps;
+# destructive cleanup remains limited to third-party owner-user packages.
+installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r')
+installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
 current_code() { # -> versionCode or empty
   local wanted=$1 line package
   while IFS= read -r line; do
@@ -120,8 +142,10 @@ todo_install=()
 todo_upgrade=()
 todo_remove=()
 missing_attended=()
+missing_play=()
 declare -A declared=()
 declare -A managed=()
+declare -A presence=()
 declare -A changing=()
 
 # F-Droid apps: install missing, upgrade below-floor.
@@ -142,24 +166,35 @@ done < <(jq -r '.apps.managed[] | [.package, .versionCode, .apk] | @tsv' "$manif
 while read -r pkg; do
   [ -z "$pkg" ] && continue
   declared[$pkg]=1
+  presence[$pkg]=1
   [ -n "$(current_code "$pkg")" ] || missing_attended+=("$pkg")
 done < <(jq -r '.apps.attended[]' "$manifest")
 
+# Play apps are still presence assertions, but retain their source identity so
+# the CLI can offer an explicit, user-confirmed installation path.
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  declared[$pkg]=1
+  presence[$pkg]=1
+  [ -n "$(current_code "$pkg")" ] || missing_play+=("$pkg")
+done < <(jq -r '.apps.play[]' "$manifest")
+
 # Packages referenced by a role/permission/disable/idle option are declarations
-# too: cleanup must preserve them. External targets must already exist; managed
-# targets may be installed by this run before their later action is applied.
+# too: cleanup must preserve them. External targets must already exist unless
+# their installation is explicitly declared through attended or Play state;
+# managed targets may be installed by this run before later actions are applied.
 missing_referenced=()
 while read -r pkg; do
   [ -z "$pkg" ] && continue
   declared[$pkg]=1
-  if [ -z "${managed[$pkg]:-}" ]; then
+  if [ -z "${managed[$pkg]:-}" ] && [ -z "${presence[$pkg]:-}" ]; then
     package_query=$(adb_shell pm list packages --user "$user" "$pkg" | tr -d '\r')
     grep -Fqx "package:$pkg" <<<"$package_query" || missing_referenced+=("$pkg")
   fi
 done < <(jq -r '[.android.disabled[], .android.deviceidleExempt[], (.android.roles | values[]), (.android.permissions | keys[])] | unique[]' "$manifest")
 
 if [ "${#missing_referenced[@]}" -gt 0 ]; then
-  printf 'referenced package is neither installed nor managed: %s\n' "${missing_referenced[@]}" >&2
+  printf 'referenced package is neither installed nor declared as an app: %s\n' "${missing_referenced[@]}" >&2
   exit 1
 fi
 
@@ -167,7 +202,7 @@ fi
 if [ "$(jq -r '.apps.cleanup' "$manifest")" = "uninstall" ]; then
   while read -r pkg; do
     [ -n "${declared[$pkg]:-}" ] || todo_remove+=("$pkg")
-  done < <(sed -n 's/^package:\([^ ]*\) .*/\1/p' <<<"$installed")
+  done < <(sed -n 's/^package:\([^ ]*\) .*/\1/p' <<<"$installed_third_party")
 fi
 
 # ---- Phase-2 categories: managed keys only, read → diff → plan → apply ----
@@ -216,7 +251,8 @@ while read -r pkg; do
   if ! grep -Fqx "package:$pkg" <<<"$disabled_now"; then
     # only meaningful if the package exists for this user at all
     package_query=$(adb_shell pm list packages --user "$user" "$pkg" | tr -d '\r')
-    if grep -Fqx "package:$pkg" <<<"$package_query" || [ -n "${managed[$pkg]:-}" ]; then
+    if grep -Fqx "package:$pkg" <<<"$package_query" \
+      || [ -n "${managed[$pkg]:-}" ] || [ -n "${presence[$pkg]:-}" ]; then
       todo_disable+=("$pkg")
     else
       echo "note: android.packages.disabled: $pkg not installed for user $user — skipping" >&2
@@ -240,9 +276,9 @@ while IFS=$'\t' read -r pkg perm action; do
     todo_grant+=("${pkg}${US}${perm}")
   elif [ "$action" = revoke ] \
     && { [ "$granted" = "true" ] || [ "$package_present" -eq 0 ] || [ -n "${changing[$pkg]:-}" ]; }; then
-    # A missing target is necessarily a managed app (the reference preflight
-    # rejects anything else). Installs/upgrades happen before permissions, so
-    # reassert both grant and revoke intent after either package transition.
+    # A missing target is either managed or presence-declared: the latter makes
+    # the attended/Play preflight below abort before apply. Managed installs and
+    # upgrades happen before permissions, so reassert revoke intent afterward.
     todo_revoke+=("${pkg}${US}${perm}")
   fi
 done < <(jq -r '.android.permissions // {} | to_entries[] | .key as $p | ((.value.grant[] | [$p, ., "grant"]), (.value.revoke[] | [$p, ., "revoke"])) | @tsv' "$manifest")
@@ -271,10 +307,11 @@ for t in "${todo_disable[@]}"; do echo "disable  $t"; done
 for t in "${todo_grant[@]}";   do IFS=$US read -r p m <<<"$t"; echo "grant    $p $m"; done
 for t in "${todo_revoke[@]}";  do IFS=$US read -r p m <<<"$t"; echo "revoke   $p $m"; done
 for t in "${todo_idle[@]}";    do echo "idle-ok  $t (battery-optimization exempt)"; done
-for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install by hand (Play/Aurora)"; done
+for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install from its declared human source"; done
+for p in "${missing_play[@]}"; do echo "PLAY     $p — run android-rebuild assist"; done
 
-if [ "${#missing_attended[@]}" -gt 0 ]; then
-  echo "✗ ${#missing_attended[@]} attended app(s) missing; device does not match manifest" >&2
+if [ $(( ${#missing_attended[@]} + ${#missing_play[@]} )) -gt 0 ]; then
+  echo "✗ ${#missing_attended[@]} attended and ${#missing_play[@]} Play app(s) missing; device does not match manifest" >&2
   exit 1
 fi
 

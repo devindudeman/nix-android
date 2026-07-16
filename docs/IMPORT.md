@@ -36,11 +36,15 @@ not a public Android SDK compatibility contract.
 user's third-party classification. Installer and install-source fields are
 evidence, not provenance: adb installs may report no installer, and an
 installer package does not identify a repository, release URL, or signing
-trust anchor. Consequently, generated source declarations remain explicitly
-conservative:
+trust anchor. Import fails if that independent package list names an app absent
+from the decoded protobuf, preventing a partial diagnostic dump from silently
+dropping declarations. Consequently, generated source declarations remain
+explicitly conservative:
 
-- every observed third-party package becomes an `apps.attended` presence
-  assertion, which is safe to plan without inventing a source;
+- packages whose recorded installer is `com.android.vending` become
+  `apps.play`, retaining the source identity and user-consent boundary;
+- every other observed third-party package becomes an `apps.attended` presence
+  assertion, which is safe to plan without inventing a fetched source;
 - recognized main-F-Droid and Obtainium installers add commented curation
   candidates, never active managed-source declarations.
 
@@ -103,7 +107,7 @@ external-Nix, read-current-state workflow. The useful neighboring designs are:
 
 The next fidelity slices are deliberately ordered by evidence quality:
 
-1. package-protobuf snapshot plus conservative app rendering;
+1. package-protobuf snapshot plus conservative Play/attended rendering;
 2. targeted reads for already-supported roles, dark mode, Private DNS,
    user-added device-idle exemptions, and disabled third-party packages;
 3. runtime-permission filtering against permission definitions before

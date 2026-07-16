@@ -22,7 +22,8 @@
         cfg.apps.fdroid.packages
         ++ lib.concatMap (r: r.packages) (builtins.attrValues cfg.apps.fdroid.repos)
         ++ releaseNames;
-      declaredApps = managedLockedNames ++ builtins.attrNames cfg.apps.local ++ cfg.apps.attended;
+      declaredApps =
+        managedLockedNames ++ builtins.attrNames cfg.apps.local ++ cfg.apps.attended ++ cfg.apps.play;
       referencedPackages =
         declaredApps
         ++ cfg.android.packages.disabled
@@ -237,7 +238,7 @@
         assert validated;
         pkgs.writeText "nix-android-${cfg.device.name}-manifest-base.json" (
           builtins.toJSON {
-            manifestVersion = 1;
+            manifestVersion = 2;
             device = {
               inherit (cfg.device) name user abi;
             };
@@ -252,7 +253,7 @@
               # One unified list regardless of source — the engine doesn't care
               # where an APK came from, only that it's a hash-verified store path.
               managed = map fetchApk managedLockedNames;
-              inherit (cfg.apps) attended cleanup;
+              inherit (cfg.apps) attended play cleanup;
             };
           }
         );
@@ -292,6 +293,9 @@
         name = "nix-android-converge-${cfg.device.name}";
         runtimeInputs = [
           pkgs.android-tools
+          pkgs.coreutils
+          pkgs.gnugrep
+          pkgs.gnused
           pkgs.jq
         ];
         text = ''

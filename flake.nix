@@ -92,15 +92,16 @@
             };
 
             # The CLI, deliberately shaped like darwin-rebuild:
-            # android-rebuild build|plan|switch|update|import --flake .#device
+            # android-rebuild build|plan|switch|assist|bootstrap|update|import
             android-rebuild = pkgs.writeShellApplication {
               name = "android-rebuild";
               runtimeInputs = with pkgs; [
                 android-tools
-                jq
                 coreutils
+                gnugrep
                 gnused
                 importPython
+                jq
               ];
               text = ''
                 export NIX_ANDROID_SRC=${inputs.self}
@@ -212,8 +213,22 @@
               cli=${inputs.self.packages.${system}.android-rebuild}/bin/android-rebuild
               "$cli" --help >/dev/null
               env -i PATH=/nope "$cli" --help >/dev/null
+              grep -Fq ${pkgs.coreutils}/bin "$cli"
+              grep -Fq ${pkgs.gnugrep}/bin "$cli"
+              grep -Fq ${pkgs.gnused}/bin "$cli"
+              converge=${
+                if system == "x86_64-linux" then
+                  "${inputs.self.androidConfigurations.bench.converge}/bin/nix-android-converge-bench"
+                else
+                  "${inputs.self.androidConfigurations.darwin-smoke.converge}/bin/nix-android-converge-darwin-smoke"
+              }
+              grep -Fq ${pkgs.coreutils}/bin "$converge"
+              grep -Fq ${pkgs.gnugrep}/bin "$converge"
+              grep -Fq ${pkgs.gnused}/bin "$converge"
               ! "$cli" plan --flake ${inputs.self}#bench >/dev/null 2>&1
               ! "$cli" switch --flake ${inputs.self}#bench >/dev/null 2>&1
+              ! "$cli" assist --flake ${inputs.self}#bench >/dev/null 2>&1
+              ! "$cli" bootstrap --flake ${inputs.self}#bench >/dev/null 2>&1
               ! "$cli" import >/dev/null 2>&1
               ! "$cli" unknown >/dev/null 2>&1
               ! "$cli" build --flake >/dev/null 2>&1
@@ -221,12 +236,34 @@
               grep -q 'only valid with update' lock-err
               ! "$cli" build --flake x#bench --snapshot-out nope.json >/dev/null 2>snapshot-err
               grep -q 'only valid with import' snapshot-err
+              ! "$cli" build --flake x#bench --watch >/dev/null 2>watch-err
+              grep -q 'only valid with assist' watch-err
               touch $out
             '';
             import-snapshot =
               pkgs.runCommand "nix-android-import-snapshot" { nativeBuildInputs = [ importPython ]; }
                 ''
                   python3 ${inputs.self}/scripts/test-package-snapshot.py
+                  touch $out
+                '';
+            assist-safety =
+              pkgs.runCommand "nix-android-assist-safety"
+                {
+                  nativeBuildInputs = [ pkgs.jq ];
+                }
+                ''
+                  ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-assist-play.sh \
+                    ${inputs.self}/scripts/assist-play.sh ${pkgs.bash}/bin/bash
+                  touch $out
+                '';
+            bootstrap-safety =
+              pkgs.runCommand "nix-android-bootstrap-safety"
+                {
+                  nativeBuildInputs = [ pkgs.jq ];
+                }
+                ''
+                  ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-bootstrap.sh \
+                    ${inputs.self}/scripts/bootstrap.sh ${pkgs.bash}/bin/bash
                   touch $out
                 '';
             manifest-safety =
@@ -237,9 +274,9 @@
                   grep -q 'invalid or unsupported manifest' error
 
                   jq -n '{
-                    manifestVersion: 1,
+                    manifestVersion: 2,
                     device: {name: "test", user: 0, abi: "x86_64"},
-                    apps: {cleanup: "none", attended: [], managed: []},
+                    apps: {cleanup: "none", attended: [], play: [], managed: []},
                     android: {
                       darkMode: null, disabled: [], deviceidleExempt: [], roles: {},
                       settings: {global: {}, secure: {}, system: {}}, permissions: {}
@@ -258,11 +295,25 @@
                   reject duplicate '.apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk"},
                     {package:"org.example.app",versionCode:1,apk:"/two.apk"}]'
+                  reject duplicate-play '.apps.attended = ["org.example.app"] |
+                    .apps.play = ["org.example.app"]'
+                  reject legacy-manifest '.manifestVersion = 1'
+                  reject unknown-root '.future = {}'
+                  reject unknown-app-source '.apps.privateSource = ["org.example.app"]'
+                  reject unknown-android-state '.android.future = {}'
+                  reject unknown-managed-field '.apps.managed = [
+                    {package:"org.example.app",versionCode:1,apk:"/one.apk",future:true}]'
+                  reject unknown-permission-field '.android.permissions."org.example.app" = {
+                    grant:[], revoke:[], future:[]}'
+                  reject missing-setting-namespace 'del(.android.settings.system)'
                   reject permission-conflict '.android.permissions."org.example.app" = {
                     grant:["android.permission.CAMERA"], revoke:["android.permission.CAMERA"]}'
                   reject control-identifier '.apps.attended = ["org.example.app\n"]'
                   reject empty-setting '.android.settings.global.example = ""'
                   reject null-setting '.android.settings.global.example = "null"'
+                  PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
+                    valid.json --validate-only
+                  test ! -e contacted
                   ! PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
                     valid.json --serial expected-contact >/dev/null 2>&1
                   test -e contacted
@@ -335,6 +386,12 @@
                 device.abi = "x86_64";
                 apps.fdroid.packages = [ "org.fdroid.fdroid" ];
                 apps.attended = [ "org.fdroid.fdroid" ];
+              };
+              assert rejects {
+                device.name = "duplicate-play-app";
+                device.abi = "x86_64";
+                apps.play = [ "org.example.app" ];
+                apps.attended = [ "org.example.app" ];
               };
               assert rejects {
                 device.name = "permission-conflict";

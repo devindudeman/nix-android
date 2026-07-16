@@ -6,6 +6,8 @@ state in Nix, inspect a read-only plan, then converge over adb.
 ```console
 android-rebuild plan   --flake .#pixel --serial DEVICE_SERIAL
 android-rebuild switch --flake .#pixel --serial DEVICE_SERIAL
+android-rebuild assist --watch --flake .#pixel --serial DEVICE_SERIAL
+android-rebuild bootstrap --flake .#pixel --serial DEVICE_SERIAL # wiped-device rebuild
 ```
 
 nix-android works at adb-shell privilege on a stock, locked-bootloader device.
@@ -18,18 +20,20 @@ mutation test bench.
 > round trip on a locked GrapheneOS device, and passes the release packages and
 > device-free checks on a physical Apple Silicon Mac. The pinned `macos-15` job
 > repeats that gate after publication. See [docs/PLAN.md](docs/PLAN.md), and do
-> not aim an unreviewed `switch` at a daily phone.
+> not aim an unreviewed `switch` or `bootstrap` at a daily phone.
 
 ## What is declarative today?
 
 - F-Droid and third-party F-Droid repository apps
 - GitHub/Gitea release APKs and local APK files
-- attended Play/Aurora apps as presence assertions
+- Google Play apps as user-confirmed presence assertions with Play-specific assistance
+- other attended apps as generic presence assertions
 - raw Android settings keys, dark mode, and Private DNS
 - default browser, SMS, dialer, and home roles
 - runtime permission grants and revocations
 - package disablement and battery-optimization exemptions
 - optional cleanup of undeclared user-installed apps
+- resumable wiped-device bootstrap across reproducible and consent-bound apps
 
 The default is additive: undeclared apps are left alone. Every device command
 requires an explicit adb serial, the declared ABI must match the target, and
@@ -51,7 +55,7 @@ ensure-only, attended, and unreachable state.
     "org.fdroid.fdroid"
     "com.termux"
   ];
-  apps.attended = [ "com.spotify.music" ];
+  apps.play = [ "com.spotify.music" ];
   apps.cleanup = "none";
 
   android = {

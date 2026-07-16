@@ -8,7 +8,9 @@ keys.
 
 ## Reconciled state
 
-These declarations are read, diffed, planned, and changed only by `switch`:
+`switch` reconciles every item below. `bootstrap` reconciles managed APKs in
+its cleanup-free first phase, then rechecks them while reconciling the remaining
+state from the complete manifest in its final phase:
 
 - managed APK presence and upgrades to the locked version floor
 - raw declared settings keys, dark mode, Private DNS, and default app roles
@@ -52,16 +54,46 @@ actions are skipped. A new `plan` reports the remaining drift. nix-android does
 not snapshot app data or provide a general rollback, and version floors do not
 downgrade a newer APK.
 
-## Attended state
+`bootstrap` is also sequential and resumable, not transactional. Its first
+phase applies only managed APK installs/upgrades with cleanup disabled and all
+Android state neutralized. Its Play phase requires user-confirmed installation.
+Only its final phase applies the complete manifest. A failure leaves completed
+work in place; rerunning recomputes each phase from device state.
 
-Play/Aurora-only packages cannot be fetched headlessly. `apps.attended` asserts
-that they are installed. A missing attended app aborts both plan and switch
-before any mutation and prints the packages that need human installation.
+## Play-assisted and attended state
+
+Google's supported consumer integration opens an app's official Play listing;
+it does not provide nix-android a headless APK-fetch/install API.
+`apps.play` retains the declared source label while asserting package presence;
+`android-rebuild assist` can open the first missing app's official Play listing;
+`assist --watch` advances only after Android reports that package installed,
+but the user owns account sign-in and installation consent. `apps.attended`
+provides the same presence assertion for other human-controlled sources without
+claiming Play provenance. Missing entries in either list abort plan and switch
+before any mutation. See Google's
+[Play linking guide](https://developer.android.com/distribute/marketing-tools/linking-to-google-play).
+
+Convergence matches only the Android package ID. It does not prove the current
+installer/update owner, Play entitlement, signing identity, enabled state, or
+version. Import initially assigns `apps.play` only when the snapshot records
+`com.android.vending` as installer, but that attribution remains evidence rather
+than enforced provenance. `assist` likewise targets the installed package with
+that package ID; it does not authenticate the Play Store package's signer.
+
+Android Enterprise can force-install Play apps only after enterprise binding
+and device/work-profile enrollment. nix-android does not silently turn a
+personal device into an enterprise-managed device; that separate mechanism is
+documented in the
+[Android Management policy reference](https://developers.google.com/android/management/reference/rest/v1/enterprises.policies).
+GrapheneOS
+[sandboxed Play](https://grapheneos.org/usage#sandboxed-google-play) can
+automatically update apps after their user-approved initial installation when
+Play remains the last installer.
 
 ## Outside the boundary
 
 - app data, Keystore keys, eSIMs, and backup-opted-out application state
-- silent fetching of Play-only apps
+- silent consumer-Play fetching or initial-install confirmation
 - work-profile mutation; public v1 supports owner user 0 only
 - app downgrades or a true rollback of Android's mutable state
 - split APK/app-bundle installation and device-to-device APK extraction

@@ -16,11 +16,11 @@ The alpha is ready only when all of these are true:
       locked.
 - [x] Lock entries are bound to the configured source, repository URL, and
       repository certificate fingerprint.
-- [x] `android-rebuild` has documented build/update/plan/switch/import behavior,
+- [x] `android-rebuild` has documented build/update/plan/switch/assist/bootstrap/import behavior,
       mandatory serials for device commands, and device-free CLI checks.
 - [x] The engine validates its complete manifest before adb, refuses target ABI
-      mismatches, quotes remote-shell arguments, and aborts on missing attended
-      apps before mutation.
+      mismatches, quotes remote-shell arguments, and aborts on missing
+      Play/attended apps before mutation.
 - [x] Owner-only v1 scope, ensure-only semantics, destructive cleanup, signature
       behavior, and no-root limits are explicit.
 - [x] MIT license, public repository URL, focused Linux CI, and Apple Silicon CI
@@ -29,10 +29,10 @@ The alpha is ready only when all of these are true:
 - [x] x86_64 Linux focused checks and release packages pass without `--impure`.
 - [x] Apple Silicon Darwin packages and device-free checks build on a real Mac
       or the `macos-15` CI runner.
-- [x] Two consecutive fresh AOSP benches pass plan → switch → direct
+- [x] Two consecutive fresh AOSP benches pass plan → bootstrap → direct
       verification → no-op plan → graceful reboot → no-op plan → structured
       import coverage → clean teardown.
-- [x] Negative bench tests prove ABI mismatch and missing attended apps abort
+- [x] Negative bench tests prove ABI mismatch and missing Play/attended apps abort
       before writes, and a setting containing spaces survives remote quoting.
 - [x] A clean-clone audit contains no personal capture, absolute generated
       symlink, private hostname, accidental unresolved placeholder in
@@ -56,7 +56,7 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 - GitHub and anonymous Gitea latest-release assets at lock-update time
 - single-APK `.tar.gz` release assets
 - local APKs with build-time package-ID/versionCode inspection
-- attended package presence assertions
+- source-labeled Play and generic attended package presence assertions
 - additive cleanup default and explicit undeclared-user-app uninstall mode
 - version floors: install or upgrade, never downgrade a newer installed app
 
@@ -71,8 +71,9 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 
 ### Tooling and safety
 
-- read-only, versioned package-protobuf snapshot and conservative app import
+- read-only, versioned package-protobuf snapshot and conservative Play/attended import
 - read-only Atlas capture with one explicit serial and no stdin-drain truncation
+- resumable wiped-device bootstrap and user-confirmed Play installation queue
 - x86_64 AOSP emulator bench
 - formatter, shellcheck, statix, deadnix, manifest, parser, signed-lock,
   archive-safety, evaluator, and repeatable emulator checks
