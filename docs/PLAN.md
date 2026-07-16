@@ -87,13 +87,43 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 
 ## After 0.1
 
-These are useful but are not allowed to delay a small, honest initial release:
+Prioritized by the only measure that matters: minutes of a real new-phone
+setup eliminated. A read-only import of a 186-app stock Pixel 9 evaluated and
+planned as an exact no-op, which confirms the reconciliation surface is broad
+enough; the remaining setup cost is dominated by one thing — the per-app Play
+install-consent marathon (159 taps on that phone). Work is ranked against
+that, not against surface breadth.
+
+### Next
+
+- **De-Play curation.** A resolver pass over an imported `apps.play` list that
+  reports which package IDs are also published on F-Droid, IzzyOnDroid, or as
+  GitHub/Gitea releases, so they can migrate to a hash-locked managed source.
+  Reuses the existing lock/update/signature machinery; every hit removes one
+  Play consent from a rebuild and doubles as the curation step import docs
+  already ask users to do by hand.
+- **Optional Device Owner lane (emulator prototype).** `dpm set-device-owner`
+  during a wiped-device bootstrap is the only no-root path to silent install
+  and true cleanup, and its "no accounts on device" precondition is naturally
+  satisfied at that moment. Prototype on the emulator only: enroll a DPC
+  (evaluate Dhizuku vs. a minimal own DPC), silent-install the managed list,
+  then remove or retain DO. Open questions to resolve before any option ships:
+  Play-delivered apps still require Play, attestation side effects, and the
+  factory-reset exit. The Android Management API policy JSON is the schema
+  reference. Stays strictly opt-in and bootstrap-scoped.
+- **Special app access.** Notification-listener and accessibility-service
+  enablement (`cmd notification allow_listener`; the secure component lists
+  gated by the `ACCESS_RESTRICTED_SETTINGS` app-op). Fiddly minutes on every
+  fresh phone; primitives already read-verified on hardware.
+
+### Deferred
 
 - generated option reference and an exported flake `templates` consumer output
 - broader resolver regression fixtures for release-asset selection and the
   no-`preferredSigner` multiple-lineage rejection path
-- applied-state receipts and generations; any rollback must document that it
-  cannot restore app data, downgrade packages, or invert ensure-only state
+- applied-state receipts/generations and drift reporting since the last
+  converge; any rollback must document that it cannot restore app data,
+  downgrade packages, or invert ensure-only state
 - split APK/device-extracted app migration
 - optional cross-snapshot comparison tooling beyond the implemented coverage report
 - optional device product/serial identity guards without forcing identifiers
@@ -103,6 +133,16 @@ These are useful but are not allowed to delay a small, honest initial release:
   persistent owner-user primitive passes the emulator reboot gate
 - on-device Termux/rish execution
 - shell completion and selected Nix flag passthrough
+
+### Not planned
+
+- Declaring low-value ambient settings for their own sake (radio auto-off,
+  screen timeouts, and similar). A dedicated `grapheneos.*` namespace and a
+  from-source GrapheneOS emulator bench were considered and dropped: they cost
+  a heavy build/maintenance treadmill to declare state worth seconds of manual
+  tapping. GrapheneOS-specific keys remain available through the
+  `android.settings` expert escape hatch, and real-device read-only comparison
+  stays the way GrapheneOS behavior is checked.
 
 No `stateVersion`, module hierarchy, daemon, website, or alternate engine
 language is planned until a demonstrated compatibility or maintenance problem
