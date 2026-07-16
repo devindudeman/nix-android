@@ -4,6 +4,8 @@
 #   android-rebuild build  --flake .#pixel            eval + fetch closure, no device
 #   android-rebuild plan   --flake .#pixel --serial S     diff manifest vs device
 #   android-rebuild switch --flake .#pixel --serial S     plan + apply
+#   android-rebuild status --flake .#pixel --serial S     drift since last switch
+#   android-rebuild generations --flake .#pixel           list recorded convergences
 #   android-rebuild assist --flake .#pixel --serial S     open next missing Play app
 #   android-rebuild bootstrap --flake .#pixel --serial S  phased wiped-device rebuild
 #   android-rebuild update --flake .#pixel [--lock PATH]  refresh apps.lock.json
@@ -24,6 +26,8 @@ Usage:
   android-rebuild build  --flake REF#DEVICE
   android-rebuild plan   --flake REF#DEVICE --serial SERIAL
   android-rebuild switch --flake REF#DEVICE --serial SERIAL
+  android-rebuild status --flake REF#DEVICE --serial SERIAL
+  android-rebuild generations --flake REF#DEVICE
   android-rebuild assist --flake REF#DEVICE --serial SERIAL [--watch]
   android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
@@ -164,11 +168,11 @@ import)
   [ -z "$app_manager_export" ] || import_args+=(--app-manager-export "$app_manager_export")
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
-build | plan | switch | assist | bootstrap | update | suggest-sources) ;;
+build | plan | switch | assist | bootstrap | update | suggest-sources | status | generations) ;;
 *) echo "unknown command: $cmd" >&2; usage >&2; exit 2 ;;
 esac
 
-if [ "$cmd" = plan ] || [ "$cmd" = switch ] || [ "$cmd" = assist ] || [ "$cmd" = bootstrap ]; then
+if [ "$cmd" = plan ] || [ "$cmd" = switch ] || [ "$cmd" = assist ] || [ "$cmd" = bootstrap ] || [ "$cmd" = status ]; then
   [ -n "$serial" ] || { echo "$cmd requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
 fi
 
@@ -219,6 +223,40 @@ suggest-sources)
   done
   for h in ${release_hints[@]+"${release_hints[@]}"}; do suggest_args+=(--release-hint "$h"); done
   exec "$nix_android_bash" "$src/scripts/suggest-sources.sh" "${suggest_args[@]}" <<<"$candidates"
+  ;;
+status)
+  # Drift check: re-plan the last-applied generation against the device. This
+  # reports how the device has diverged from what was last converged — not what
+  # the current config would do (that is `plan`). Reachable state only: it
+  # cannot see app data, downgrades, or ensure-only entries the device dropped.
+  name=$(nix eval "${nixargs[@]}" "$attr.config" --apply 'c: c.device.name' --raw)
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
+  log="$state/log.jsonl"
+  if [ ! -s "$log" ]; then
+    echo "no recorded convergence for '$name' — run 'android-rebuild switch' first"
+    exit 0
+  fi
+  last=$(tail -n1 "$log")
+  gen=$(jq -r '.generation' <<<"$last")
+  when=$(jq -r '.time' <<<"$last")
+  saved="$state/generations/${gen}.json"
+  echo "last converged: generation $gen at $when (serial $(jq -r '.serial' <<<"$last"))"
+  if [ ! -f "$saved" ]; then
+    echo "generation $gen's manifest was garbage-collected; cannot check drift" >&2
+    exit 1
+  fi
+  echo "checking device against generation $gen..."
+  exec "$nix_android_bash" "$src/engine/converge.sh" "$saved" "${engine_args[@]}"
+  ;;
+generations)
+  name=$(nix eval "${nixargs[@]}" "$attr.config" --apply 'c: c.device.name' --raw)
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
+  log="$state/log.jsonl"
+  if [ ! -s "$log" ]; then
+    echo "no generations recorded for '$name'"
+    exit 0
+  fi
+  jq -r '"generation \(.generation)  \(.time)  \(.changes) change(s)  serial \(.serial)"' "$log"
   ;;
 update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \

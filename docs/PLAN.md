@@ -114,6 +114,16 @@ that, not against surface breadth.
   id (iterating release flavors until one matches) and surfacing the resolved
   signer for the user to confirm. Package-id match is compatibility, not source
   identity; signer continuity is not yet enforced.
+- **Generations and drift (`status`/`generations`).** Every successful `switch`
+  records a generation — a copy of the applied manifest plus a JSONL log line
+  under `$XDG_STATE_HOME/nix-android/<device.name>/`, the home-manager profile
+  model minus the bootloader. `status` re-plans the last-applied generation
+  against the device to report drift since the last switch (distinct from
+  `plan`, which diffs the current config); `generations` lists the ledger. This
+  is a controller-side receipt, not a NixOS bootable snapshot: it cannot restore
+  app data, downgrade an app, or invert ensure-only state, and does not yet
+  offer a rollback verb. The receipt logic is unit-tested device-free
+  (`test-generations.sh`).
 
 ### Next
 
@@ -141,9 +151,9 @@ that, not against surface breadth.
 - generated option reference and an exported flake `templates` consumer output
 - broader resolver regression fixtures for release-asset selection and the
   no-`preferredSigner` multiple-lineage rejection path
-- applied-state receipts/generations and drift reporting since the last
-  converge; any rollback must document that it cannot restore app data,
-  downgrade packages, or invert ensure-only state
+- a rollback verb over recorded generations, documenting that it cannot restore
+  app data, downgrade packages, or invert ensure-only state, and that missing
+  APK store paths would need a re-fetch
 - split APK/device-extracted app migration
 - optional cross-snapshot comparison tooling beyond the implemented coverage report
 - optional device product/serial identity guards without forcing identifiers

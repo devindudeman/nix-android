@@ -6,6 +6,7 @@ state in Nix, inspect a read-only plan, then converge over adb.
 ```console
 android-rebuild plan   --flake .#pixel --serial DEVICE_SERIAL
 android-rebuild switch --flake .#pixel --serial DEVICE_SERIAL
+android-rebuild status --flake .#pixel --serial DEVICE_SERIAL # drift since last switch
 android-rebuild assist --watch --flake .#pixel --serial DEVICE_SERIAL
 android-rebuild bootstrap --flake .#pixel --serial DEVICE_SERIAL # wiped-device rebuild
 ```

@@ -348,6 +348,31 @@ app-ops, and device-idle state use write-behind storage. Use a normal power-menu
 reboot. In an emulator-only persistence test, after allowing state to settle,
 use `adb -s emulator-5554 shell svc power reboot userrequested`.
 
+## Generations and drift
+
+Every successful `switch` (including a no-op switch on an already-converged
+device) records a *generation*: a copy of the applied manifest plus a log line
+under `${XDG_STATE_HOME:-~/.local/state}/nix-android/<device.name>/`. This is a
+controller-side receipt, like home-manager's profile generations — it is **not**
+a NixOS bootable snapshot. It cannot restore app data, downgrade an app, or undo
+an ensure-only entry the device later dropped.
+
+```console
+# Has the device drifted from what you last switched?
+nix run .#android-rebuild -- \
+  status --flake .#pixel --serial SERIAL
+
+# List recorded convergences (generation, time, change count, serial).
+nix run .#android-rebuild -- \
+  generations --flake .#pixel
+```
+
+`status` re-plans the *last-applied* generation against the device, so it
+reports divergence since the last switch — distinct from `plan`, which shows
+what the *current* config would change. It reads reachable state only; a clean
+result prints `✓ device matches manifest`. If the last generation's manifest was
+garbage-collected from the store copy, `status` says so rather than guessing.
+
 ## Install declared Play apps
 
 When `plan` reports a missing `apps.play` package, open its exact official Play

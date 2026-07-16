@@ -221,6 +221,20 @@
                   bash ${inputs.self}/scripts/test-read-state.sh
                   touch $out
                 '';
+            generations =
+              pkgs.runCommand "nix-android-generations"
+                {
+                  nativeBuildInputs = [
+                    pkgs.bash
+                    pkgs.coreutils
+                    pkgs.diffutils
+                    pkgs.jq
+                  ];
+                }
+                ''
+                  bash ${inputs.self}/scripts/test-generations.sh
+                  touch $out
+                '';
             suggest-sources =
               pkgs.runCommand "nix-android-suggest-sources"
                 {

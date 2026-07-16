@@ -159,6 +159,11 @@ US=$'\037'
 
 user=$(jq -r '.device.user' "$manifest")
 [ "$user" = 0 ] || { echo "public v1 supports device.user = 0 only" >&2; exit 2; }
+
+# record_generation: writes a switch receipt so `status` can report drift.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=generations.sh
+source "$(dirname "${BASH_SOURCE[0]}")/generations.sh"
 expected_abi=$(jq -r '.device.abi' "$manifest")
 actual_abi=$(adb_shell getprop ro.product.cpu.abi | tr -d '\r')
 [ "$actual_abi" = "$expected_abi" ] || {
@@ -572,6 +577,8 @@ fi
 
 if [ "$plan_lines" -eq 0 ]; then
   echo "✓ device matches manifest"
+  # A no-op switch still confirms convergence — record it as a generation.
+  [ "$apply" -eq 1 ] && record_generation 0
   exit 0
 fi
 
@@ -694,3 +701,4 @@ for pkg in "${todo_remove[@]}"; do
   adb uninstall --user "$user" "$pkg" >/dev/null
 done
 echo "✓ applied $plan_lines changes"
+record_generation "$plan_lines"
