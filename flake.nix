@@ -30,7 +30,7 @@
         lib = import ./lib { inherit (inputs) nixpkgs; };
 
         # `nix flake init -t github:devindudeman/nix-android` — a starter config
-        # repo whose phone.nix documents the full option surface inline.
+        # repo whose phone.nix documents the main option groups inline.
         templates.default = {
           path = ./templates/default;
           description = "Declarative Android/GrapheneOS device config via nix-android";
@@ -43,7 +43,8 @@
             - `nix run .#android-rebuild -- update --flake .#phone`
             - `nix run .#android-rebuild -- plan --flake .#phone --serial <SERIAL>`
 
-            `phone.nix` documents every option inline. See README.md.
+            `phone.nix` documents the main option groups inline; the full
+            generated reference is docs/OPTIONS.md. See README.md.
           '';
         };
 
@@ -132,9 +133,9 @@
             };
             default = android-rebuild;
 
-            # Option reference rendered from the typed module options. Because
-            # each option's description cites its executed read/write primitive,
-            # the honesty guarantee renders straight into the docs. Regenerate
+            # Option reference rendered from the typed module options. Most
+            # descriptions cite the executed read/write primitive behind the
+            # option, so that evidence renders straight into the docs. Regenerate
             # the committed docs/OPTIONS.md with `just options-doc`.
             options-doc =
               let

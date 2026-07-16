@@ -1,6 +1,8 @@
 # Verified adb primitives
 
-Every option in `modules/options.nix` is backed by an executed read/write test.
+Every option in `modules/options.nix` that reads or writes device state is
+backed by an executed read/write test; a few (device identity) are
+controller-side configuration.
 Raw captures contain personal device state and live only under
 `~/Documents/phone-migration/`; this document records the distilled evidence.
 

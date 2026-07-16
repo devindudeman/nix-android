@@ -47,4 +47,15 @@ rm -f "$state/generations/1.json"
 record_generation 1 2>/dev/null
 [ "$(tail -n1 "$log" | jq -r '.generation')" = 3 ] || fail "deleting a file must not lower the next number"
 
+# --- a failed manifest copy must not append a corrupt ledger entry -----------
+# Callers invoke via `&&` (errexit suppressed), so the function must self-guard.
+lines_before=$(wc -l <"$log")
+saved_manifest=$manifest
+manifest="$tmp/does-not-exist.json"   # cp source now missing → copy fails
+record_generation 5 2>/dev/null && rc=0 || rc=$?
+manifest=$saved_manifest
+[ "$rc" -eq 0 ] || fail "a copy failure must not fail the caller"
+[ "$(wc -l <"$log")" -eq "$lines_before" ] || fail "a failed copy must not append a ledger entry"
+[ ! -f "$state/generations/4.json" ] || fail "a failed record must not leave an orphan manifest"
+
 echo "test-generations: ok"

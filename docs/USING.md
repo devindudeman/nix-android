@@ -15,7 +15,8 @@ which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 ## Create a device configuration
 
 The fastest start is the template, which scaffolds a working flake plus a
-`phone.nix` that documents the entire option surface inline:
+`phone.nix` documenting the main option groups inline (the full reference is
+the generated [OPTIONS.md](./OPTIONS.md)):
 
 ```console
 mkdir my-phone && cd my-phone
@@ -175,9 +176,10 @@ host-specific modules.
 
 ## Complete option surface
 
-Every option, with its type, default, and the adb primitive it cites, is in the
-generated [OPTIONS.md](./OPTIONS.md) (rendered from the typed module options via
-`just options-doc`). The annotated example below is a faster orientation.
+Every option, with its type, default, and description, is in the generated
+[OPTIONS.md](./OPTIONS.md) (rendered from the typed module options via `just
+options-doc`); most descriptions cite the adb primitive behind the option. The
+annotated example below is a faster orientation.
 
 ```nix
 {
@@ -399,8 +401,9 @@ nix run .#android-rebuild -- \
 `status` re-plans the *last-applied* generation against the device, so it
 reports divergence since the last switch — distinct from `plan`, which shows
 what the *current* config would change. It reads reachable state only; a clean
-result prints `✓ device matches manifest`. If the last generation's manifest was
-garbage-collected from the store copy, `status` says so rather than guessing.
+result prints `✓ device matches manifest`. If the last generation's saved
+manifest is missing (deleted or never fully written), `status` says so rather
+than guessing.
 
 ## Install declared Play apps
 

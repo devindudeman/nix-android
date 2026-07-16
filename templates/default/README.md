@@ -33,5 +33,5 @@ Apple Silicon: change `system` and the package attributes in `flake.nix` from
   `android-rebuild suggest-sources --flake .#phone` finds F-Droid/GitHub
   sources for them.
 
-`phone.nix` documents the full option surface inline. Full docs:
+`phone.nix` documents the main option groups inline. Full docs:
 <https://github.com/devindudeman/nix-android/blob/main/docs/USING.md>.

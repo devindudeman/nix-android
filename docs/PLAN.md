@@ -128,20 +128,21 @@ that, not against surface breadth.
   (`test-generations.sh`).
 - **Flake `templates` + self-documenting scaffold.** `nix flake init -t
   github:devindudeman/nix-android` writes a starter config repo: a consumer
-  `flake.nix` pinning the CLI, a `phone.nix` that documents the complete option
-  surface inline (minimal active block so it evaluates as-is), a starter lock,
+  `flake.nix` pinning the CLI, a `phone.nix` that documents the main option
+  groups inline (minimal active block so it evaluates as-is), a starter lock,
   `.gitignore`, and a quickstart README. The `template` check builds the
   scaffold's manifest through `mkDevice`, so a renamed or removed option fails
   CI here instead of in a fresh user's repo. Device auto-population is left to
   the existing `import` command rather than duplicated.
 - **Generated option reference.** `docs/OPTIONS.md` is rendered from the typed
   module options via `nixosOptionsDoc` (`just options-doc`; the `options-doc`
-  check fails if the committed file drifts). Because each option's description
-  cites its executed adb primitive, the read-back-verified honesty guarantee
+  check fails if the committed file drifts). Most option descriptions cite the
+  executed adb primitive behind them, so that read-back-verified evidence
   renders straight into the public reference.
-- **`plan` reports induced effects.** An app install or upgrade resets that
-  package's runtime permissions, flags, and app-ops, so the engine already
-  reasserts declared intent afterward. `plan` now annotates those lines
+- **`plan` reports induced effects.** A fresh install starts from default
+  permission state and an upgrade can reset specific grants, flags, or app-ops,
+  so the engine reasserts declared intent afterward (precautionary). `plan` now
+  annotates those lines
   `(after install)`/`(after upgrade)`, so a reassertion of already-correct state
   reads as a sequenced consequence rather than unexplained drift. Asserted on
   the emulator gate (bench-e2e fresh-device plan).

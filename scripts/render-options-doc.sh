@@ -7,6 +7,7 @@
 set -euo pipefail
 
 raw=${1:?usage: render-options-doc.sh <commonmark-file>}
+[ -f "$raw" ] || { echo "render-options-doc: no such file: $raw" >&2; exit 1; }
 
 cat <<'EOF'
 # nix-android option reference
@@ -24,5 +25,7 @@ locked version and never downgrades.
 EOF
 
 # $(...) strips trailing newlines; printf restores exactly one, so the file has
-# no blank line at EOF (git diff --check).
-printf '%s\n' "$(cat "$raw")"
+# no blank line at EOF (git diff --check). Assign first so a read failure aborts
+# under errexit instead of silently emitting a header-only document.
+content=$(cat "$raw")
+printf '%s\n' "$content"

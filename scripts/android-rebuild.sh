@@ -243,7 +243,7 @@ status)
   saved="$state/generations/${gen}.json"
   echo "last converged: generation $gen at $when (serial $(jq -r '.serial' <<<"$last"))"
   if [ ! -f "$saved" ]; then
-    echo "generation $gen's manifest was garbage-collected; cannot check drift" >&2
+    echo "generation $gen's manifest is missing (deleted or never fully written); cannot check drift" >&2
     exit 1
   fi
   echo "checking device against generation $gen..."
