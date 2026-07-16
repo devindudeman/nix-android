@@ -278,6 +278,10 @@ for run in $(seq 1 "$runs"); do
 
   plan=$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")
   grep -q -- '-- plan only (' <<<"$plan" || { echo "fresh device unexpectedly had no plan" >&2; exit 1; }
+  # On a wiped device every managed app is a fresh install, so its grants are
+  # reasserted after that install — plan must annotate the induced effect.
+  grep -q 'grant    org.fdroid.fdroid android.permission.POST_NOTIFICATIONS (after install)' <<<"$plan" \
+    || { echo "fresh-device plan did not annotate the install-induced grant" >&2; exit 1; }
   nix run .#android-rebuild --accept-flake-config -- bootstrap --flake .#bench --serial "$serial"
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]

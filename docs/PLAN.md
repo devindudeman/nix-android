@@ -137,6 +137,12 @@ that, not against surface breadth.
   check fails if the committed file drifts). Because each option's description
   cites its executed adb primitive, the read-back-verified honesty guarantee
   renders straight into the public reference.
+- **`plan` reports induced effects.** An app install or upgrade resets that
+  package's runtime permissions, flags, and app-ops, so the engine already
+  reasserts declared intent afterward. `plan` now annotates those lines
+  `(after install)`/`(after upgrade)`, so a reassertion of already-correct state
+  reads as a sequenced consequence rather than unexplained drift. Asserted on
+  the emulator gate (bench-e2e fresh-device plan).
 
 ### Next
 

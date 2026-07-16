@@ -353,6 +353,13 @@ line before switching a real device, then run `plan` again; a converged device
 prints `✓ device matches manifest`. Missing Play or other attended apps abort
 before any device writes.
 
+An app install or upgrade resets that package's runtime permissions, flags, and
+app-ops, so the engine reasserts your declared intent afterward. `plan` marks
+those induced lines `(after install)` or `(after upgrade)` — for example
+`grant org.fdroid.fdroid android.permission.POST_NOTIFICATIONS (after install)`
+— so a reassertion of already-correct state reads as a sequenced consequence,
+not unexplained drift.
+
 `bootstrap` is also a mutating command. It exists for a wiped or newly prepared
 device and applies a reviewed declaration in resumable phases; it is not a
 replacement for reviewing `plan` first.

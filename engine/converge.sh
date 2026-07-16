@@ -202,10 +202,12 @@ while IFS=$'\t' read -r pkg code apk; do
   managed[$pkg]=1
   cur=$(current_code "$pkg")
   if [ -z "$cur" ]; then
-    changing[$pkg]=1
+    # Value doubles as the induced-effect verb for plan annotation; every other
+    # reader tests it with `-n`, so a non-empty string keeps that behaviour.
+    changing[$pkg]=install
     todo_install+=("${pkg}${US}${code}${US}${apk}")
   elif [ "$cur" -lt "$code" ]; then
-    changing[$pkg]=1
+    changing[$pkg]=upgrade
     todo_upgrade+=("${pkg}${US}${cur}→${code}${US}${apk}")
   fi
 done < <(jq -r '.apps.managed[] | [.package, .versionCode, .apk] | @tsv' "$manifest")
@@ -535,6 +537,10 @@ for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  
 for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
 for t in "${todo_remove[@]}";  do echo "remove   $t"; done
 setting_field() { jq -Rr --argjson i "$2" '@base64d | fromjson | .[$i]' <<<"$1"; }
+# A permission/appop line for a package this run installs or upgrades is
+# reasserted *after* the install (which resets that state), not independent
+# drift. Annotate it so the plan reads as a trustworthy pre-switch preview.
+induced() { [ -n "${changing[$1]:-}" ] && printf ' (after %s)' "${changing[$1]}"; return 0; }
 for t in "${todo_setting[@]}"; do
   ns=$(setting_field "$t" 0) k=$(setting_field "$t" 1)
   c=$(setting_field "$t" 2) w=$(setting_field "$t" 3)
@@ -543,15 +549,15 @@ done
 for t in "${todo_dark[@]}";    do echo "darkmode → $t"; done
 for t in "${todo_role[@]}";    do IFS=$US read -r r c w <<<"$t"; echo "role     $r (${c:-none} → $w)"; done
 for t in "${todo_disable[@]}"; do echo "disable  $t"; done
-for t in "${todo_grant[@]}";   do IFS=$US read -r p m <<<"$t"; echo "grant    $p $m"; done
-for t in "${todo_revoke[@]}";  do IFS=$US read -r p m <<<"$t"; echo "revoke   $p $m"; done
+for t in "${todo_grant[@]}";   do IFS=$US read -r p m <<<"$t"; echo "grant    $p $m$(induced "$p")"; done
+for t in "${todo_revoke[@]}";  do IFS=$US read -r p m <<<"$t"; echo "revoke   $p $m$(induced "$p")"; done
 for t in "${todo_permflag[@]}"; do
   IFS=$US read -r p m c w <<<"$t"
-  echo "permflag $p $m (${c:-none} → ${w:-none})"
+  echo "permflag $p $m (${c:-none} → ${w:-none})$(induced "$p")"
 done
 for t in "${todo_appop[@]}"; do
   IFS=$US read -r p o c w <<<"$t"
-  echo "appop    $p $o ($c → $w)"
+  echo "appop    $p $o ($c → $w)$(induced "$p")"
 done
 for p in "${todo_suspend[@]}"; do echo "suspend  $p (adb-shell authority)"; done
 for p in "${todo_unsuspend[@]}"; do echo "unsuspend $p (remove adb-shell authority)"; done
