@@ -22,12 +22,32 @@
     darkMode = true;
     privateDns = "opportunistic";
     packages.disabled = [ "com.android.egg" ];
-    permissions."org.fdroid.fdroid" = {
-      grant = [ "android.permission.POST_NOTIFICATIONS" ];
-      flags."android.permission.POST_NOTIFICATIONS" = [ "user-set" ];
+    permissions = {
+      "org.fdroid.fdroid" = {
+        # INTERNET is install-time on AOSP (runtime on GrapheneOS): the fresh
+        # bootstrap exercises the failed-pm-grant apply guard and the steady
+        # state must read as satisfied, not replan forever.
+        grant = [
+          "android.permission.INTERNET"
+          "android.permission.POST_NOTIFICATIONS"
+        ];
+        flags."android.permission.POST_NOTIFICATIONS" = [
+          "user-fixed"
+          "user-set"
+        ];
+      };
+      "dev.imranr.obtainium.fdroid".revoke = [ "android.permission.POST_NOTIFICATIONS" ];
+      # Every writable flag value needs executed evidence; the two
+      # policy-machinery flags are exercised on an undeclared-grant permission.
+      # review-required was rejected here: the bench observed
+      # PermissionController rewriting it immediately after the shell write.
+      "com.termux".flags."android.permission.POST_NOTIFICATIONS" = [
+        "revoke-when-requested"
+        "revoked-compat"
+      ];
     };
-    permissions."dev.imranr.obtainium.fdroid".revoke = [ "android.permission.POST_NOTIFICATIONS" ];
     appOps."org.fdroid.fdroid".RUN_IN_BACKGROUND = "ignore";
+    appOps."com.termux".VIBRATE = "deny";
     locales."org.fdroid.fdroid" = [
       "en-US"
       "fr-FR"

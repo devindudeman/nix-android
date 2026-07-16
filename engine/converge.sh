@@ -26,10 +26,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Shared device-output parsers (also sourced by the bench oracle so the two
+# sides cannot drift). Defines writable_permission_flags.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=read-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/read-state.sh"
+writable_permission_flags_json=$(printf '%s\n' "${writable_permission_flags[@]}" | jq -cRn '[inputs]')
+
 # The engine is also a standalone trust boundary. Validate the complete shape
 # before the first device read; process-substitution failures do not trigger
 # `set -e`, and an empty declaration set must never reach cleanup=uninstall.
-if ! jq -e '
+if ! jq -e --argjson writableFlags "$writable_permission_flags_json" '
   def strings: type == "array" and all(.[]; type == "string");
   def package: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+\\z");
   def permission: type == "string" and test("^[A-Za-z0-9_.]+\\z");
@@ -89,7 +96,7 @@ if ! jq -e '
         and (.flags | type == "object" and all(to_entries[];
           (.key | permission)
           and (.value | strings and is_unique and all(.[];
-            IN("review-required", "revoked-compat", "revoke-when-requested", "user-fixed", "user-set"))))))))
+            IN($writableFlags[]))))))))
     and (.appOps | type == "object" and all(to_entries[];
       (.key | package)
       and (.value | type == "object" and all(to_entries[];
@@ -324,20 +331,14 @@ done < <(jq -r '.android.disabled // [] | .[]' "$manifest")
 declare -A permission_checked=()
 declare -A permission_present=()
 declare -A permission_dump=()
+declare -A permission_install=()
+declare -A permission_suspended=()
 declare -A permission_changing=()
 declare -A permission_package_changing=()
-permission_user_block() {
-  gawk -v wanted_user="$user" '
-    BEGIN { header = "    User " wanted_user ":" }
-    /^    [^ ]/ {
-      active = index($0, header) == 1
-      if (active) found = 1
-    }
-    active { print }
-    END { if (!found) exit 1 }
-  '
-}
 # One cached, explicitly owner-user-scoped package dump per referenced package.
+# The package-level install-permissions block is cached alongside it: a grant
+# of an already-granted install-time permission (e.g. INTERNET on stock
+# Android) must read as satisfied, not as a forever-replanned pm grant.
 load_permission_package() {
   local pkg=$1 full_dump scoped_dump
   if [ -z "${permission_checked[$pkg]+x}" ]; then
@@ -345,14 +346,22 @@ load_permission_package() {
     if [ -n "$(current_code "$pkg")" ]; then
       permission_present[$pkg]=1
       full_dump=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
-      if ! scoped_dump=$(permission_user_block <<<"$full_dump"); then
+      if ! scoped_dump=$(permission_user_block "$user" <<<"$full_dump"); then
         echo "cannot locate User $user permission state for installed package $pkg" >&2
         exit 2
       fi
       permission_dump[$pkg]=$scoped_dump
+      permission_install[$pkg]=$(install_permission_block <<<"$full_dump")
+      if has_shell_suspension_in_dump "$user" <<<"$full_dump"; then
+        permission_suspended[$pkg]=1
+      else
+        permission_suspended[$pkg]=0
+      fi
     else
       permission_present[$pkg]=0
       permission_dump[$pkg]=
+      permission_install[$pkg]=
+      permission_suspended[$pkg]=0
     fi
   fi
 }
@@ -360,35 +369,42 @@ while IFS=$'\t' read -r pkg perm action; do
   load_permission_package "$pkg"
   package_present=${permission_present[$pkg]}
   granted=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" | sed 's/.*granted=\([a-z]*\).*/\1/' || true)
-  if [ "$action" = grant ] && { [ "$granted" != "true" ] || [ -n "${changing[$pkg]:-}" ]; }; then
-    todo_grant+=("${pkg}${US}${perm}")
-    permission_changing["$pkg/$perm"]=1
-    permission_package_changing[$pkg]=1
-  elif [ "$action" = revoke ] \
-    && { [ "$granted" = "true" ] || [ "$package_present" -eq 0 ] || [ -n "${changing[$pkg]:-}" ]; }; then
-    # A missing target is either managed or presence-declared: the latter makes
-    # the attended/Play preflight below abort before apply. Managed installs and
-    # upgrades happen before permissions, so reassert revoke intent afterward.
-    todo_revoke+=("${pkg}${US}${perm}")
-    permission_changing["$pkg/$perm"]=1
-    permission_package_changing[$pkg]=1
+  install_line=$(grep -F -m1 "  $perm: granted=" <<<"${permission_install[$pkg]}" || true)
+  if [ "$action" = grant ]; then
+    if [ -z "$granted" ] && [ -n "$install_line" ]; then
+      # Install-time permission: pm grant cannot change it. granted=true is
+      # already-satisfied intent (it survives upgrades); granted=false cannot
+      # be granted by adb shell at all, so fail before any mutation.
+      if ! grep -Fq 'granted=true' <<<"$install_line"; then
+        echo "cannot grant install-time permission $perm for $pkg: not runtime-changeable" >&2
+        exit 1
+      fi
+    elif [ "$granted" != "true" ] || [ -n "${changing[$pkg]:-}" ]; then
+      todo_grant+=("${pkg}${US}${perm}")
+      permission_changing["$pkg/$perm"]=1
+      permission_package_changing[$pkg]=1
+    fi
+  elif [ "$action" = revoke ]; then
+    if [ -n "$install_line" ] && [ -z "$granted" ]; then
+      echo "cannot revoke install-time permission $perm for $pkg: not runtime-changeable" >&2
+      exit 1
+    fi
+    if [ "$granted" = "true" ] || [ "$package_present" -eq 0 ] || [ -n "${changing[$pkg]:-}" ]; then
+      # A missing target is either managed or presence-declared: the latter makes
+      # the attended/Play preflight below abort before apply. Managed installs and
+      # upgrades happen before permissions, so reassert revoke intent afterward.
+      todo_revoke+=("${pkg}${US}${perm}")
+      permission_changing["$pkg/$perm"]=1
+      permission_package_changing[$pkg]=1
+    fi
   fi
 done < <(jq -r '.android.permissions // {} | to_entries[] | .key as $p | ((.value.grant[] | [$p, ., "grant"]), (.value.revoke[] | [$p, ., "revoke"])) | @tsv' "$manifest")
 
-writable_permission_flags=(review-required revoke-when-requested revoked-compat user-fixed user-set)
 while IFS=$US read -r pkg perm want_csv; do
   load_permission_package "$pkg"
   permission_line=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" || true)
   raw_flags=$(sed -n 's/.*flags=\[ *\([^]]*\) *\].*/\1/p' <<<"$permission_line")
-  current_flags=()
-  for flag in "${writable_permission_flags[@]}"; do
-    platform_flag=${flag^^}
-    platform_flag=${platform_flag//-/_}
-    if grep -Eq "(^|[|[:space:]])${platform_flag}([|[:space:]]|$)" <<<"$raw_flags"; then
-      current_flags+=("$flag")
-    fi
-  done
-  cur_csv=$(IFS=,; echo "${current_flags[*]}")
+  cur_csv=$(writable_flags_csv "$raw_flags")
   if [ "$cur_csv" != "$want_csv" ] \
     || [ -n "${changing[$pkg]:-}" ] \
     || [ -n "${permission_changing[$pkg/$perm]:-}" ]; then
@@ -399,18 +415,8 @@ done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.flags 
 while IFS=$US read -r pkg op want; do
   if [ -n "$(current_code "$pkg")" ]; then
     appop_output=$(adb_shell appops get --user "$user" "$pkg" "$op" | tr -d '\r')
-    cur=$(sed -n "s/^${op}: \(allow\|ignore\|deny\|default\|foreground\).*/\1/p" <<<"$appop_output" | head -n1)
-    if [ -z "$cur" ]; then
-      unknown_appop_output=$(sed -E \
-        -e '/^No operations\.$/d' \
-        -e '/^Default mode: (allow|ignore|deny|default|foreground)$/d' \
-        -e "/^Uid mode: ${op}: (allow|ignore|deny|default|foreground)$/d" \
-        -e '/^$/d' <<<"$appop_output")
-      if [ -z "$unknown_appop_output" ] && [ -n "$appop_output" ]; then
-        cur=default
-      fi
-    fi
-    [ -n "$cur" ] || { echo "unable to read app-op $pkg $op" >&2; exit 1; }
+    cur=$(appop_mode_from_output "$op" <<<"$appop_output") \
+      || { echo "unable to read app-op $pkg $op" >&2; exit 1; }
   else
     cur=absent
   fi
@@ -421,13 +427,12 @@ while IFS=$US read -r pkg op want; do
   fi
 done < <(jq -r '.android.appOps | to_entries[] | .key as $p | .value | to_entries[] | [$p, .key, .value] | join("\u001f")' "$manifest")
 
+# Suspension is read from the same cached full dump as permission state (see
+# has_shell_suspension_in_dump); load_permission_package computed it once.
 has_shell_suspension() {
-  local pkg=$1 dump user_block
-  [ -n "$(current_code "$pkg")" ] || return 1
-  dump=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
-  user_block=$(grep -A12 -E "^[[:space:]]+User ${user}: .*installed=" <<<"$dump" || true)
-  [ -n "$user_block" ] || { echo "unable to read suspension state for $pkg user $user" >&2; exit 1; }
-  grep -Fq "suspendingPackage=<$user>com.android.shell" <<<"$user_block"
+  local pkg=$1
+  load_permission_package "$pkg"
+  [ "${permission_suspended[$pkg]}" = 1 ]
 }
 while read -r pkg; do
   [ -z "$pkg" ] && continue
@@ -480,13 +485,6 @@ if [ "$want_data_saver" != null ]; then
   [ "$cur_data_saver" = "$want_data_saver" ] \
     || todo_data_saver+=("${cur_data_saver}${US}${want_data_saver}")
 fi
-app_link_selected_domains() {
-  awk '
-    /^        Enabled:$/ { enabled=1; next }
-    /^        Disabled:$/ { enabled=0; next }
-    enabled && /^          [^[:space:]]/ { sub(/^          /, ""); print }
-  '
-}
 while IFS=$US read -r pkg allowed; do
   if [ -n "$(current_code "$pkg")" ]; then
     links=$(adb_shell pm get-app-links --user "$user" "$pkg" | tr -d '\r')
@@ -603,7 +601,15 @@ for pkg in "${todo_disable[@]}"; do
 done
 for t in "${todo_grant[@]}"; do
   IFS=$US read -r p m <<<"$t"
-  adb_shell pm grant --user "$user" "$p" "$m"
+  if ! adb_shell pm grant --user "$user" "$p" "$m"; then
+    # A managed app installed earlier in this apply may have turned $m into an
+    # already-granted install-time permission (planning read the device before
+    # the install). Accept the failure only when the device now reports the
+    # permission granted; anything else is a real error.
+    post_dump=$(adb_shell dumpsys package "$p" | tr -d '\r')
+    grep -Fq "  $m: granted=true" <<<"$post_dump" \
+      || { echo "pm grant failed and $m is not granted for $p" >&2; exit 1; }
+  fi
 done
 for t in "${todo_revoke[@]}"; do
   IFS=$US read -r p m <<<"$t"

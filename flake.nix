@@ -201,7 +201,7 @@
             shellcheck =
               pkgs.runCommand "nix-android-shellcheck" { nativeBuildInputs = [ pkgs.shellcheck ]; }
                 ''
-                  shellcheck ${inputs.self}/engine/*.sh ${inputs.self}/scripts/*.sh
+                  shellcheck -x ${inputs.self}/engine/*.sh ${inputs.self}/scripts/*.sh
                   touch $out
                 '';
             statix = pkgs.runCommand "nix-android-statix" { nativeBuildInputs = [ pkgs.statix ]; } ''
@@ -503,6 +503,25 @@
                 device.abi = "x86_64";
                 android.privateDns = "dns.example.com";
                 android.settings.global.private_dns_mode = "hostname";
+              };
+              assert rejects {
+                device.name = "input-method-raw-conflict";
+                device.abi = "x86_64";
+                android = {
+                  inputMethod.enabled = [ "org.example.ime/.Service" ];
+                  inputMethod.default = "org.example.ime/.Service";
+                  settings.secure.default_input_method = "org.example.ime/.Service";
+                };
+              };
+              # Canonicalization must detect that the expanded and short
+              # spellings are one component.
+              assert rejects {
+                device.name = "cross-spelling-ime-conflict";
+                device.abi = "x86_64";
+                android.inputMethod = {
+                  enabled = [ "org.example.ime/.Service" ];
+                  disabled = [ "org.example.ime/org.example.ime.Service" ];
+                };
               };
               assert rejects {
                 device.name = "stale-release-source";

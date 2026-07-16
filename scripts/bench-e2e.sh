@@ -69,18 +69,12 @@ role_id() {
   esac
 }
 
-permission_user_block() {
-  local wanted_user=$1
-  gawk -v wanted_user="$wanted_user" '
-    BEGIN { header = "    User " wanted_user ":" }
-    /^    [^ ]/ {
-      active = index($0, header) == 1
-      if (active) found = 1
-    }
-    active { print }
-    END { if (!found) exit 1 }
-  '
-}
+# The oracle reads the device through the engine's own parsers so the two
+# sides cannot silently drift; the fixture below still pins the parser's
+# multi-user behavior independently of any engine bug.
+# shellcheck source-path=SCRIPTDIR/../engine
+# shellcheck source=read-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../engine/read-state.sh"
 
 permission_scope_fixture=$(permission_user_block 0 <<'EOF'
     User 10: installed=true
@@ -99,8 +93,7 @@ fi
 
 verify_state() {
   local manifest=$1 pkg want got ns key permission role dump packages line found component domain links selected enabled_imes
-  local want_csv raw_flags flag platform_flag appop_output unknown_appop_output
-  local -a writable_flags=(review-required revoke-when-requested revoked-compat user-fixed user-set)
+  local want_csv raw_flags appop_output user_state install_state
   while IFS=$'\t' read -r pkg want; do
     packages=$(adb shell pm list packages --show-versioncode --user 0 "$pkg" | tr -d '\r')
     got=
@@ -133,8 +126,13 @@ verify_state() {
     grep -Fqx "package:$pkg" <<<"$packages"
   done < <(jq -r '.android.disabled[]' "$manifest")
   while IFS=$'\t' read -r pkg permission; do
-    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r' | permission_user_block 0)
-    grep -F -m1 "  $permission: granted=true" <<<"$dump" >/dev/null
+    # A declared grant is satisfied by runtime state (user block) or by an
+    # already-granted install-time permission (package block).
+    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
+    user_state=$(permission_user_block 0 <<<"$dump") \
+      || { echo "cannot read user 0 package state for $pkg" >&2; return 1; }
+    install_state=$(install_permission_block <<<"$dump")
+    grep -Fq "  $permission: granted=true" <<<"$user_state"$'\n'"$install_state"
   done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.grant[] | [$p, .] | @tsv' "$manifest")
   while IFS=$'\t' read -r pkg permission; do
     dump=$(adb shell dumpsys package "$pkg" | tr -d '\r' | permission_user_block 0)
@@ -147,29 +145,14 @@ verify_state() {
     dump=$(adb shell dumpsys package "$pkg" | tr -d '\r' | permission_user_block 0)
     raw_flags=$(grep -F -m1 "  $permission: granted=" <<<"$dump" \
       | sed -n 's/.*flags=\[ *\([^]]*\) *\].*/\1/p')
-    for flag in "${writable_flags[@]}"; do
-      platform_flag=${flag^^}
-      platform_flag=${platform_flag//-/_}
-      if [[ ",$want_csv," == *",$flag,"* ]]; then
-        grep -Eq "(^|[|[:space:]])${platform_flag}([|[:space:]]|$)" <<<"$raw_flags" \
-          || { echo "permission flag $pkg $permission: missing $flag" >&2; return 1; }
-      elif grep -Eq "(^|[|[:space:]])${platform_flag}([|[:space:]]|$)" <<<"$raw_flags"; then
-        echo "permission flag $pkg $permission: unexpected $flag" >&2
-        return 1
-      fi
-    done
+    got=$(writable_flags_csv "$raw_flags")
+    [ "$got" = "$want_csv" ] \
+      || { echo "permission flags $pkg $permission: got '$got', want '$want_csv'" >&2; return 1; }
   done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.flags | to_entries[] | [$p, .key, (.value | sort | join(","))] | @tsv' "$manifest")
   while IFS=$'\t' read -r pkg operation mode; do
     appop_output=$(adb shell appops get --user 0 "$pkg" "$operation" | tr -d '\r')
-    got=$(sed -n "s/^${operation}: \\(allow\\|ignore\\|deny\\|default\\|foreground\\).*/\\1/p" <<<"$appop_output" | head -n1)
-    if [ -z "$got" ]; then
-      unknown_appop_output=$(sed -E \
-        -e '/^No operations\.$/d' \
-        -e '/^Default mode: (allow|ignore|deny|default|foreground)$/d' \
-        -e "/^Uid mode: ${operation}: (allow|ignore|deny|default|foreground)$/d" \
-        -e '/^$/d' <<<"$appop_output")
-      [ -n "$unknown_appop_output" ] || got=default
-    fi
+    got=$(appop_mode_from_output "$operation" <<<"$appop_output") \
+      || { echo "unable to read app-op $pkg $operation" >&2; return 1; }
     [ "$got" = "$mode" ] || { echo "app-op $pkg $operation: got '$got', want '$mode'" >&2; return 1; }
   done < <(jq -r '.android.appOps | to_entries[] | .key as $p | .value | to_entries[] | [$p, .key, .value] | @tsv' "$manifest")
   while read -r pkg; do
@@ -182,13 +165,12 @@ verify_state() {
   done < <(jq -r '.android.roles | to_entries[] | [.key, .value] | @tsv' "$manifest")
   while read -r pkg; do
     dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
-    grep -A12 -E "^[[:space:]]+User 0: .*installed=" <<<"$dump" \
-      | grep -Fq 'suspendingPackage=<0>com.android.shell'
+    has_shell_suspension_in_dump 0 <<<"$dump" \
+      || { echo "$pkg not suspended by adb shell" >&2; return 1; }
   done < <(jq -r '.android.suspended[]' "$manifest")
   while read -r pkg; do
     dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
-    if grep -A12 -E "^[[:space:]]+User 0: .*installed=" <<<"$dump" \
-      | grep -Fq 'suspendingPackage=<0>com.android.shell'; then
+    if has_shell_suspension_in_dump 0 <<<"$dump"; then
       echo "$pkg remained suspended by adb shell" >&2
       return 1
     fi
@@ -226,11 +208,7 @@ verify_state() {
       got=$(sed -n 's/^      Verification link handling allowed: //p' <<<"$links")
       [ "$got" = "$want" ] || { echo "app links allowed $pkg: got '$got', want '$want'" >&2; return 1; }
     fi
-    selected=$(awk '
-      /^        Enabled:$/ { enabled=1; next }
-      /^        Disabled:$/ { enabled=0; next }
-      enabled && /^          [^[:space:]]/ { sub(/^          /, ""); print }
-    ' <<<"$links")
+    selected=$(app_link_selected_domains <<<"$links")
     while read -r domain; do
       grep -Fqx "$domain" <<<"$selected"
     done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].selected[]' "$manifest")
@@ -322,7 +300,9 @@ for run in $(seq 1 "$runs"); do
   # selection and disablement are real mutations rather than preexisting state.
   jq '
     .android.permissions."org.fdroid.fdroid".flags."android.permission.POST_NOTIFICATIONS" = [] |
+    .android.permissions."com.termux".flags."android.permission.POST_NOTIFICATIONS" = [] |
     .android.appOps."org.fdroid.fdroid".RUN_IN_BACKGROUND = "default" |
+    .android.appOps."com.termux".VIBRATE = "default" |
     .android.suspended = [] |
     .android.unsuspended = ["dev.imranr.obtainium.fdroid"] |
     .android.locales."org.fdroid.fdroid" = [] |

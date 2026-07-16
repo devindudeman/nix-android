@@ -584,6 +584,8 @@ assert coverage["facts"] == sorted(
 )
 assert not any("serial" in key.lower() for key in coverage["device"])
 
+# An unparsed restriction row that names its permission scopes the omission to
+# that permission: CAMERA's grant and flags disappear, other grants stay.
 incomplete_restrictions = copy.deepcopy(rendered_snapshot)
 incomplete_restrictions["android"]["unparsedPermissionRestrictionRows"] = [
     "Permission [android.permission.CAMERA] (changed grammar):"
@@ -591,13 +593,39 @@ incomplete_restrictions["android"]["unparsedPermissionRestrictionRows"] = [
 incomplete_rendered, incomplete_coverage = renderer.render_with_coverage(
     incomplete_restrictions
 )
-assert 'android.permissions."org.example.app".grant' not in incomplete_rendered
+assert '"android.permission.CAMERA"' not in incomplete_rendered
+assert (
+    'android.permissions."org.example.app".grant = [\n'
+    '    "android.permission.POST_NOTIFICATIONS"\n'
+    "  ];"
+) in incomplete_rendered
 assert "restriction evidence was incomplete" in incomplete_rendered
+assert (
+    "1 permission-flag row(s) were preserved and omitted because the matching granted permission was not declared"
+    in incomplete_rendered
+)
 assert any(
     fact["surface"] == "android.permissions.unknownRestrictionGrants"
     and fact["status"] == "ambiguous"
     for fact in incomplete_coverage["facts"]
 )
+assert any(
+    fact["surface"] == "android.permissions.flagsForOmittedGrants"
+    and fact["status"] == "ambiguous"
+    and fact["itemCount"] == 1
+    for fact in incomplete_coverage["facts"]
+)
+
+# A row that cannot be attributed to one permission keeps the conservative
+# global omission of every third-party grant.
+global_incomplete = copy.deepcopy(rendered_snapshot)
+global_incomplete["android"]["unparsedPermissionRestrictionRows"] = [
+    "garbled restriction output"
+]
+global_rendered, _global_coverage = renderer.render_with_coverage(global_incomplete)
+assert 'android.permissions."org.example.app".grant' not in global_rendered
+assert 'android.permissions."com.example.play".grant' not in global_rendered
+assert "restriction evidence was incomplete" in global_rendered
 
 auto_snapshot = copy.deepcopy(rendered_snapshot)
 auto_snapshot["android"]["nightMode"] = "Night mode: auto"

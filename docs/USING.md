@@ -252,18 +252,32 @@ host-specific modules.
 }
 ```
 
-Permission flags support `review-required`, `revoked-compat`,
-`revoke-when-requested`, `user-fixed`, and `user-set`, exactly matching the
-writable names advertised by PackageManager. A declared flag list is exact for
-that writable subset: switch sets listed flags and clears other writable flags,
-without touching Android-owned flags such as `SYSTEM_FIXED` or restriction
-exemptions. App-op values are `allow`, `ignore`, `deny`, `default`, or
+Permission flags support `revoked-compat`, `revoke-when-requested`,
+`user-fixed`, and `user-set`. A declared flag list is exact for that writable
+subset: switch sets listed flags and clears other writable flags, without
+touching Android-owned flags such as `SYSTEM_FIXED` or restriction exemptions.
+`review-required` also appears in `pm help`, but the AOSP bench observed
+PermissionController rewriting it from the app's target SDK immediately after
+a shell write, so nix-android does not offer it. App-op values are `allow`, `ignore`, `deny`, `default`, or
 `foreground`; declarations are package-level and do not rewrite UID-wide modes.
+
+Permission grants and revocations manage runtime permissions only. A declared
+grant of an install-time permission that Android already granted (for
+example `android.permission.INTERNET` on stock Android, where it is not the
+runtime permission GrapheneOS makes it) is recognized as satisfied; a grant of
+an ungranted install-time permission, or any revoke of an install-time
+permission, fails during plan because `pm grant`/`pm revoke` cannot change it.
 
 `android.locales` owns the exact locale list for each named package; `[]`
 returns that app to the system language. Input methods use Android component
 names (`package/.Service`): every selected default must also be listed in
-`enabled`, and an entry cannot be both enabled and disabled. `dataSaver.enabled`
+`enabled`, and an entry cannot be both enabled and disabled. A fully-qualified
+spelling (`package/package.Service`) is normalized to Android's short
+component form at build time, because `ime list -s` reports only the short
+form and an unnormalized spelling could never converge. Because
+`android.inputMethod` owns the same Android state as the raw
+`default_input_method`/`enabled_input_methods` secure keys, declaring both is
+rejected at evaluation. `dataSaver.enabled`
 manages only the global Data Saver switch. Per-app UID allow/deny lists are
 captured by import but are not declarable because they were removed across a
 graceful reboot for user-installed apps on the mandatory AOSP bench.
@@ -277,10 +291,10 @@ force-approval states remain OS-owned evidence. A domain may be selected for
 only one declared package.
 
 The evaluator rejects duplicate app sources, stale lock sources or repository
-fingerprints, lock/device ABI mismatches, conflicting permission intent, and
-raw Private DNS keys combined with `android.privateDns`. Raw setting values may
-not be empty or the literal `null`, because Android's CLI uses `null` for an
-absent key.
+fingerprints, lock/device ABI mismatches, conflicting permission intent, raw
+Private DNS keys combined with `android.privateDns`, and raw input-method keys
+combined with `android.inputMethod`. Raw setting values may not be empty or
+the literal `null`, because Android's CLI uses `null` for an absent key.
 
 `android.privateDns` manages Android's system Private DNS setting; it does not
 coordinate with VPN or DNS-client policy. Leave it `null` when software such as
@@ -447,6 +461,10 @@ records Obtainium. Obtainium calls the Forgejo adapter `Codeberg` in exported
 source identifiers. Unsupported or conflicting sources stay attended. The
 adapter discards complete `settings`, `additionalSettings`, timestamps,
 credentials, unsupported host/source details, and arbitrary export fields.
+Recovered `apps.release` declarations are lock-backed: run
+`android-rebuild update` once before the first `build`/`plan` of the generated
+configuration, or evaluation fails with `not in apps.lock.json`. Attended-only
+imports need no update step.
 An optional App Manager JSON app-list export contributes signing-certificate
 SHA-256 evidence and a second installer observation. Signers are emitted as
 comments and coverage facts because plan does not yet enforce installed signer
@@ -454,9 +472,12 @@ identity.
 Permission rendering intersects the package protobuf's broad grant set with
 PackageManager's dangerous/runtime definitions, omits hard/soft restricted
 grants whose installer/platform allowlisting is not portable, and never infers
-revocations. If any permission-restriction metadata is unparsed, the importer
-omits all automatic grants rather than assuming the remaining definitions are
-unrestricted.
+revocations. Unparsed permission-restriction metadata omits the grants of the
+permission it names; only a row that cannot be attributed to one permission
+falls back to omitting all automatic grants. Policy-flag rows are rendered
+only when the declaration also reproduces the observed granted state, so a
+generated configuration never asserts `user-fixed` on a permission it leaves
+denied.
 Automatic dark mode, system-owned state, ambiguous rows, and unsupported facts
 are retained or reported instead of guessed. Installer attribution cannot
 prove a repository, release URL, or signing trust anchor.

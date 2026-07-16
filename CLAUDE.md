@@ -62,7 +62,8 @@ gate.
 `modules/options.nix` defines the option surface. `lib/default.nix` evaluates
 modules, validates source/lock relationships, fetches APKs, and writes the
 versioned manifest. `engine/converge.sh` validates, plans, and applies the
-manifest. `scripts/update-lock.sh` authenticates signed F-Droid entry metadata
+manifest; `engine/read-state.sh` holds the device-output parsers shared with
+the bench oracle. `scripts/update-lock.sh` authenticates signed F-Droid entry metadata
 and resolves release assets. `scripts/bootstrap.sh` phases wiped-device
 reconstruction without weakening convergence preflights. `scripts/atlas-probe.sh` is read-only.
 

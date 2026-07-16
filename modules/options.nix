@@ -244,8 +244,11 @@
               };
               flags = lib.mkOption {
                 type = attrsOf (
+                  # Mirrors writable_permission_flags in engine/read-state.sh
+                  # and scripts/render-import.py; change all three together.
+                  # review-required failed bench read-back (PermissionController
+                  # rewrites it from targetSdk) and is not offered.
                   listOf (enum [
-                    "review-required"
                     "revoked-compat"
                     "revoke-when-requested"
                     "user-fixed"

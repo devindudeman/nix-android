@@ -28,6 +28,26 @@
         cfg.android.inputMethod.enabled
         ++ cfg.android.inputMethod.disabled
         ++ lib.optional (cfg.android.inputMethod.default != null) cfg.android.inputMethod.default;
+      # Android reports IME ids as ComponentName.flattenToShortString(); a
+      # fully-qualified spelling of the same component would never match the
+      # device and could never converge, so normalize at manifest build time.
+      canonicalComponent =
+        component:
+        let
+          parts = lib.splitString "/" component;
+          pkg = builtins.head parts;
+          cls = lib.last parts;
+        in
+        if lib.hasPrefix (pkg + ".") cls then "${pkg}/${lib.removePrefix pkg cls}" else component;
+      inputMethodFinal = {
+        enabled = map canonicalComponent cfg.android.inputMethod.enabled;
+        disabled = map canonicalComponent cfg.android.inputMethod.disabled;
+        default =
+          if cfg.android.inputMethod.default == null then
+            null
+          else
+            canonicalComponent cfg.android.inputMethod.default;
+      };
       inputMethodPackages = map (
         component: lib.head (lib.splitString "/" component)
       ) inputMethodComponents;
@@ -107,14 +127,7 @@
       );
       duplicatePermissions = lib.concatLists (
         lib.mapAttrsToList (
-          p: v:
-          map (permission: "${p}:${permission}") (
-            lib.unique (
-              builtins.filter (
-                permission: lib.count (candidate: candidate == permission) (v.grant ++ v.revoke) > 1
-              ) (v.grant ++ v.revoke)
-            )
-          )
+          p: v: map (permission: "${p}:${permission}") (duplicates (v.grant ++ v.revoke))
         ) cfg.android.permissions
       );
       duplicatePermissionFlags = lib.concatLists (
@@ -122,10 +135,7 @@
           p: permissionState:
           lib.concatLists (
             lib.mapAttrsToList (
-              permission: flags:
-              map (flag: "${p}:${permission}:${flag}") (
-                lib.unique (builtins.filter (candidate: lib.count (f: f == candidate) flags > 1) flags)
-              )
+              permission: flags: map (flag: "${p}:${permission}:${flag}") (duplicates flags)
             ) permissionState.flags
           )
         ) cfg.android.permissions
@@ -138,8 +148,8 @@
         ++ map (value: "suspended:${value}") (duplicates cfg.android.packages.suspended)
         ++ map (value: "unsuspended:${value}") (duplicates cfg.android.packages.unsuspended)
         ++ map (value: "deviceidle-exempt:${value}") (duplicates cfg.android.batteryOptimization.exempt)
-        ++ map (value: "ime-enabled:${value}") (duplicates cfg.android.inputMethod.enabled)
-        ++ map (value: "ime-disabled:${value}") (duplicates cfg.android.inputMethod.disabled)
+        ++ map (value: "ime-enabled:${value}") (duplicates inputMethodFinal.enabled)
+        ++ map (value: "ime-disabled:${value}") (duplicates inputMethodFinal.disabled)
         ++ lib.concatLists (
           lib.mapAttrsToList (
             package: locales: map (locale: "locale:${package}:${locale}") (duplicates locales)
@@ -152,10 +162,19 @@
           ) cfg.android.appLinks
         );
       suspensionConflicts = lib.intersectLists cfg.android.packages.suspended cfg.android.packages.unsuspended;
-      inputMethodConflicts = lib.intersectLists cfg.android.inputMethod.enabled cfg.android.inputMethod.disabled;
+      inputMethodConflicts = lib.intersectLists inputMethodFinal.enabled inputMethodFinal.disabled;
       inputMethodDefaultDisabled =
-        cfg.android.inputMethod.default != null
-        && !builtins.elem cfg.android.inputMethod.default cfg.android.inputMethod.enabled;
+        inputMethodFinal.default != null
+        && !builtins.elem inputMethodFinal.default inputMethodFinal.enabled;
+      # `ime set/enable/disable` and the raw secure keys are one Android
+      # surface; two declared authorities would rewrite each other every
+      # switch (same shape as the privateDns guard below).
+      inputMethodRawConflict =
+        inputMethodComponents != [ ]
+        && (
+          cfg.android.settings.secure ? default_input_method
+          || cfg.android.settings.secure ? enabled_input_methods
+        );
       appLinkConflicts = lib.concatLists (
         lib.mapAttrsToList (
           package: state:
@@ -289,6 +308,8 @@
           throw "nix-android: a domain can be selected for only one app: ${lib.concatStringsSep ", " duplicateSelectedAppLinkDomains}"
         else if invalidReleaseSources != [ ] then
           throw "nix-android: release apps must set exactly one of github/gitea: ${lib.concatStringsSep ", " invalidReleaseSources}"
+        else if inputMethodRawConflict then
+          throw "nix-android: android.inputMethod conflicts with raw default_input_method/enabled_input_methods settings"
         else if privateDnsRawConflict then
           throw "nix-android: android.privateDns conflicts with raw private_dns_mode/private_dns_specifier settings"
         else if !validPrivateDns then
@@ -381,12 +402,12 @@
             android = {
               settings = settingsFinal;
               roles = lib.filterAttrs (_: v: v != null) cfg.android.defaultApps;
+              inputMethod = inputMethodFinal;
               inherit (cfg.android)
                 appLinks
                 appOps
                 darkMode
                 dataSaver
-                inputMethod
                 locales
                 permissions
                 ;
@@ -446,7 +467,7 @@
           pkgs.jq
         ];
         text = ''
-          exec ${pkgs.bash}/bin/bash ${../engine/converge.sh} ${manifest} "$@"
+          exec ${pkgs.bash}/bin/bash ${../engine}/converge.sh ${manifest} "$@"
         '';
       };
     in

@@ -24,10 +24,18 @@ user builds do not permit ordinary downgrades.
 
 Permission and app-op declarations are reasserted after a managed install or
 upgrade, because a package transition can change that state. Permission-flag
-declarations own only the five flags PackageManager exposes for shell writes;
-system-fixed, restriction-exemption, and other Android-owned flags are never
-cleared. App-op declarations are package-level and do not rewrite UID-wide
+declarations own only the four shell-writable flags that passed bench
+read-back (`review-required` is advertised by `pm help` but rewritten by
+PermissionController); system-fixed, restriction-exemption, and other
+Android-owned flags are never cleared. App-op declarations are package-level and do not rewrite UID-wide
 modes, which often derive from runtime permission state.
+
+Grant and revoke declarations manage runtime permissions. Whether a permission
+is runtime depends on the OS: GrapheneOS makes `INTERNET` and `OTHER_SENSORS`
+runtime, stock Android does not. A declared grant of an install-time
+permission Android already granted is satisfied; a grant of an ungranted
+install-time permission or a revoke of any install-time permission fails
+during plan, because `pm grant`/`pm revoke` cannot change install-time state.
 
 `android.darkMode` is the user-scope exception: Android's `cmd uimode night`
 interface has no `--user` argument. The v1 engine requires the declared user to

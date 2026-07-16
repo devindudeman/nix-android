@@ -141,15 +141,18 @@ permissions. Generated grants are therefore the intersection of the managed
 user's observed grants and `pm list permissions -d -g -f`, minus hard/soft
 restricted permissions discovered from `dumpsys package permissions`.
 Restricted grants depend on installer/platform allowlisting and remain
-ambiguous evidence rather than a false post-wipe promise. If any restriction
-row is unparsed, all automatic grant rendering fails closed until that evidence
-is complete. Everything else is retained in JSON and counted as omitted.
+ambiguous evidence rather than a false post-wipe promise. An unparsed
+restriction row fails closed for the permission it names; only a row that
+cannot be attributed to one permission fails all automatic grant rendering
+closed. Everything else is retained in JSON and counted as omitted.
 Import never generates a revoke from absence, because absence alone does not
 establish deliberate deny intent or
 app-op/foreground/one-time scope. A separate per-package `dumpsys package`
-read preserves permission flags. PackageManager's five writable flags are
-rendered exactly, including explicit empty lists; Android-owned flags remain
-observed evidence.
+read preserves permission flags. The four shell-owned writable flags are
+rendered exactly, including explicit empty lists, but only for rows whose
+granted state the declaration also reproduces — flags alone must not assert
+`user-fixed` on a permission the configuration leaves denied. Android-owned
+flags remain observed evidence.
 
 Additional narrow reads capture `cmd locale`, `ime`, `cmd netpolicy`, and
 `pm get-app-links --user 0` state. The package protobuf supplies suspension

@@ -31,8 +31,11 @@ OBTAINIUM_INSTALLERS = {
     "dev.imranr.obtainium.fdroid",
 }
 PLAY_INSTALLER = "com.android.vending"
+# Mirrors writable_permission_flags in engine/read-state.sh (the engine/bench
+# source) and the enum in modules/options.nix; change all three together.
 WRITABLE_PERMISSION_FLAGS = {
-    "REVIEW_REQUIRED": "review-required",
+    # REVIEW_REQUIRED stays Android-owned evidence: PermissionController
+    # rewrites it from the app's targetSdk, so shell cannot own it.
     "REVOKED_COMPAT": "revoked-compat",
     "REVOKE_WHEN_REQUESTED": "revoke-when-requested",
     "USER_FIXED": "user-fixed",
@@ -296,9 +299,20 @@ def render_with_coverage(snapshot):
         if isinstance(permission, str) and PERMISSION_NAME.fullmatch(permission)
     }
     restricted_permissions = set(android.get("runtimePermissionRestrictions", {}))
-    restriction_evidence_complete = not android.get(
-        "unparsedPermissionRestrictionRows"
-    )
+    # Unparsed restriction rows usually name the affected permission; omit only
+    # its grants instead of zeroing the whole import. Rows that cannot be
+    # attributed to one permission keep the conservative global omission.
+    unknown_restriction_permissions = set()
+    unattributed_restriction_rows = 0
+    for row in android.get("unparsedPermissionRestrictionRows") or []:
+        match = re.search(r"Permission \[([A-Za-z0-9_.]+)\]", str(row)) or re.fullmatch(
+            r"([A-Za-z0-9_.]+): missing PermissionInfo flags", str(row)
+        )
+        if match:
+            unknown_restriction_permissions.add(match.group(1))
+        else:
+            unattributed_restriction_rows += 1
+    restriction_evidence_complete = unattributed_restriction_rows == 0
     if not runtime_permissions:
         report.append(
             "no supported runtime-permission definitions were observed; all permission grants were omitted"
@@ -321,6 +335,7 @@ def render_with_coverage(snapshot):
     omitted_system_runtime_grants = 0
     omitted_restricted_grants = 0
     omitted_unknown_restriction_grants = 0
+    rendered_grant_sets = {}
     for package in snapshot.get("packages", []):
         name = package.get("name")
         grants = set()
@@ -334,19 +349,24 @@ def render_with_coverage(snapshot):
             and PERMISSION_NAME.fullmatch(permission)
             and permission in runtime_permissions
         }
-        restricted_grants = runtime_grants & restricted_permissions
-        if package.get("thirdPartyForManagedUser"):
-            omitted_restricted_grants += len(restricted_grants)
-        runtime_grants -= restricted_permissions
         if not package.get("thirdPartyForManagedUser"):
+            # Count restricted grants too: every observed system runtime grant
+            # lands in exactly this bucket.
             omitted_system_runtime_grants += len(runtime_grants)
             continue
         observed_grants += len(grants)
+        omitted_restricted_grants += len(runtime_grants & restricted_permissions)
+        runtime_grants -= restricted_permissions
+        omitted_unknown_restriction_grants += len(
+            runtime_grants & unknown_restriction_permissions
+        )
+        runtime_grants -= unknown_restriction_permissions
         if not restriction_evidence_complete:
             omitted_unknown_restriction_grants += len(runtime_grants)
             runtime_grants = set()
         grants = runtime_grants
         rendered_grants += len(grants)
+        rendered_grant_sets[name] = grants
         if grants:
             state_lines.extend(
                 [
@@ -420,6 +440,7 @@ def render_with_coverage(snapshot):
         )
 
     rendered_permission_flag_rows = 0
+    omitted_flag_rows = 0
     android_owned_permission_flags = 0
     for package in snapshot.get("packages", []):
         if not package.get("thirdPartyForManagedUser"):
@@ -428,6 +449,13 @@ def render_with_coverage(snapshot):
         for state in package.get("runtimePermissionStates", []):
             permission = state.get("permission")
             if not isinstance(permission, str) or not PERMISSION_NAME.fullmatch(permission):
+                continue
+            if state.get("granted") and permission not in rendered_grant_sets.get(name, set()):
+                # The matching grant was omitted (restricted or unknown
+                # restriction evidence). Rendering the flags alone would assert
+                # policy such as user-fixed on a permission this configuration
+                # leaves denied — the inverse of the observed state.
+                omitted_flag_rows += 1
                 continue
             observed_flags = set(state.get("flags", []))
             writable = sorted(
@@ -456,8 +484,18 @@ def render_with_coverage(snapshot):
         "android.permissions.flags",
         "declarable",
         rendered_permission_flag_rows,
-        "writable PackageManager policy flags are represented exactly for every observed runtime-permission row",
+        "writable PackageManager policy flags are represented for rows whose grant state the declaration reproduces",
     )
+    if omitted_flag_rows:
+        report.append(
+            f"{omitted_flag_rows} permission-flag row(s) were preserved and omitted because the matching granted permission was not declared"
+        )
+        fact(
+            "android.permissions.flagsForOmittedGrants",
+            "ambiguous",
+            omitted_flag_rows,
+            "flags without their granted state would invert source intent (e.g. user-fixed on a denied permission)",
+        )
     if android_owned_permission_flags:
         report.append(
             f"{android_owned_permission_flags} Android-owned permission flag(s) were preserved in the snapshot and omitted"
@@ -706,7 +744,12 @@ def render_with_coverage(snapshot):
             {
                 domain
                 for domain in link_state.get("selected", [])
-                if isinstance(domain, str) and DOMAIN_NAME.fullmatch(domain)
+                # <= 253 mirrors lib/default.nix validDomain and the engine's
+                # jq `domain`; a longer observed domain must not render output
+                # that the generated configuration then rejects at eval.
+                if isinstance(domain, str)
+                and len(domain) <= 253
+                and DOMAIN_NAME.fullmatch(domain)
             }
         )
         verifier_domains += len(link_state.get("verification", {}))
@@ -859,6 +902,9 @@ def render_with_coverage(snapshot):
 #    evidence, not verified provenance.
 #  - Credential-free Obtainium exports can recover supported release sources;
 #    every remaining third-party app stays attended instead of guessing.
+#  - Recovered apps.release entries are lock-backed: run `android-rebuild
+#    update` once before the first build/plan, or evaluation fails with
+#    "not in apps.lock.json".
 #  - The commented candidates below are evidence for manual curation only.
 #  - Runtime grant bits, writable permission-policy flags, and package-level
 #    app-op overrides are separate declarations; UID-wide app-ops stay evidence.

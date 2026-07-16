@@ -549,7 +549,10 @@ def normalize_app_links(lines, managed_user):
         domain = re.fullmatch(r"          (\S+)", line)
         if domain and section in {"selected", "unselected"}:
             value = domain.group(1)
-            if DOMAIN_NAME.fullmatch(value):
+            # <= 253 mirrors lib/default.nix validDomain and the engine's jq
+            # `domain` so the snapshot never carries a value downstream
+            # validators reject.
+            if len(value) <= 253 and DOMAIN_NAME.fullmatch(value):
                 links[package][section].append(value)
             else:
                 unparsed.append(f"{package}: {line.strip()}")
@@ -565,7 +568,7 @@ def normalize_app_links(lines, managed_user):
         verification = re.fullmatch(r"      (\S+): (\S+)", line)
         if verification and section == "verification":
             domain, state = verification.groups()
-            if DOMAIN_NAME.fullmatch(domain):
+            if len(domain) <= 253 and DOMAIN_NAME.fullmatch(domain):
                 links[package]["verification"][domain] = state
             else:
                 unparsed.append(f"{package}: {line.strip()}")
