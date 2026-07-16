@@ -12,6 +12,7 @@ Read these before changing behavior:
 - `docs/USING.md` — public behavior and complete option surface
 - `docs/LIMITS.md` — exact reconciliation and no-root boundaries
 - `docs/PLAN.md` — first-release gate and deferred roadmap
+- `docs/DEVICE-OWNER.md` — design-only proposal for an opt-in Device Owner lane
 
 Every new module option must cite an executed read/write/read-back/graceful-
 reboot primitive. Do not expose a setting merely because `settings put`

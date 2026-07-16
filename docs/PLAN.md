@@ -117,15 +117,20 @@ that, not against surface breadth.
 
 ### Next
 
-- **Optional Device Owner lane (emulator prototype).** `dpm set-device-owner`
-  during a wiped-device bootstrap is the only no-root path to silent install
-  and true cleanup, and its "no accounts on device" precondition is naturally
-  satisfied at that moment. Prototype on the emulator only: enroll a DPC
-  (evaluate Dhizuku vs. a minimal own DPC), silent-install the managed list,
-  then remove or retain DO. Open questions to resolve before any option ships:
-  Play-delivered apps still require Play, attestation side effects, and the
-  factory-reset exit. The Android Management API policy JSON is the schema
-  reference. Stays strictly opt-in and bootstrap-scoped.
+- **Optional Device Owner lane (emulator prototype).** Designed in
+  [DEVICE-OWNER.md](./DEVICE-OWNER.md). The honest scope is narrow: `adb shell`
+  already installs APKs silently over a tether and Device Owner cannot fetch
+  Play-only APKs, so DO's genuine value is only untethered/reboot-persistent
+  convergence and a few DO-gated policy verbs (`setUninstallBlocked`,
+  `setPermissionGrantState`, `setApplicationHidden`). Recommended base is a
+  purpose-built ~100-line Java DPC built as a Gradle-free fixed-output Nix
+  derivation (not Dhizuku). An emulator prototype (kept off `main` on the
+  `dpc-prototype` branch) already answered two of the three risks on AOSP — an
+  SELinux-clean command channel and a factory-reset-free exit via
+  `clearDeviceOwnerApp` both work, and DO silent install is prompt-free on AOSP.
+  The open risk is whether GrapheneOS honors DO silent install (a spare-device
+  test, never the Pixel), which gates the shipping decision. Strictly opt-in and
+  bootstrap-scoped.
 - **Special app access.** Notification-listener and accessibility-service
   enablement (`cmd notification allow_listener`; the secure component lists
   gated by the `ACCESS_RESTRICTED_SETTINGS` app-op). Fiddly minutes on every
