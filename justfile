@@ -16,10 +16,17 @@ atlas out serial:
 fmt:
     nix fmt
 
+# regenerate docs/OPTIONS.md from the typed module options
+options-doc:
+    set -e; system=$(nix eval --impure --raw --expr builtins.currentSystem); \
+      raw=$(nix build ".#packages.$system.options-doc" --accept-flake-config --no-link --print-out-paths); \
+      bash scripts/render-options-doc.sh "$raw" > docs/OPTIONS.md; \
+      echo "wrote docs/OPTIONS.md"
+
 # public release checks (whole-flake check is blocked by devenv task evaluation)
 check:
     set -e; system=$(nix eval --impure --raw --expr builtins.currentSystem); \
-      nix build ".#checks.$system.formatting" ".#checks.$system.shellcheck" ".#checks.$system.engine-parsers" ".#checks.$system.generations" ".#checks.$system.template" ".#checks.$system.suggest-sources" ".#checks.$system.statix" \
+      nix build ".#checks.$system.formatting" ".#checks.$system.shellcheck" ".#checks.$system.engine-parsers" ".#checks.$system.generations" ".#checks.$system.template" ".#checks.$system.options-doc" ".#checks.$system.suggest-sources" ".#checks.$system.statix" \
         ".#checks.$system.deadnix" ".#checks.$system.cli-safety" ".#checks.$system.manifest-safety" \
         ".#checks.$system.import-snapshot" ".#checks.$system.assist-safety" \
         ".#checks.$system.bootstrap-safety" \

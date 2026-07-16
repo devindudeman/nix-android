@@ -175,6 +175,10 @@ host-specific modules.
 
 ## Complete option surface
 
+Every option, with its type, default, and the adb primitive it cites, is in the
+generated [OPTIONS.md](./OPTIONS.md) (rendered from the typed module options via
+`just options-doc`). The annotated example below is a faster orientation.
+
 ```nix
 {
   device = {

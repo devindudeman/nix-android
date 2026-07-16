@@ -132,6 +132,11 @@ that, not against surface breadth.
   scaffold's manifest through `mkDevice`, so a renamed or removed option fails
   CI here instead of in a fresh user's repo. Device auto-population is left to
   the existing `import` command rather than duplicated.
+- **Generated option reference.** `docs/OPTIONS.md` is rendered from the typed
+  module options via `nixosOptionsDoc` (`just options-doc`; the `options-doc`
+  check fails if the committed file drifts). Because each option's description
+  cites its executed adb primitive, the read-back-verified honesty guarantee
+  renders straight into the public reference.
 
 ### Next
 
@@ -156,7 +161,8 @@ that, not against surface breadth.
 
 ### Deferred
 
-- generated option reference rendered from the typed module options
+- HTML rendering of the option reference (nixos-render-docs) if a hosted docs
+  site is ever published
 - broader resolver regression fixtures for release-asset selection and the
   no-`preferredSigner` multiple-lineage rejection path
 - a rollback verb over recorded generations, documenting that it cannot restore

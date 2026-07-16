@@ -131,6 +131,27 @@
               '';
             };
             default = android-rebuild;
+
+            # Option reference rendered from the typed module options. Because
+            # each option's description cites its executed read/write primitive,
+            # the honesty guarantee renders straight into the docs. Regenerate
+            # the committed docs/OPTIONS.md with `just options-doc`.
+            options-doc =
+              let
+                eval = pkgs.lib.evalModules { modules = [ ./modules/options.nix ]; };
+                doc = pkgs.nixosOptionsDoc {
+                  inherit (eval) options;
+                  transformOptions =
+                    opt:
+                    # Drop the module system's own _module.* plumbing; strip the
+                    # store-path declaration links (pure data, not a NixOS host).
+                    if builtins.head opt.loc == "_module" then
+                      opt // { visible = false; }
+                    else
+                      opt // { declarations = [ ]; };
+                };
+              in
+              doc.optionsCommonMark;
           }
           // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
             # `nix run .#bench -- --serial emulator-5554 [--apply]` — converge
@@ -264,6 +285,17 @@
                   lockFile = ./templates/default/apps.lock.json;
                 }).manifest
               } "$out"
+            '';
+            # docs/OPTIONS.md must match what the typed options render to, so a
+            # changed option cannot ship with a stale reference.
+            options-doc = pkgs.runCommand "nix-android-options-doc" { nativeBuildInputs = [ pkgs.bash ]; } ''
+              bash ${inputs.self}/scripts/render-options-doc.sh \
+                ${inputs.self.packages.${system}.options-doc} > rendered.md
+              if ! diff -u ${inputs.self}/docs/OPTIONS.md rendered.md; then
+                echo "docs/OPTIONS.md is stale — run 'just options-doc'" >&2
+                exit 1
+              fi
+              touch $out
             '';
             suggest-sources =
               pkgs.runCommand "nix-android-suggest-sources"
