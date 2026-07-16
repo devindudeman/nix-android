@@ -29,8 +29,11 @@ Usage:
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
                          [--obtainium-export PATH] [--app-manager-export PATH]
+  android-rebuild suggest-sources --flake REF#DEVICE
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
+suggest-sources is read-only and device-free: it reports which apps.play /
+apps.attended entries are published on a hash-lockable F-Droid source.
 EOF
 }
 
@@ -124,7 +127,7 @@ import)
   [ -z "$app_manager_export" ] || import_args+=(--app-manager-export "$app_manager_export")
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
-build | plan | switch | assist | bootstrap | update) ;;
+build | plan | switch | assist | bootstrap | update | suggest-sources) ;;
 *) echo "unknown command: $cmd" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -162,6 +165,14 @@ assist)
 bootstrap)
   manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   exec "$nix_android_bash" "$src/scripts/bootstrap.sh" "$manifest" --serial "$serial"
+  ;;
+suggest-sources)
+  candidates=$(nix eval "${nixargs[@]}" "$attr.config" \
+    --apply 'c: c.apps.play ++ c.apps.attended' --json | jq -r '.[]')
+  abi=$(nix eval "${nixargs[@]}" "$attr.config" --apply 'c: c.device.abi' --raw)
+  resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)/bin/nix-android-update-lock
+  exec "$nix_android_bash" "$src/scripts/suggest-sources.sh" \
+    --resolver "$resolver" --abi "$abi" <<<"$candidates"
   ;;
 update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \

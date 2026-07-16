@@ -491,6 +491,26 @@ The snapshot and generated inventory are personal data. Keep both out of a
 public repository and copy only declarations you deliberately choose to
 publish. See [IMPORT.md](./IMPORT.md) for the schema, evidence boundaries, and
 export adapters.
+
+## Move apps off the Play install-consent path
+
+An import records apps as `apps.play` (presence assertions Play delivers with
+per-app consent) or `apps.attended`. Reproducing such a phone means confirming
+each Play install by hand, which dominates the setup cost. `suggest-sources`
+reports which of those entries are published on a hash-lockable F-Droid source
+so they can move to `apps.fdroid` and install unattended:
+
+```console
+nix run .#android-rebuild -- suggest-sources --flake .#pixel
+```
+
+It is read-only and needs no device. For each `apps.play` and `apps.attended`
+entry it checks the main f-droid.org archive and IzzyOnDroid — reusing the same
+signed `entry.jar` and index-v2 verification `update` performs — and prints the
+available packages plus a ready-to-paste `apps.fdroid` block. Availability is a
+suggestion, not a guarantee of the same app or signer: move an entry only after
+you recognize it, then run `update` (which re-verifies and pins each APK) before
+converging. Packages not found on either repo stay `apps.play`/`apps.attended`.
 For the field-by-field ADB read/write/import classification, see
 [CAPABILITIES.md](./CAPABILITIES.md).
 

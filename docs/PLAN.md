@@ -94,14 +94,22 @@ enough; the remaining setup cost is dominated by one thing — the per-app Play
 install-consent marathon (159 taps on that phone). Work is ranked against
 that, not against surface breadth.
 
+### Done
+
+- **De-Play curation (F-Droid/IzzyOnDroid).** `android-rebuild
+  suggest-sources` reports which `apps.play`/`apps.attended` entries are
+  published on the main archive or IzzyOnDroid and lockable by the real
+  resolver (shared eligibility, including signing-lineage and full lock-field
+  completeness). It prints the migration the user applies by hand — the list
+  to remove from `apps.play`/`apps.attended` and the `apps.fdroid` block to
+  add — then `update` pins them. Against a 186-app import it surfaced 30.
+
 ### Next
 
-- **De-Play curation.** A resolver pass over an imported `apps.play` list that
-  reports which package IDs are also published on F-Droid, IzzyOnDroid, or as
-  GitHub/Gitea releases, so they can migrate to a hash-locked managed source.
-  Reuses the existing lock/update/signature machinery; every hit removes one
-  Play consent from a rebuild and doubles as the curation step import docs
-  already ask users to do by hand.
+- **Release-source discovery.** Extend `suggest-sources` to also report when a
+  candidate is published as a GitHub/Gitea release (the `apps.release`
+  sources), not only F-Droid repos. Needs a metadata match story that does not
+  guess the wrong upstream.
 - **Optional Device Owner lane (emulator prototype).** `dpm set-device-owner`
   during a wiped-device bootstrap is the only no-root path to silent install
   and true cleanup, and its "no accounts on device" precondition is naturally

@@ -219,6 +219,22 @@
                   bash ${inputs.self}/scripts/test-read-state.sh
                   touch $out
                 '';
+            suggest-sources =
+              pkgs.runCommand "nix-android-suggest-sources"
+                {
+                  nativeBuildInputs = [
+                    pkgs.bash
+                    pkgs.coreutils
+                    pkgs.gnugrep
+                    pkgs.gnused
+                    pkgs.jq
+                  ];
+                }
+                ''
+                  bash ${inputs.self}/scripts/test-suggest-sources.sh \
+                    ${inputs.self}/scripts/suggest-sources.sh
+                  touch $out
+                '';
             statix = pkgs.runCommand "nix-android-statix" { nativeBuildInputs = [ pkgs.statix ]; } ''
               statix check ${inputs.self}
               touch $out

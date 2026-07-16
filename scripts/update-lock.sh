@@ -29,6 +29,10 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=fdroid-eligibility.sh
+source "$(dirname "${BASH_SOURCE[0]}")/fdroid-eligibility.sh"
+
 repo=https://f-droid.org/repo
 # F-Droid's published repository-signing certificate (SHA-256, no separators).
 repo_fingerprint=43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab
@@ -42,6 +46,7 @@ fspecs=()
 ghspecs=()
 gtspecs=()
 test_asset=()
+fetch_index_spec=()
 
 inspect_release_asset() { # $1=package $2=downloaded asset $3=display name
   local p=$1 asset=$2 display=$3
@@ -102,6 +107,13 @@ while [ $# -gt 0 ]; do
     [ $# -ge 3 ] || { echo "--inspect-release-asset requires PACKAGE ASSET" >&2; exit 2; }
     test_asset=("$2" "$3"); shift 3
     ;;
+  --fetch-index)
+    # Print the trust-verified index-v2 path for one repo and exit. Reused by
+    # suggest-sources so read-only curation shares this signed entry.jar chain
+    # instead of duplicating it.
+    [ $# -ge 3 ] || { echo "--fetch-index requires REPO_URL FINGERPRINT" >&2; exit 2; }
+    fetch_index_spec=("$2" "$3"); shift 3
+    ;;
   *) pkgs+=("$1"); shift ;;
   esac
 done
@@ -109,7 +121,8 @@ if [ "${#test_asset[@]}" -gt 0 ]; then
   inspect_release_asset "${test_asset[0]}" "${test_asset[1]}" "${test_asset[1]}"
   exit
 fi
-if [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
+if [ "${#fetch_index_spec[@]}" -eq 0 ] \
+  && [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
   if ! jq -e '
     (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64"))
     and (.packages | type == "object" and all(to_entries[];
@@ -143,12 +156,14 @@ if [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -eq 0 
   mapfile -t gtspecs < <(jq -r '.gitea[]' <<<"$refresh")
   [ "$abi_set" -eq 1 ] || abi=$(jq -r '.abi' "$lock")
 fi
-[ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] || { echo "no packages to lock" >&2; exit 1; }
+[ "${#fetch_index_spec[@]}" -gt 0 ] \
+  || [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] \
+  || { echo "no packages to lock" >&2; exit 1; }
 
 # Entries resolved for one ABI must never silently coexist with (or silently
 # drop) entries locked for another.
 existing='{}'
-if [ "$replace" -eq 0 ] && [ -f "$lock" ]; then
+if [ "${#fetch_index_spec[@]}" -eq 0 ] && [ "$replace" -eq 0 ] && [ -f "$lock" ]; then
   prev_abi=$(jq -r '.abi // empty' "$lock")
   if [ "$prev_abi" != "$abi" ]; then
     echo "cannot merge into $lock: it targets abi '${prev_abi:-unknown}', not '$abi' — pass --replace to rewrite it" >&2
@@ -217,23 +232,27 @@ fetch_index() { # $1=repo-url $2=expected-cert-sha256 → verified index path
   echo "$index"
 }
 
+if [ "${#fetch_index_spec[@]}" -gt 0 ]; then
+  fetch_index "${fetch_index_spec[0]}" "${fetch_index_spec[1]}"
+  exit
+fi
+
 resolve_fdroid() { # $1=pkg $2=repo-url $3=fingerprint $4=source-tag-or-empty
   local p=$1 r=$2 fp=${3,,} srctag=$4 index
   index=$(fetch_index "$r" "$fp")
-  jq --arg p "$p" --arg abi "$abi" --arg repo "$r" --arg fp "$fp" --arg src "$srctag" '
-    .packages[$p] // error("package not in index \($repo): \($p)")
+  # Version/lineage selection lives in FDROID_ELIGIBILITY_JQ, shared with
+  # suggest-sources so availability never diverges from lockability.
+  jq --arg p "$p" --arg abi "$abi" --arg repo "$r" --arg fp "$fp" --arg src "$srctag" \
+    "$FDROID_ELIGIBILITY_JQ"'
+    require_packages_object
+    | .packages[$p] // error("package not in index \($repo): \($p)")
+    | . as $pkg
     | (.metadata.preferredSigner // null) as $preferred
-    | .versions | to_entries | map(.value)
-    | map(select((.releaseChannels // []) | length == 0))
-    | map(select((.manifest.nativecode // []) as $n | ($n | length == 0) or ($n | index($abi))))
-    | if $preferred == null then .
-      | ([.[].manifest.signer.sha256[]] | unique) as $signers
-      | if ($signers | length) == 1 then .
-        else error("multiple signing lineages without metadata.preferredSigner: \($p)") end
-      else map(select((.manifest.signer.sha256 // []) | index($preferred)))
-      end
-    | sort_by(-.manifest.versionCode) | .[0]
-    // error("no stable \($abi)-compatible version from the preferred signing lineage: \($p)")
+    | if $preferred == null
+        and (($pkg | stable_abi_versions($abi)) | [.[].manifest.signer.sha256[]] | unique | length) > 1
+        then error("multiple signing lineages without metadata.preferredSigner: \($p)") else . end
+    | ($pkg | lockable_version($abi))
+      // error("no stable \($abi)-compatible version from the preferred signing lineage: \($p)")
     | {($p): ({
         versionCode: .manifest.versionCode,
         versionName: .manifest.versionName,
