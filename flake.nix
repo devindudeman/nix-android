@@ -236,6 +236,8 @@
               grep -q 'only valid with update' lock-err
               ! "$cli" build --flake x#bench --snapshot-out nope.json >/dev/null 2>snapshot-err
               grep -q 'only valid with import' snapshot-err
+              ! "$cli" build --flake x#bench --report-out nope.json >/dev/null 2>report-err
+              grep -q 'only valid with import' report-err
               ! "$cli" build --flake x#bench --watch >/dev/null 2>watch-err
               grep -q 'only valid with assist' watch-err
               touch $out

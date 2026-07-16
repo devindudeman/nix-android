@@ -71,7 +71,8 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 
 ### Tooling and safety
 
-- read-only, versioned package-protobuf snapshot and conservative Play/attended import
+- read-only, versioned package/Android-state snapshot, conservative source
+  classification, runtime-grant filtering, and explicit omission report
 - read-only Atlas capture with one explicit serial and no stdin-drain truncation
 - resumable wiped-device bootstrap and user-confirmed Play installation queue
 - x86_64 AOSP emulator bench
@@ -89,7 +90,7 @@ These are useful but are not allowed to delay a small, honest initial release:
 - applied-state receipts and generations; any rollback must document that it
   cannot restore app data, downgrade packages, or invert ensure-only state
 - split APK/device-extracted app migration
-- targeted import of already-supported Android state and explicit curation report
+- optional cross-snapshot comparison tooling beyond the implemented coverage report
 - optional credential-free App Manager and Obtainium export adapters
 - optional device product/serial identity guards without forcing identifiers
   into public configuration

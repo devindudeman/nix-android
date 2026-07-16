@@ -7,7 +7,7 @@
 #   android-rebuild assist --flake .#pixel --serial S     open next missing Play app
 #   android-rebuild bootstrap --flake .#pixel --serial S  phased wiped-device rebuild
 #   android-rebuild update --flake .#pixel [--lock PATH]  refresh apps.lock.json
-#   android-rebuild import --serial S [--snapshot-out PATH]  device → starter Nix + optional JSON
+#   android-rebuild import --serial S [--snapshot-out PATH] [--report-out PATH]
 #
 # Runs from the config repo (the flake). NIX_ANDROID_SRC points at the
 # nix-android checkout for helper scripts; the packaged CLI bakes it in.
@@ -26,7 +26,7 @@ Usage:
   android-rebuild assist --flake REF#DEVICE --serial SERIAL [--watch]
   android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
-  android-rebuild import --serial SERIAL [--snapshot-out PATH]
+  android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
 EOF
@@ -42,6 +42,7 @@ flakeref="."
 serial=${ANDROID_SERIAL:-}
 lock=apps.lock.json
 snapshot_out=
+report_out=
 watch=0
 flake_set=0
 lock_set=0
@@ -63,6 +64,10 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || { echo "--snapshot-out requires a value" >&2; exit 2; }
     snapshot_out=$2; shift 2
     ;;
+  --report-out)
+    [ $# -ge 2 ] || { echo "--report-out requires a value" >&2; exit 2; }
+    report_out=$2; shift 2
+    ;;
   --watch) watch=1; shift ;;
   -h | --help) usage; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -79,6 +84,10 @@ if [ -n "$snapshot_out" ] && [ "$cmd" != import ]; then
   echo "--snapshot-out is only valid with import" >&2
   exit 2
 fi
+if [ -n "$report_out" ] && [ "$cmd" != import ]; then
+  echo "--report-out is only valid with import" >&2
+  exit 2
+fi
 if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
   echo "--watch is only valid with assist" >&2
   exit 2
@@ -90,6 +99,7 @@ import)
   [ -n "$serial" ] || { echo "import requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
   import_args=(--serial "$serial")
   [ -z "$snapshot_out" ] || import_args+=(--snapshot-out "$snapshot_out")
+  [ -z "$report_out" ] || import_args+=(--report-out "$report_out")
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
 build | plan | switch | assist | bootstrap | update) ;;

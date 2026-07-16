@@ -1,0 +1,85 @@
+{
+  "grapheneOS": {
+    "evidence": {
+      "deviceIdle": [
+        "system,com.example.system,1000",
+        "system-excidle,com.example.service,1001",
+        "user,org.example.graphene,10123"
+      ],
+      "disabled": [
+        "package:com.example.system"
+      ],
+      "nightMode": "Night mode: yes\n",
+      "permissionDefinitions": [
+        "Dangerous Permissions:",
+        "  + permission:android.permission.INTERNET",
+        "    protectionLevel:dangerous",
+        "  + permission:android.permission.OTHER_SENSORS",
+        "    protectionLevel:dangerous"
+      ],
+      "privateDnsMode": "off\n",
+      "privateDnsSpecifier": "null\n",
+      "roles": [
+        "browser\torg.example.graphene",
+        "dialer\tcom.example.dialer",
+        "home\tcom.example.home",
+        "sms\tcom.example.sms"
+      ]
+    },
+    "expected": {
+      "nightMode": "Night mode: yes",
+      "permissionDefinitions": [
+        "android.permission.INTERNET",
+        "android.permission.OTHER_SENSORS"
+      ],
+      "privateDns": {
+        "mode": "off",
+        "specifier": null
+      },
+      "userDeviceIdlePackages": [
+        "org.example.graphene"
+      ]
+    }
+  },
+  "stockPixel": {
+    "evidence": {
+      "deviceIdle": [
+        "system,com.example.system,1000",
+        "user,org.example.stock,10124"
+      ],
+      "disabled": [
+        "package:com.example.system"
+      ],
+      "nightMode": "Night mode: auto\n",
+      "permissionDefinitions": [
+        "Dangerous Permissions:",
+        "  + permission:android.permission.CAMERA",
+        "    protectionLevel:dangerous",
+        "  + permission:android.permission.POST_NOTIFICATIONS",
+        "    protectionLevel:dangerous"
+      ],
+      "privateDnsMode": "hostname\n",
+      "privateDnsSpecifier": "dns.example.test\n",
+      "roles": [
+        "browser\torg.example.stock",
+        "dialer\tcom.example.dialer",
+        "home\tcom.example.home",
+        "sms\tcom.example.sms"
+      ]
+    },
+    "expected": {
+      "nightMode": "Night mode: auto",
+      "permissionDefinitions": [
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "privateDns": {
+        "mode": "hostname",
+        "specifier": "dns.example.test"
+      },
+      "userDeviceIdlePackages": [
+        "org.example.stock"
+      ]
+    }
+  }
+}

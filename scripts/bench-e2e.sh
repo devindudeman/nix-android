@@ -214,9 +214,16 @@ for run in $(seq 1 "$runs"); do
   # managed-user third-party app conservatively as Play or attended.
   imported=$tmp/imported-$run.nix
   snapshot=$tmp/snapshot-$run.json
+  coverage=$tmp/coverage-$run.json
   nix run .#android-rebuild --accept-flake-config -- \
-    import --serial "$serial" --snapshot-out "$snapshot" > "$imported"
-  jq -e '.schemaVersion == 1 and .device.abi == "x86_64"' "$snapshot" >/dev/null
+    import --serial "$serial" --snapshot-out "$snapshot" --report-out "$coverage" > "$imported"
+  jq -e '.schemaVersion == 2 and .device.abi == "x86_64"' "$snapshot" >/dev/null
+  jq -e '
+    .schemaVersion == 1
+    and (.summary | keys == ["ambiguous", "declarable", "observed-only", "unreachable"])
+    and ([.facts[].status] | all(. == "ambiguous" or . == "declarable" or . == "observed-only" or . == "unreachable"))
+    and ((.device | has("serial")) | not)
+  ' "$coverage" >/dev/null
   jq -S '[.packages[] | select(.thirdPartyForManagedUser) | .name]' \
     "$snapshot" > "$tmp/snapshot-attended-$run.json"
   nix eval --impure --json --expr \
@@ -224,6 +231,20 @@ for run in $(seq 1 "$runs"); do
     > "$tmp/generated-attended-$run.json"
   jq -S 'sort' "$tmp/generated-attended-$run.json" > "$tmp/generated-attended-sorted-$run.json"
   cmp "$tmp/snapshot-attended-$run.json" "$tmp/generated-attended-sorted-$run.json"
+  imported_manifest=$(nix build --no-link --print-out-paths --impure --expr "
+    let
+      project = builtins.getFlake (toString ./.);
+      device = project.lib.mkDevice {
+        system = \"x86_64-linux\";
+        modules = [ (import $imported) ];
+        lockFile = builtins.toFile \"import-roundtrip-lock.json\" (builtins.toJSON {
+          abi = \"x86_64\";
+          lockedAt = 0;
+          packages = {};
+        });
+      };
+    in device.manifest")
+  [ "$(bash engine/converge.sh "$imported_manifest" --serial "$serial")" = "✓ device matches manifest" ]
 
   run_root=$(cat "$root_file")
   adb emu kill >/dev/null

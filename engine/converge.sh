@@ -260,18 +260,25 @@ while read -r pkg; do
   fi
 done < <(jq -r '.android.disabled // [] | .[]' "$manifest")
 
-# ponytail: permission read = grep dumpsys for "<perm>: granted=" — coarse
-# (not per-user-sectioned), fine for the single managed user; ceiling noted.
+declare -A permission_checked=()
+declare -A permission_present=()
+declare -A permission_dump=()
+# ponytail: permission read = one cached dumpsys per referenced package, then
+# grep "<perm>: granted=" — coarse (not per-user-sectioned), fine for the
+# single managed user. Replace with a structured API if Android exposes one.
 while IFS=$'\t' read -r pkg perm action; do
-  package_query=$(adb_shell pm list packages --user "$user" "$pkg" | tr -d '\r')
-  if grep -Fqx "package:$pkg" <<<"$package_query"; then
-    package_present=1
-    package_dump=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
-    granted=$(grep -F -m1 "  $perm: granted=" <<<"$package_dump" | sed 's/.*granted=\([a-z]*\).*/\1/' || true)
-  else
-    package_present=0
-    granted=false
+  if [ -z "${permission_checked[$pkg]+x}" ]; then
+    permission_checked[$pkg]=1
+    if [ -n "$(current_code "$pkg")" ]; then
+      permission_present[$pkg]=1
+      permission_dump[$pkg]=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
+    else
+      permission_present[$pkg]=0
+      permission_dump[$pkg]=
+    fi
   fi
+  package_present=${permission_present[$pkg]}
+  granted=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" | sed 's/.*granted=\([a-z]*\).*/\1/' || true)
   if [ "$action" = grant ] && { [ "$granted" != "true" ] || [ -n "${changing[$pkg]:-}" ]; }; then
     todo_grant+=("${pkg}${US}${perm}")
   elif [ "$action" = revoke ] \

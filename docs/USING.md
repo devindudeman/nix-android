@@ -375,22 +375,39 @@ nix run .#android-rebuild -- \
 nix run .#android-rebuild -- \
   import --serial SERIAL \
   --snapshot-out ~/Documents/phone-migration/pixel.snapshot.json \
+  --report-out ~/Documents/phone-migration/pixel.coverage.json \
   > imported-pixel.nix)
 ```
 
 Import is read-only. It decodes AOSP's structured package dump into a versioned
 snapshot containing package versions, split and per-user state, install-source
-evidence, and granted runtime-permission observations. The generated Nix is
-more conservative: packages attributed to `com.android.vending` become
+evidence, granted-permission observations, and narrow Android state reads. The
+generated Nix is more conservative: packages attributed to
+`com.android.vending` become
 `apps.play` presence assertions and all other managed-user third-party apps
 become `apps.attended`. Likely main-F-Droid and Obtainium entries also appear
-as commented curation candidates. Installer attribution cannot prove a
-repository, release URL, or signing trust anchor.
+as commented curation candidates. It also renders representable dark mode and
+Private DNS, unambiguous default roles, disabled third-party packages,
+user-added battery exemptions, and currently granted runtime permissions.
+Permission rendering intersects the package protobuf's broad grant set with
+PackageManager's dangerous/runtime definitions and never infers revocations.
+Automatic dark mode, system-owned state, ambiguous rows, and unsupported facts
+are retained or reported instead of guessed. Installer attribution cannot
+prove a repository, release URL, or signing trust anchor.
 
 The snapshot and generated inventory are personal data. Keep both out of a
 public repository and copy only declarations you deliberately choose to
 publish. See [IMPORT.md](./IMPORT.md) for the schema, evidence boundaries, and
 planned adapters.
+For the field-by-field ADB read/write/import classification, see
+[CAPABILITIES.md](./CAPABILITIES.md).
+
+The optional coverage JSON contains no adb serial and is deterministic for a
+given snapshot. It summarizes facts classified as `declarable`,
+`observed-only`, `ambiguous`, or `unreachable`; `itemCount` records the number
+of affected entries when a finite observed count exists. It is an audit and
+regression artifact, not additional desired state. Treat it as private because
+its device metadata and counts can still identify a personal setup.
 
 ## Lock and signature behavior
 

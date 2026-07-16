@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize AOSP's package service protobuf into nix-android snapshot v1."""
+"""Normalize read-only Android evidence into nix-android snapshot v2."""
 
 import argparse
 import json
@@ -11,6 +11,8 @@ from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
 
 PACKAGE_NAME = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
+SYSTEM_PACKAGE_NAME = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")
+ROLE_NAMES = {"browser", "sms", "dialer", "home"}
 
 
 # Wire numbers and types come from AOSP's Apache-2.0 licensed package.proto:
@@ -160,13 +162,115 @@ def optional(message, name):
     return getattr(message, name) if message.HasField(name) else None
 
 
-def normalize(dump, third_party, device):
+def normalize_android(
+    night_mode,
+    private_dns_mode,
+    private_dns_specifier,
+    role_lines,
+    disabled_lines,
+    device_idle_lines,
+    permission_definition_lines,
+):
+    roles = {role: [] for role in sorted(ROLE_NAMES)}
+    for line in role_lines:
+        if not line:
+            continue
+        try:
+            role, package = line.split("\t", 1)
+        except ValueError as error:
+            raise ValueError(f"invalid role evidence: {line!r}") from error
+        if role not in ROLE_NAMES or not PACKAGE_NAME.fullmatch(package):
+            raise ValueError(f"invalid role evidence: {line!r}")
+        roles[role].append(package)
+
+    disabled = set()
+    for line in disabled_lines:
+        if not line:
+            continue
+        package = line.removeprefix("package:").strip()
+        if not SYSTEM_PACKAGE_NAME.fullmatch(package):
+            raise ValueError(f"invalid disabled package evidence: {line!r}")
+        disabled.add(package)
+
+    whitelist = []
+    unparsed_device_idle = []
+    for line in device_idle_lines:
+        if not line:
+            continue
+        fields = line.split(",")
+        if (
+            len(fields) != 3
+            or not fields[0]
+            or not PACKAGE_NAME.fullmatch(fields[1])
+            or not fields[2].isdigit()
+        ):
+            unparsed_device_idle.append(line)
+            continue
+        whitelist.append(
+            {"source": fields[0], "package": fields[1], "appId": int(fields[2])}
+        )
+
+    permission_definitions = set()
+    unparsed_permission_definitions = []
+    for line in permission_definition_lines:
+        if "permission:" not in line:
+            continue
+        match = re.fullmatch(r"\s*\+?\s*permission:([A-Za-z0-9_.]+)\s*", line)
+        if match:
+            permission_definitions.add(match.group(1))
+        else:
+            unparsed_permission_definitions.append(line)
+
+    def setting(value):
+        value = value.strip()
+        return None if value in {"", "null"} else value
+
+    return {
+        "nightMode": night_mode.strip(),
+        "privateDns": {
+            "mode": setting(private_dns_mode),
+            "specifier": setting(private_dns_specifier),
+        },
+        "roles": {role: sorted(set(packages)) for role, packages in roles.items()},
+        "disabledPackages": sorted(disabled),
+        "deviceIdleWhitelist": {
+            "entries": sorted(
+                whitelist,
+                key=lambda entry: (
+                    entry["source"],
+                    entry["package"],
+                    entry["appId"],
+                ),
+            ),
+            "unparsed": sorted(set(unparsed_device_idle)),
+        },
+        "runtimePermissionDefinitions": sorted(permission_definitions),
+        "unparsedPermissionDefinitionRows": sorted(
+            set(unparsed_permission_definitions)
+        ),
+    }
+
+
+def normalize(dump, third_party, installed, device, android):
     invalid_third_party = sorted(
         name for name in third_party if not PACKAGE_NAME.fullmatch(name)
     )
     if invalid_third_party:
         raise ValueError(
             f"invalid package name in third-party inventory: {invalid_third_party[0]!r}"
+        )
+    invalid_installed = sorted(
+        name for name in installed if not SYSTEM_PACKAGE_NAME.fullmatch(name)
+    )
+    if invalid_installed:
+        raise ValueError(
+            f"invalid package name in managed-user inventory: {invalid_installed[0]!r}"
+        )
+    missing_installed = sorted(third_party - installed)
+    if missing_installed:
+        raise ValueError(
+            "third-party package absent from managed-user inventory: "
+            f"{missing_installed[0]}"
         )
     decoded_names = {package.name for package in dump.packages if package.name}
     missing_third_party = sorted(third_party - decoded_names)
@@ -211,7 +315,9 @@ def normalize(dump, third_party, device):
                 "users": sorted(
                     (
                         {
-                            "id": optional(user, "id"),
+                            # Proto2 omits scalar fields holding their default.
+                            # Owner user 0 therefore appears absent on the wire.
+                            "id": user.id,
                             "installType": optional(user, "install_type"),
                             "hidden": optional(user, "is_hidden"),
                             "suspended": optional(user, "is_suspended"),
@@ -224,7 +330,9 @@ def normalize(dump, third_party, device):
                             "suspendingPackages": sorted(user.suspending_package),
                             "suspendingUsers": sorted(user.suspending_user),
                             "distractionFlags": optional(user, "distraction_flags"),
-                            "firstInstallTimeMs": optional(
+                            # AOSP declares this *_ms field as signed int32;
+                            # preserve its potentially overflowed wire value.
+                            "firstInstallTimeMsWire": optional(
                                 user, "first_install_time_ms"
                             ),
                         }
@@ -235,7 +343,7 @@ def normalize(dump, third_party, device):
                 "userPermissions": sorted(
                     (
                         {
-                            "id": optional(permissions, "id"),
+                            "id": permissions.id,
                             "granted": sorted(permissions.granted_permissions),
                         }
                         for permissions in package.user_permissions
@@ -252,8 +360,10 @@ def normalize(dump, third_party, device):
     if not packages:
         raise ValueError("package protobuf contained no packages")
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "device": device,
+        "android": android
+        | {"installedPackagesForManagedUser": sorted(installed)},
         "packages": sorted(packages, key=lambda package: package["name"]),
     }
 
@@ -261,6 +371,7 @@ def normalize(dump, third_party, device):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--proto", required=True, type=Path)
+    parser.add_argument("--installed", required=True, type=Path)
     parser.add_argument("--third-party", required=True, type=Path)
     parser.add_argument("--model", required=True)
     parser.add_argument("--product", required=True)
@@ -268,6 +379,13 @@ def parse_args():
     parser.add_argument("--sdk", required=True, type=int)
     parser.add_argument("--security-patch", required=True)
     parser.add_argument("--managed-user", default=0, type=int)
+    parser.add_argument("--night-mode", required=True, type=Path)
+    parser.add_argument("--private-dns-mode", required=True, type=Path)
+    parser.add_argument("--private-dns-specifier", required=True, type=Path)
+    parser.add_argument("--roles", required=True, type=Path)
+    parser.add_argument("--disabled", required=True, type=Path)
+    parser.add_argument("--device-idle", required=True, type=Path)
+    parser.add_argument("--permission-definitions", required=True, type=Path)
     return parser.parse_args()
 
 
@@ -278,11 +396,17 @@ def main():
         for line in args.third_party.read_text().splitlines()
         if line.strip()
     }
+    installed = {
+        line.removeprefix("package:").strip()
+        for line in args.installed.read_text().splitlines()
+        if line.strip()
+    }
     dump = package_dump_class()()
     dump.ParseFromString(args.proto.read_bytes())
     snapshot = normalize(
         dump,
         third_party,
+        installed,
         {
             "model": args.model,
             "product": args.product,
@@ -291,6 +415,15 @@ def main():
             "securityPatch": args.security_patch,
             "managedUser": args.managed_user,
         },
+        normalize_android(
+            args.night_mode.read_text(),
+            args.private_dns_mode.read_text(),
+            args.private_dns_specifier.read_text(),
+            args.roles.read_text().splitlines(),
+            args.disabled.read_text().splitlines(),
+            args.device_idle.read_text().splitlines(),
+            args.permission_definitions.read_text().splitlines(),
+        ),
     )
     json.dump(snapshot, fp=sys.stdout, indent=2, sort_keys=True)
     print()

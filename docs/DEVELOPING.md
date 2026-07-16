@@ -1,6 +1,8 @@
 # Developing nix-android
 
-Read [PRIMITIVES.md](./PRIMITIVES.md) before adding an option,
+Read [CAPABILITIES.md](./CAPABILITIES.md) for the public ADB-to-Nix map,
+[SUPPORT.md](./SUPPORT.md) for the target-family contract,
+[PRIMITIVES.md](./PRIMITIVES.md) before adding an option,
 [LIMITS.md](./LIMITS.md) before widening scope, and [IMPORT.md](./IMPORT.md)
 before changing device discovery or generated declarations.
 
@@ -34,6 +36,8 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/assist-play.sh` | Official Play listing queue; watch mode advances only after package presence |
 | `scripts/bootstrap.sh` | Resumable managed-APK, Play-consent, and full-state orchestration |
 | `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
+| `docs/CAPABILITIES.md` | Public ADB read/write/semantics/import coverage map |
+| `docs/SUPPORT.md` | Stock-Pixel/GrapheneOS support contract and executed evidence matrix |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
 | `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, atomic-failure, and lock merge/replace resolver tests |
 | `devices/bench.nix` | x86_64 AOSP mutation-test configuration |
@@ -70,6 +74,13 @@ bootstrap safety, signed-lock resolver, and negative module-validation checks, p
 platform's positive controller build.
 The whole `nix flake check` remains intentionally unused because devenv task
 evaluation currently produces a spurious `path .drv is not valid` failure.
+
+Use the emulator gate proportionally. Parser, renderer, and documentation
+changes normally need `just check` plus a read-only generated-module/no-op
+check. Run one fresh emulator cycle while developing a mutation-class engine
+change. Reserve two independent cycles for a release boundary or before
+proposing the corresponding real-phone mutation; do not turn the release gate
+into the inner edit loop.
 
 For a clean CI-equivalent Linux run:
 
@@ -123,9 +134,10 @@ The release persistence pass is:
 Run that gate twice on independent fresh userdata with `just bench-e2e 2`.
 It owns emulator-5554, enforces boot/readiness deadlines, verifies exact state,
 requires a new boot ID after graceful reboot, exercises the structured importer
-and its Play/attended coverage, proves cleanup preserves a Play declaration,
-proves the phased bootstrap path, removes each temporary AVD, and waits for the
-ADB transport to disappear. Both
+and its Play/attended coverage, evaluates the generated module through
+`lib.mkDevice`, requires its plan to be a no-op, proves cleanup preserves a Play
+declaration, proves the phased bootstrap path, removes each temporary AVD, and
+waits for the ADB transport to disappear. Both
 cycles must pass before any real-phone mutation is proposed.
 
 ## Engine traps already found

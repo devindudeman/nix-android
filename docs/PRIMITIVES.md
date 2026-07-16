@@ -108,6 +108,43 @@ A separate stock Android 16 Pixel accepted the same explicit-serial import and
 plan read paths for owner-user package inventory. This is one read-side data
 point, not a blanket compatibility claim for every OEM Android build.
 
+On 2026-07-16, snapshot-v2 capture on that stock Pixel 9 Pro (SDK 36) also
+completed the narrow read-only surface for `cmd uimode night`, both Private DNS
+settings, four role-holder queries, all disabled owner-user packages,
+`cmd deviceidle whitelist`, and `pm list permissions -d -g -f`. The structured
+package dump contained 611 per-user permission records; missing proto2 scalar
+IDs decoded semantically as owner user 0. PackageManager listed 268
+dangerous/runtime permission definitions. Intersecting those definitions with
+the broad package grant set produced valid active grant declarations while
+omitting normal and app-defined grants. Automatic dark mode and seven disabled
+system packages were retained as evidence and explicitly omitted rather than
+misrepresented. The generated Nix evaluated successfully and its complete
+read-only plan against the same phone was a no-op. Caching one package dump per
+permission-bearing app reduced that realistic 124-app permission audit to 48
+seconds. No device mutation was performed.
+
+The same capture confirmed an upstream diagnostic limitation: AOSP declares
+`UserInfoProto.first_install_time_ms` as signed `int32`, and the stock Pixel's
+present-day values were overflowed. Snapshot v2 preserves that field as
+`firstInstallTimeMsWire` rather than inventing a timestamp.
+
+The matching read-only comparison ran against the Pixel 6 GrapheneOS build
+`2026071101` on 2026-07-16. Snapshot v2 parsed 272 dangerous/runtime
+definitions without an unparsed row and confirmed `android.permission.INTERNET`,
+`android.permission.OTHER_SENSORS`, and
+`android.permission.ACCESS_LOCAL_NETWORK` in GrapheneOS's set but not the stock
+Pixel's. Its first generated plan also exposed a scope bug: a `source=user`
+DeviceIdle row referred to Google Play services installed only in another
+profile. DeviceIdle is global, so source alone does not prove owner-user intent.
+The importer now intersects user-added DeviceIdle rows with the independent
+`pm list packages --user 0` inventory; the out-of-scope row remains snapshot
+evidence and an explicit omission. The recaptured generated module evaluated
+through `lib.mkDevice` and planned as an exact no-op against the same GrapheneOS
+phone in 10.7 seconds. The comparison also observed a system package present in
+the owner-user `pm` inventory but absent from the package protobuf, so only
+third-party declarations—not the full independent inventory—are required to
+appear in that diagnostic format. No device mutation was performed.
+
 ## Engine bugs caught by hardware-shaped tests
 
 - adb consumed a process-substitution loop's stdin, so only its first item ran;
