@@ -24,7 +24,14 @@ writable or persistent interface.
 | `cmd uimode night` | real-device off/on convergence with no-op read-back; bench idempotence and reboot persistence | `android.darkMode` |
 | `cmd role get-role-holders/add-role-holder --user 0` | real-device reversible role check; bench read/idempotence | `android.defaultApps.*` |
 | `pm grant/revoke --user 0` | AOSP POST_NOTIFICATIONS round trip reflected in dumpsys | `android.permissions.*` |
+| `pm set-permission-flags/clear-permission-flags --user 0` | AOSP `USER_SET` read/write/read-back plus graceful-reboot persistence; only the five flags listed by `pm help` are owned | `android.permissions.*.flags` |
+| `appops get/set --user 0` | AOSP package-level `RUN_IN_BACKGROUND` allow/ignore/foreground/default round trip and graceful-reboot persistence; UID modes remain separate evidence | `android.appOps.*` |
 | `pm disable-user --user 0` plus `pm list -d` | AOSP change/read-back/idempotence | `android.packages.disabled` |
+| `pm suspend/unsuspend --user 0` plus package-protobuf suspender metadata | AOSP `com.android.shell` suspend/unsuspend round trip, exact-authority read-back, idempotence, and graceful-reboot persistence | `android.packages.suspended`, `unsuspended` |
+| `cmd locale set-app-locales/get-app-locales` | AOSP non-empty/clear round trip, idempotence, and graceful-reboot persistence | `android.locales.*` |
+| `ime list/enable/disable/set --user 0` | AOSP enabled/default read path and selection persistence; GrapheneOS enumeration read shape | `android.inputMethod.*` |
+| `cmd netpolicy get/set restrict-background` | AOSP global Data Saver change/read-back, idempotence, and graceful-reboot persistence | `android.dataSaver.enabled` |
+| `pm get-app-links/set-app-links-allowed/set-app-links-user-selection --user 0` | AOSP owner-user handling denial and positive domain selection round trip, idempotence, and graceful-reboot persistence | `android.appLinks.*` |
 | `cmd deviceidle whitelist +/-package` | real-device reversible check; AOSP change/read-back/idempotence | `android.batteryOptimization.exempt` |
 
 Raw `android.settings` is intentionally an expert surface. This table proves
@@ -68,12 +75,7 @@ and [Android Management policy reference](https://developers.google.com/android/
 | Primitive | Result |
 | --- | --- |
 | `cmd wifi add-network/list-networks/forget-network` | dummy WPA2 network added, observed, and removed on GrapheneOS |
-| `ime list`, `ime set` | enumeration on GrapheneOS; selection round trip on AOSP |
-| `appops get/set` | AOSP mode round trip |
-| `cmd netpolicy add/remove restrict-background-blacklist` | AOSP round trip |
-| `pm suspend/unsuspend` | AOSP suspended state visible in package dump |
-| `cmd locale set-app-locales/get-app-locales` | AOSP set/get/clear round trip |
-| `cmd package get-app-links` | exposes signer information only for applicable app-link packages; not a general installed-signer API |
+| `cmd netpolicy add/remove restrict-background-blacklist/whitelist` | immediate AOSP round trip and policy-file write; user-installed UID rows were removed during graceful reboot, so snapshot evidence only |
 
 These are candidates, not undocumented options. They still need the full
 version/persistence design and an engine idempotence test.
@@ -96,6 +98,13 @@ locale, and package-restriction state. After allowing state to settle and using
 `svc power reboot userrequested`, the same state persisted. These services use
 write-behind files under `/data/system`.
 
+Per-app NetworkPolicy UID rows are a separate negative result. Root inspection
+of the emulator-only debug image confirmed the blacklist row was written to
+`/data/system/netpolicy.xml`; after graceful reboot Android rewrote the file
+without user-installed UID rows. This reproduced with F-Droid and Plezy while
+global Data Saver persisted. Consequently import preserves those UID rows as
+observed-only evidence and no per-app Data Saver option exists.
+
 Rules derived from the test:
 
 1. never hard-reboot immediately after converge;
@@ -112,16 +121,17 @@ On 2026-07-16, snapshot-v2 capture on that stock Pixel 9 Pro (SDK 36) also
 completed the narrow read-only surface for `cmd uimode night`, both Private DNS
 settings, four role-holder queries, all disabled owner-user packages,
 `cmd deviceidle whitelist`, and `pm list permissions -d -g -f`. The structured
-package dump contained 611 per-user permission records; missing proto2 scalar
+package dump contained 612 per-user permission records; missing proto2 scalar
 IDs decoded semantically as owner user 0. PackageManager listed 268
 dangerous/runtime permission definitions. Intersecting those definitions with
 the broad package grant set produced valid active grant declarations while
-omitting normal and app-defined grants. Automatic dark mode and seven disabled
-system packages were retained as evidence and explicitly omitted rather than
-misrepresented. The generated Nix evaluated successfully and its complete
-read-only plan against the same phone was a no-op. Caching one package dump per
-permission-bearing app reduced that realistic 124-app permission audit to 48
-seconds. No device mutation was performed.
+omitting normal, app-defined, and hard/soft restricted grants. The final
+capture also classified stock-only denied-permission rows without a flags
+suffix, platform AppOps identities, and invalid manifest `autoVerify` domains
+without an unparsed row. Automatic dark mode and seven disabled system packages
+were retained as evidence and explicitly omitted rather than misrepresented.
+The generated Nix evaluated successfully and its complete read-only plan
+against the same phone was a no-op. No device mutation was performed.
 
 The same capture confirmed an upstream diagnostic limitation: AOSP declares
 `UserInfoProto.first_install_time_ms` as signed `int32`, and the stock Pixel's

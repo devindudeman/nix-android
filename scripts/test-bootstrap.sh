@@ -30,7 +30,7 @@ printf '%s\n' "$*" > "$TEST_CAPTURES/assist.args"
 EOF
 
 jq -n '{
-  manifestVersion: 2,
+  manifestVersion: 3,
   device: {name: "fixture", user: 0, abi: "x86_64"},
   apps: {
     cleanup: "uninstall",
@@ -41,10 +41,17 @@ jq -n '{
   android: {
     darkMode: true,
     disabled: ["org.example.managed"],
+    suspended: [],
+    unsuspended: [],
     deviceidleExempt: ["org.example.managed"],
     roles: {browser: "org.example.managed"},
     settings: {global: {example: "value"}, secure: {}, system: {}},
-    permissions: {"org.example.managed": {grant: ["android.permission.CAMERA"], revoke: []}}
+    permissions: {"org.example.managed": {grant: ["android.permission.CAMERA"], revoke: [], flags: {}}},
+    appOps: {"org.example.managed": {RUN_IN_BACKGROUND: "ignore"}},
+    locales: {"org.example.managed": ["en-US"]},
+    inputMethod: {enabled: [], disabled: [], default: null},
+    dataSaver: {enabled: true},
+    appLinks: {"org.example.managed": {allowed: false, selected: ["example.com"], unselected: []}}
   }
 }' > "$tmp/manifest.json"
 
@@ -62,7 +69,10 @@ jq -e '
   and .apps.attended == [] and .apps.play == [] and .apps.cleanup == "none"
   and .android == {
     settings: {global: {}, secure: {}, system: {}}, darkMode: null,
-    roles: {}, disabled: [], permissions: {}, deviceidleExempt: []
+    roles: {}, disabled: [], suspended: [], unsuspended: [],
+    permissions: {}, appOps: {}, locales: {},
+    inputMethod: {enabled: [], disabled: [], default: null},
+    dataSaver: {enabled: null}, appLinks: {}, deviceidleExempt: []
   }
 ' "$tmp/captures/engine-2.json" >/dev/null
 grep -Fq "$tmp/manifest.json --serial fixture --watch" "$tmp/captures/assist.args"

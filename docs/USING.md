@@ -221,16 +221,60 @@ host-specific modules.
     };
 
     packages.disabled = [ "com.example.unwanted" ];
+    packages.suspended = [ "com.example.pause-me" ];
+    packages.unsuspended = [ ];
+
+    locales."org.mozilla.fennec_fdroid" = [ "en-US" ];
+    inputMethod = {
+      enabled = [ "org.futo.inputmethod.latin/.LatinIME" ];
+      disabled = [ ];
+      default = "org.futo.inputmethod.latin/.LatinIME";
+    };
+    dataSaver.enabled = true;
+    appLinks."org.mozilla.fennec_fdroid" = {
+      allowed = true;
+      selected = [ ];
+      unselected = [ "example.com" ];
+    };
 
     permissions."com.termux" = {
       grant = [ "android.permission.POST_NOTIFICATIONS" ];
       revoke = [ ];
+      # Exact state for the writable subset only. Android-owned flags shown by
+      # dumpsys remain untouched.
+      flags."android.permission.POST_NOTIFICATIONS" = [ "user-set" ];
     };
+
+    appOps."com.termux".RUN_IN_BACKGROUND = "allow";
 
     batteryOptimization.exempt = [ "com.termux" ];
   };
 }
 ```
+
+Permission flags support `review-required`, `revoked-compat`,
+`revoke-when-requested`, `user-fixed`, and `user-set`, exactly matching the
+writable names advertised by PackageManager. A declared flag list is exact for
+that writable subset: switch sets listed flags and clears other writable flags,
+without touching Android-owned flags such as `SYSTEM_FIXED` or restriction
+exemptions. App-op values are `allow`, `ignore`, `deny`, `default`, or
+`foreground`; declarations are package-level and do not rewrite UID-wide modes.
+
+`android.locales` owns the exact locale list for each named package; `[]`
+returns that app to the system language. Input methods use Android component
+names (`package/.Service`): every selected default must also be listed in
+`enabled`, and an entry cannot be both enabled and disabled. `dataSaver.enabled`
+manages only the global Data Saver switch. Per-app UID allow/deny lists are
+captured by import but are not declarable because they were removed across a
+graceful reboot for user-installed apps on the mandatory AOSP bench.
+
+Package suspension is scoped to the adb-shell suspending authority. The
+`suspended` list adds that authority and `unsuspended` removes it; neither
+claims to override Digital Wellbeing, parental controls, or an administrator.
+App-link declarations own only the per-user handling toggle and explicit user
+domain selection. Android's verifier results, domain signatures, and shell
+force-approval states remain OS-owned evidence. A domain may be selected for
+only one declared package.
 
 The evaluator rejects duplicate app sources, stale lock sources or repository
 fingerprints, lock/device ABI mismatches, conflicting permission intent, and
@@ -346,7 +390,7 @@ in three resumable phases:
 
 1. Install or upgrade hash-addressed managed APKs. This derived phase forces
    `apps.cleanup = "none"`, removes attended assertions, and applies no Android
-   settings, roles, permissions, disablement, or battery exemptions.
+   state.
 2. Run the Play queue in watch mode. Each missing official listing opens in
    declaration order, but installation remains an explicit on-device action.
 3. Apply the complete manifest through the normal convergence engine, including
@@ -376,21 +420,43 @@ nix run .#android-rebuild -- \
   import --serial SERIAL \
   --snapshot-out ~/Documents/phone-migration/pixel.snapshot.json \
   --report-out ~/Documents/phone-migration/pixel.coverage.json \
+  --obtainium-export ~/Documents/phone-migration/obtainium-export.json \
+  --app-manager-export ~/Documents/phone-migration/app-manager-list.json \
   > imported-pixel.nix)
 ```
 
 Import is read-only. It decodes AOSP's structured package dump into a versioned
 snapshot containing package versions, split and per-user state, install-source
-evidence, granted-permission observations, and narrow Android state reads. The
+evidence, granted-permission observations, writable permission flags,
+package-level app-op evidence, and narrow Android state reads. The
 generated Nix is more conservative: packages attributed to
 `com.android.vending` become
 `apps.play` presence assertions and all other managed-user third-party apps
 become `apps.attended`. Likely main-F-Droid and Obtainium entries also appear
 as commented curation candidates. It also renders representable dark mode and
 Private DNS, unambiguous default roles, disabled third-party packages,
-user-added battery exemptions, and currently granted runtime permissions.
+user-added battery exemptions, currently granted runtime permissions, writable
+permission flags, and non-default package app-op overrides.
+It also emits adb-shell package suspension, non-default per-app locales,
+enabled/selected input methods, global Data Saver, and non-default user-owned
+app-link state. Per-app Data Saver UID rows and Android-owned app-link
+verification remain coverage evidence rather than active declarations.
+An optional Obtainium schema-v2 export restores supported GitHub and Codeberg
+or self-hosted Forgejo release declarations when the current installer also
+records Obtainium. Obtainium calls the Forgejo adapter `Codeberg` in exported
+source identifiers. Unsupported or conflicting sources stay attended. The
+adapter discards complete `settings`, `additionalSettings`, timestamps,
+credentials, unsupported host/source details, and arbitrary export fields.
+An optional App Manager JSON app-list export contributes signing-certificate
+SHA-256 evidence and a second installer observation. Signers are emitted as
+comments and coverage facts because plan does not yet enforce installed signer
+identity.
 Permission rendering intersects the package protobuf's broad grant set with
-PackageManager's dangerous/runtime definitions and never infers revocations.
+PackageManager's dangerous/runtime definitions, omits hard/soft restricted
+grants whose installer/platform allowlisting is not portable, and never infers
+revocations. If any permission-restriction metadata is unparsed, the importer
+omits all automatic grants rather than assuming the remaining definitions are
+unrestricted.
 Automatic dark mode, system-owned state, ambiguous rows, and unsupported facts
 are retained or reported instead of guessed. Installer attribution cannot
 prove a repository, release URL, or signing trust anchor.
@@ -398,16 +464,49 @@ prove a repository, release URL, or signing trust anchor.
 The snapshot and generated inventory are personal data. Keep both out of a
 public repository and copy only declarations you deliberately choose to
 publish. See [IMPORT.md](./IMPORT.md) for the schema, evidence boundaries, and
-planned adapters.
+export adapters.
 For the field-by-field ADB read/write/import classification, see
 [CAPABILITIES.md](./CAPABILITIES.md).
 
-The optional coverage JSON contains no adb serial and is deterministic for a
-given snapshot. It summarizes facts classified as `declarable`,
-`observed-only`, `ambiguous`, or `unreachable`; `itemCount` records the number
-of affected entries when a finite observed count exists. It is an audit and
-regression artifact, not additional desired state. Treat it as private because
-its device metadata and counts can still identify a personal setup.
+The optional coverage JSON uses schema version 1 and contains no adb serial. It
+is deterministic for a given snapshot and has this top-level shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "snapshotSchemaVersion": 2,
+  "device": {
+    "model": "Pixel 6",
+    "product": "oriole",
+    "abi": "arm64-v8a",
+    "sdk": 37,
+    "securityPatch": "2026-07-05",
+    "managedUser": 0
+  },
+  "summary": {
+    "declarable": 0,
+    "observed-only": 0,
+    "ambiguous": 0,
+    "unreachable": 0
+  },
+  "facts": [
+    {
+      "surface": "android.example",
+      "status": "declarable",
+      "itemCount": 1,
+      "reason": "example explanation"
+    }
+  ]
+}
+```
+
+`status` is one of `declarable`, `observed-only`, `ambiguous`, or
+`unreachable`; `itemCount` is an integer or `null` when no finite observed
+count exists. New fields or meanings require a coverage `schemaVersion` bump;
+`snapshotSchemaVersion` records the input schema interpreted by the renderer.
+The report is an audit and regression artifact, not additional desired state.
+Treat it as private because its device metadata and counts can still identify
+a personal setup.
 
 ## Lock and signature behavior
 

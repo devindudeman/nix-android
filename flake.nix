@@ -98,6 +98,7 @@
               runtimeInputs = with pkgs; [
                 android-tools
                 coreutils
+                gawk
                 gnugrep
                 gnused
                 importPython
@@ -178,7 +179,9 @@
                 deadline=$((SECONDS + 300))
                 until [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] \
                   && pm=$(adb -s emulator-5554 shell pm path android 2>/dev/null) \
-                  && grep -q '^package:' <<<"$pm"; do
+                  && grep -q '^package:' <<<"$pm" \
+                  && netpolicy=$(adb -s emulator-5554 shell cmd netpolicy get restrict-background 2>/dev/null) \
+                  && grep -q '^Restrict background status:' <<<"$netpolicy"; do
                   kill -0 "$emulator_pid" 2>/dev/null || { wait "$emulator_pid"; exit $?; }
                   [ "$SECONDS" -lt "$deadline" ] || { echo "emulator boot timed out after five minutes" >&2; exit 1; }
                   sleep 2
@@ -214,6 +217,7 @@
               "$cli" --help >/dev/null
               env -i PATH=/nope "$cli" --help >/dev/null
               grep -Fq ${pkgs.coreutils}/bin "$cli"
+              grep -Fq ${pkgs.gawk}/bin "$cli"
               grep -Fq ${pkgs.gnugrep}/bin "$cli"
               grep -Fq ${pkgs.gnused}/bin "$cli"
               converge=${
@@ -223,6 +227,7 @@
                   "${inputs.self.androidConfigurations.darwin-smoke.converge}/bin/nix-android-converge-darwin-smoke"
               }
               grep -Fq ${pkgs.coreutils}/bin "$converge"
+              grep -Fq ${pkgs.gawk}/bin "$converge"
               grep -Fq ${pkgs.gnugrep}/bin "$converge"
               grep -Fq ${pkgs.gnused}/bin "$converge"
               ! "$cli" plan --flake ${inputs.self}#bench >/dev/null 2>&1
@@ -238,6 +243,10 @@
               grep -q 'only valid with import' snapshot-err
               ! "$cli" build --flake x#bench --report-out nope.json >/dev/null 2>report-err
               grep -q 'only valid with import' report-err
+              ! "$cli" build --flake x#bench --obtainium-export nope.json >/dev/null 2>obtainium-err
+              grep -q 'only valid with import' obtainium-err
+              ! "$cli" build --flake x#bench --app-manager-export nope.json >/dev/null 2>app-manager-err
+              grep -q 'only valid with import' app-manager-err
               ! "$cli" build --flake x#bench --watch >/dev/null 2>watch-err
               grep -q 'only valid with assist' watch-err
               touch $out
@@ -246,6 +255,7 @@
               pkgs.runCommand "nix-android-import-snapshot" { nativeBuildInputs = [ importPython ]; }
                 ''
                   python3 ${inputs.self}/scripts/test-package-snapshot.py
+                  python3 ${inputs.self}/scripts/test-provenance-adapters.py
                   touch $out
                 '';
             assist-safety =
@@ -276,12 +286,15 @@
                   grep -q 'invalid or unsupported manifest' error
 
                   jq -n '{
-                    manifestVersion: 2,
+                    manifestVersion: 3,
                     device: {name: "test", user: 0, abi: "x86_64"},
                     apps: {cleanup: "none", attended: [], play: [], managed: []},
                     android: {
                       darkMode: null, disabled: [], deviceidleExempt: [], roles: {},
-                      settings: {global: {}, secure: {}, system: {}}, permissions: {}
+                      settings: {global: {}, secure: {}, system: {}},
+                      permissions: {}, appOps: {}, suspended: [], unsuspended: [],
+                      locales: {}, inputMethod: {enabled: [], disabled: [], default: null},
+                      dataSaver: {enabled: null}, appLinks: {}
                     }
                   }' > valid.json
                   mkdir fakebin
@@ -306,10 +319,21 @@
                   reject unknown-managed-field '.apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk",future:true}]'
                   reject unknown-permission-field '.android.permissions."org.example.app" = {
-                    grant:[], revoke:[], future:[]}'
+                    grant:[], revoke:[], flags:{}, future:[]}'
                   reject missing-setting-namespace 'del(.android.settings.system)'
                   reject permission-conflict '.android.permissions."org.example.app" = {
-                    grant:["android.permission.CAMERA"], revoke:["android.permission.CAMERA"]}'
+                    grant:["android.permission.CAMERA"], revoke:["android.permission.CAMERA"], flags:{}}'
+                  reject suspension-conflict '.android.suspended = ["org.example.app"] |
+                    .android.unsuspended = ["org.example.app"]'
+                  reject duplicate-disabled '.android.disabled = ["org.example.app", "org.example.app"]'
+                  reject duplicate-deviceidle '.android.deviceidleExempt = ["org.example.app", "org.example.app"]'
+                  reject invalid-locale '.android.locales."org.example.app" = ["en_US"]'
+                  reject invalid-ime '.android.inputMethod.default = "org.example.ime/.Service"'
+                  reject app-link-conflict '.android.appLinks."org.example.app" = {
+                    allowed:null, selected:["example.com"], unselected:["example.com"]}'
+                  reject app-link-owner-conflict '.android.appLinks = {
+                    "org.example.one": {allowed:null, selected:["example.com"], unselected:[]},
+                    "org.example.two": {allowed:null, selected:["example.com"], unselected:[]}}'
                   reject control-identifier '.apps.attended = ["org.example.app\n"]'
                   reject empty-setting '.android.settings.global.example = ""'
                   reject null-setting '.android.settings.global.example = "null"'
@@ -410,6 +434,61 @@
                   "android.permission.CAMERA"
                   "android.permission.CAMERA"
                 ];
+              };
+              assert rejects {
+                device.name = "suspension-conflict";
+                device.abi = "x86_64";
+                android.packages.suspended = [ "org.example.app" ];
+                android.packages.unsuspended = [ "org.example.app" ];
+              };
+              assert rejects {
+                device.name = "duplicate-disabled";
+                device.abi = "x86_64";
+                android.packages.disabled = [
+                  "org.example.app"
+                  "org.example.app"
+                ];
+              };
+              assert rejects {
+                device.name = "duplicate-deviceidle";
+                device.abi = "x86_64";
+                android.batteryOptimization.exempt = [
+                  "org.example.app"
+                  "org.example.app"
+                ];
+              };
+              assert rejects {
+                device.name = "invalid-locale";
+                device.abi = "x86_64";
+                android.locales."org.example.app" = [ "en_US" ];
+              };
+              assert rejects {
+                device.name = "noncanonical-locale";
+                device.abi = "x86_64";
+                android.locales."org.example.app" = [ "EN-us" ];
+              };
+              assert rejects {
+                device.name = "truncated-locale";
+                device.abi = "x86_64";
+                android.locales."org.example.app" = [ "en-a" ];
+              };
+              assert rejects {
+                device.name = "invalid-ime-default";
+                device.abi = "x86_64";
+                android.inputMethod.default = "org.example.ime/.Service";
+              };
+              assert rejects {
+                device.name = "duplicate-app-link-owner";
+                device.abi = "x86_64";
+                android.appLinks = {
+                  "org.example.one".selected = [ "example.com" ];
+                  "org.example.two".selected = [ "example.com" ];
+                };
+              };
+              assert rejects {
+                device.name = "noncanonical-app-link";
+                device.abi = "x86_64";
+                android.appLinks."org.example.app".selected = [ "Example.COM" ];
               };
               assert rejects {
                 device.name = "release-source-conflict";

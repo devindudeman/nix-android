@@ -28,10 +28,12 @@ mutation test bench.
 - GitHub/Gitea release APKs and local APK files
 - Google Play apps as user-confirmed presence assertions with Play-specific assistance
 - other attended apps as generic presence assertions
+- credential-free Obtainium release-source and App Manager signer import adapters
 - raw Android settings keys, dark mode, and Private DNS
 - default browser, SMS, dialer, and home roles
-- runtime permission grants and revocations
-- package disablement and battery-optimization exemptions
+- runtime permission grants/revocations, writable permission flags, and package app-ops
+- per-app locales, input-method selection, global Data Saver, and user app-link choices
+- package disablement/suspension and battery-optimization exemptions
 - optional cleanup of undeclared user-installed apps
 - resumable wiped-device bootstrap across reproducible and consent-bound apps
 
@@ -64,6 +66,10 @@ ensure-only, attended, and unreachable state.
     permissions."com.termux".grant = [
       "android.permission.POST_NOTIFICATIONS"
     ];
+    permissions."com.termux".flags."android.permission.POST_NOTIFICATIONS" = [ "user-set" ];
+    appOps."com.termux".RUN_IN_BACKGROUND = "allow";
+    locales."com.termux" = [ "en-US" ];
+    dataSaver.enabled = true;
     batteryOptimization.exempt = [ "com.termux" ];
   };
 }

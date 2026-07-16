@@ -14,13 +14,20 @@ state from the complete manifest in its final phase:
 
 - managed APK presence and upgrades to the locked version floor
 - raw declared settings keys, dark mode, Private DNS, and default app roles
-- explicit runtime permission grants and revocations
+- explicit runtime permission grants/revocations and writable policy flags
+- package-level app-op modes
+- per-app locale lists, input-method enablement/selection, and global Data Saver
+- adb-shell package suspension/unsuspension and user-owned app-link choices
 
 Pins are floors, not exact versions. A newer installed app is accepted; Android
 user builds do not permit ordinary downgrades.
 
-Permission declarations are reasserted after a managed install or upgrade,
-because a package transition can change runtime-permission state.
+Permission and app-op declarations are reasserted after a managed install or
+upgrade, because a package transition can change that state. Permission-flag
+declarations own only the five flags PackageManager exposes for shell writes;
+system-fixed, restriction-exemption, and other Android-owned flags are never
+cleared. App-op declarations are package-level and do not rewrite UID-wide
+modes, which often derive from runtime permission state.
 
 `android.darkMode` is the user-scope exception: Android's `cmd uimode night`
 interface has no `--user` argument. The v1 engine requires the declared user to
@@ -38,6 +45,12 @@ Battery exemption is the one v1 option whose underlying Android primitive is
 not owner-profile-scoped: DeviceIdle stores a global package/appId allowlist. If
 the same package exists in a work or private profile, the exemption can affect
 that profile too.
+
+`android.packages.suspended` and `unsuspended` reconcile only the
+`com.android.shell` suspending authority. Android can simultaneously retain a
+different suspender, so `unsuspended` does not promise the package is globally
+unsuspended. App-link state likewise excludes verifier/force-approval state;
+only owner-user handling and selection are managed.
 
 `apps.cleanup = "none"` is additive. `"uninstall"` removes undeclared
 third-party apps for owner user 0 and is intentionally destructive; always
@@ -99,8 +112,8 @@ Play remains the last installer.
 - split APK/app-bundle installation and device-to-device APK extraction
 - GrapheneOS exploit-protection toggles not exposed to adb shell
 - exact Quick Settings layouts: SystemUI reverted tested writes
-- Wi-Fi, locale, input method, app-ops, suspension, and network-policy options;
-  some primitives are verified, but no public module exists yet
+- Wi-Fi declarations and per-app Data Saver UID policy; the latter passes
+  read-back but loses user-installed rows across the mandatory AOSP reboot gate
 
 Private Space inventory has been readable in testing, but it is deliberately
 outside the v1 engine until multi-user behavior is proven across supported

@@ -23,7 +23,7 @@ done
 # Validate every field this helper consumes before the first adb call.
 if ! jq -e '
   def package: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+\\z");
-  .manifestVersion == 2
+  .manifestVersion == 3
   and .device.user == 0
   and (.device.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64"))
   and (.apps.play | type == "array" and all(.[]; package)

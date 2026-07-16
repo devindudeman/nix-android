@@ -13,6 +13,17 @@ from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 PACKAGE_NAME = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
 SYSTEM_PACKAGE_NAME = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*")
 ROLE_NAMES = {"browser", "sms", "dialer", "home"}
+COMPONENT_NAME = re.compile(
+    r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+/[.]?[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)*"
+)
+LOCALE_TAG = re.compile(
+    r"[a-z]{2,8}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?"
+    r"(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*"
+    r"(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?"
+)
+DOMAIN_NAME = re.compile(
+    r"(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+)
 
 
 # Wire numbers and types come from AOSP's Apache-2.0 licensed package.proto:
@@ -251,7 +262,332 @@ def normalize_android(
     }
 
 
-def normalize(dump, third_party, installed, device, android):
+def normalize_permission_details(lines, managed_user):
+    states = {}
+    unparsed = []
+    package = None
+    active_user = None
+    in_runtime_permissions = False
+    managed_user_seen = False
+    for line in lines:
+        marker = re.fullmatch(r"### nix-android package ([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)", line)
+        if marker:
+            if package is not None and not managed_user_seen:
+                unparsed.append(f"{package}: managed user section not found")
+            package = marker.group(1)
+            active_user = None
+            in_runtime_permissions = False
+            managed_user_seen = False
+            continue
+        user = re.match(r"^\s+User (\d+):", line)
+        if user:
+            active_user = int(user.group(1))
+            managed_user_seen |= active_user == managed_user
+            in_runtime_permissions = False
+            continue
+        if re.match(r"^\s+User all:", line):
+            active_user = None
+            in_runtime_permissions = False
+            continue
+        if re.match(r"^\s+User\b", line):
+            unparsed.append(f"{package}: {line.strip()}")
+            active_user = None
+            in_runtime_permissions = False
+            continue
+        if line.strip() == "runtime permissions:":
+            in_runtime_permissions = package is not None and active_user == managed_user
+            continue
+        if "runtime permissions" in line:
+            unparsed.append(f"{package}: {line.strip()}")
+            in_runtime_permissions = False
+            continue
+        if not in_runtime_permissions:
+            continue
+        if not line.startswith("        "):
+            in_runtime_permissions = False
+            continue
+        match = re.fullmatch(
+            r"\s+([A-Za-z0-9_.]+): granted=(true|false)(?:, flags=\[\s*([A-Z0-9_|]*)\s*\])?",
+            line,
+        )
+        if not match:
+            if line.strip():
+                unparsed.append(f"{package}: {line.strip()}")
+            continue
+        flags = match.group(3).split("|") if match.group(3) else []
+        states.setdefault(package, []).append(
+            {
+                "permission": match.group(1),
+                "granted": match.group(2) == "true",
+                "flags": sorted(flags),
+            }
+        )
+    if package is not None and not managed_user_seen:
+        unparsed.append(f"{package}: managed user section not found")
+    return {
+        package: sorted(entries, key=lambda entry: entry["permission"])
+        for package, entries in sorted(states.items())
+    }, sorted(set(unparsed))
+
+
+def normalize_permission_restrictions(lines):
+    """Read PermissionInfo hard/soft restriction bits from dumpsys package permissions."""
+    restrictions = {}
+    unparsed = []
+    permission = None
+    for line in lines:
+        header = re.fullmatch(r"  Permission \[([^\]\r\n]+)\] \([^)]+\):", line)
+        if header:
+            if permission is not None:
+                unparsed.append(f"{permission}: missing PermissionInfo flags")
+            permission = header.group(1)
+            continue
+        if line.startswith("  Permission ["):
+            unparsed.append(line.strip())
+            permission = None
+            continue
+        if permission is None:
+            continue
+        flags = re.fullmatch(r"    flags=0x([0-9a-fA-F]+)", line)
+        if flags:
+            value = int(flags.group(1), 16)
+            names = []
+            # PermissionInfo.FLAG_HARD_RESTRICTED / FLAG_SOFT_RESTRICTED.
+            # https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/content/pm/PermissionInfo.java
+            if value & 0x4:
+                names.append("hard-restricted")
+            if value & 0x8:
+                names.append("soft-restricted")
+            if names:
+                restrictions[permission] = names
+            permission = None
+    if permission is not None:
+        unparsed.append(f"{permission}: missing PermissionInfo flags")
+    return dict(sorted(restrictions.items())), sorted(set(unparsed))
+
+
+def normalize_app_ops(lines, managed_user):
+    app_ops = {}
+    unparsed = []
+    derived = []
+    active_user = None
+    package = None
+    for line in lines:
+        uid = re.fullmatch(r"  Uid (?:u(\d+)[a-z](\d+)|(\d+)):", line)
+        if uid:
+            active_user = int(uid.group(1)) if uid.group(1) is not None else int(uid.group(3)) // 100000
+            package = None
+            continue
+        if line.startswith("  Uid "):
+            unparsed.append(line.strip())
+            active_user = None
+            package = None
+            continue
+        package_line = re.fullmatch(
+            r"    Package ([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*):", line
+        )
+        if package_line:
+            package = package_line.group(1) if active_user == managed_user else None
+            continue
+        if line.startswith("    Package "):
+            unparsed.append(line.strip())
+            package = None
+            continue
+        if package is None or not line.startswith("      "):
+            continue
+        operation = re.fullmatch(
+            r"      ([A-Z][A-Z0-9_]*) \((allow|ignore|deny|default|foreground)\):\s*",
+            line,
+        )
+        if operation:
+            app_ops.setdefault(package, {})[operation.group(1)] = operation.group(2)
+        elif re.fullmatch(
+            r"      [A-Z][A-Z0-9_]* \((allow|ignore|deny|default|foreground) / switch [A-Z][A-Z0-9_]*=(allow|ignore|deny|default|foreground)\):\s*",
+            line,
+        ):
+            derived.append(f"{package}: {line.strip()}")
+        elif re.match(r"^      [A-Z][A-Z0-9_]* \(", line):
+            unparsed.append(f"{package}: {line.strip()}")
+    return (
+        {
+            package: dict(sorted(ops.items()))
+            for package, ops in sorted(app_ops.items())
+        },
+        sorted(set(unparsed)),
+        sorted(set(derived)),
+    )
+
+
+def normalize_app_locales(lines, managed_user):
+    locales = {}
+    unparsed = []
+    package = None
+    for line in lines:
+        marker = re.fullmatch(
+            r"### nix-android package ([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)", line
+        )
+        if marker:
+            package = marker.group(1)
+            continue
+        if not line or package is None:
+            continue
+        match = re.fullmatch(
+            rf"Locales for {re.escape(package)} for user (\d+) are \[(.*)\]", line
+        )
+        if not match or int(match.group(1)) != managed_user:
+            unparsed.append(f"{package}: {line}")
+            continue
+        tags = [] if not match.group(2) else match.group(2).split(",")
+        if not all(len(tag) <= 100 and LOCALE_TAG.fullmatch(tag) for tag in tags):
+            unparsed.append(f"{package}: {line}")
+            continue
+        locales[package] = tags
+    return dict(sorted(locales.items())), sorted(set(unparsed))
+
+
+def normalize_input_method(enabled_lines, selected):
+    enabled = sorted(
+        {line.strip() for line in enabled_lines if COMPONENT_NAME.fullmatch(line.strip())}
+    )
+    unparsed = sorted(
+        {line for line in enabled_lines if line and not COMPONENT_NAME.fullmatch(line.strip())}
+    )
+    selected = selected.strip()
+    if selected in {"", "null"}:
+        selected = None
+    elif not COMPONENT_NAME.fullmatch(selected):
+        unparsed.append(f"selected: {selected}")
+        selected = None
+    return {"enabled": enabled, "selected": selected, "unparsed": sorted(set(unparsed))}
+
+
+def _uid_list(line, prefix):
+    match = re.fullmatch(
+        re.escape(prefix) + r": (none|\d+(?: \d+)*)", line.strip()
+    )
+    if not match:
+        raise ValueError(f"invalid network-policy evidence: {line!r}")
+    return [] if match.group(1) == "none" else sorted({int(uid) for uid in match.group(1).split()})
+
+
+def normalize_network_policy(status, restricted, exempt):
+    status_match = re.fullmatch(
+        r"Restrict background status: (enabled|disabled)", status.strip()
+    )
+    if not status_match:
+        raise ValueError(f"invalid Data Saver evidence: {status!r}")
+    return {
+        "enabled": status_match.group(1) == "enabled",
+        "restrictedUids": _uid_list(
+            restricted, "Restrict background blacklisted UIDs"
+        ),
+        "exemptUids": _uid_list(exempt, "Restrict background whitelisted UIDs"),
+    }
+
+
+def normalize_app_links(lines, managed_user):
+    links = {}
+    unparsed = []
+    package = None
+    section = None
+    domain_packages = set()
+    managed_user_packages = set()
+    allowed_packages = set()
+    for line in lines:
+        marker = re.fullmatch(
+            r"### nix-android package ([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)", line
+        )
+        if marker:
+            package = marker.group(1)
+            links[package] = {
+                "allowed": None,
+                "invalidAutoVerifyDomains": [],
+                "selected": [],
+                "unselected": [],
+                "verification": {},
+            }
+            section = None
+            continue
+        if package is None:
+            if line:
+                unparsed.append(line)
+            continue
+        if line == f"  {package}:":
+            continue
+        if re.fullmatch(r"    ID: \S+", line) or re.fullmatch(
+            r"    Signatures: \[.*\]", line
+        ):
+            continue
+        if line == "    Domain verification state:":
+            section = "verification"
+            domain_packages.add(package)
+            continue
+        if line == "    Invalid autoVerify domains:":
+            section = "invalid-auto-verify"
+            continue
+        user = re.fullmatch(r"    User (\d+):", line)
+        if user:
+            section = "user" if int(user.group(1)) == managed_user else None
+            if section == "user":
+                managed_user_packages.add(package)
+            continue
+        allowed = re.fullmatch(
+            r"      Verification link handling allowed: (true|false)", line
+        )
+        if allowed and section == "user":
+            links[package]["allowed"] = allowed.group(1) == "true"
+            allowed_packages.add(package)
+            continue
+        if line == "        Enabled:" and section == "user":
+            section = "selected"
+            continue
+        if line == "        Disabled:" and section in {"user", "selected"}:
+            section = "unselected"
+            continue
+        if line == "      Selection state:" and section == "user":
+            continue
+        domain = re.fullmatch(r"          (\S+)", line)
+        if domain and section in {"selected", "unselected"}:
+            value = domain.group(1)
+            if DOMAIN_NAME.fullmatch(value):
+                links[package][section].append(value)
+            else:
+                unparsed.append(f"{package}: {line.strip()}")
+            continue
+        invalid_domain = re.fullmatch(r"      (\S.*)", line)
+        if invalid_domain and section == "invalid-auto-verify":
+            value = invalid_domain.group(1)
+            if len(value) <= 2048:
+                links[package]["invalidAutoVerifyDomains"].append(value)
+            else:
+                unparsed.append(f"{package}: invalid autoVerify domain exceeded 2048 bytes")
+            continue
+        verification = re.fullmatch(r"      (\S+): (\S+)", line)
+        if verification and section == "verification":
+            domain, state = verification.groups()
+            if DOMAIN_NAME.fullmatch(domain):
+                links[package]["verification"][domain] = state
+            else:
+                unparsed.append(f"{package}: {line.strip()}")
+            continue
+        if line:
+            unparsed.append(f"{package}: {line.strip()}")
+    for state in links.values():
+        state["invalidAutoVerifyDomains"] = sorted(
+            set(state["invalidAutoVerifyDomains"])
+        )
+        state["selected"] = sorted(set(state["selected"]))
+        state["unselected"] = sorted(set(state["unselected"]))
+        state["verification"] = dict(sorted(state["verification"].items()))
+    for name in sorted(domain_packages):
+        if name not in managed_user_packages:
+            unparsed.append(f"{name}: managed user app-link section not found")
+        elif name not in allowed_packages:
+            unparsed.append(f"{name}: app-link allowed state not found")
+    return dict(sorted(links.items())), sorted(set(unparsed))
+
+
+def normalize(dump, third_party, installed, device, android, permission_details, app_ops):
     invalid_third_party = sorted(
         name for name in third_party if not PACKAGE_NAME.fullmatch(name)
     )
@@ -354,6 +690,7 @@ def normalize(dump, third_party, installed, device, android):
                         else -1
                     ),
                 ),
+                "runtimePermissionStates": permission_details.get(package.name, []),
                 "thirdPartyForManagedUser": is_third_party,
             }
         )
@@ -363,7 +700,14 @@ def normalize(dump, third_party, installed, device, android):
         "schemaVersion": 2,
         "device": device,
         "android": android
-        | {"installedPackagesForManagedUser": sorted(installed)},
+        | {
+            "installedPackagesForManagedUser": sorted(installed),
+            "appOps": {
+                package: operations
+                for package, operations in app_ops.items()
+                if package in third_party
+            },
+        },
         "packages": sorted(packages, key=lambda package: package["name"]),
     }
 
@@ -386,6 +730,16 @@ def parse_args():
     parser.add_argument("--disabled", required=True, type=Path)
     parser.add_argument("--device-idle", required=True, type=Path)
     parser.add_argument("--permission-definitions", required=True, type=Path)
+    parser.add_argument("--permission-restrictions", required=True, type=Path)
+    parser.add_argument("--permission-details", required=True, type=Path)
+    parser.add_argument("--app-ops", required=True, type=Path)
+    parser.add_argument("--app-locales", required=True, type=Path)
+    parser.add_argument("--ime-enabled", required=True, type=Path)
+    parser.add_argument("--ime-default", required=True, type=Path)
+    parser.add_argument("--data-saver", required=True, type=Path)
+    parser.add_argument("--data-restricted", required=True, type=Path)
+    parser.add_argument("--data-exempt", required=True, type=Path)
+    parser.add_argument("--app-links", required=True, type=Path)
     return parser.parse_args()
 
 
@@ -403,6 +757,50 @@ def main():
     }
     dump = package_dump_class()()
     dump.ParseFromString(args.proto.read_bytes())
+    permission_details, unparsed_permission_details = normalize_permission_details(
+        args.permission_details.read_text().splitlines(), args.managed_user
+    )
+    app_ops, unparsed_app_ops, derived_app_ops = normalize_app_ops(
+        args.app_ops.read_text().splitlines(), args.managed_user
+    )
+    app_locales, unparsed_app_locales = normalize_app_locales(
+        args.app_locales.read_text().splitlines(), args.managed_user
+    )
+    app_links, unparsed_app_links = normalize_app_links(
+        args.app_links.read_text().splitlines(), args.managed_user
+    )
+    permission_restrictions, unparsed_permission_restrictions = (
+        normalize_permission_restrictions(
+            args.permission_restrictions.read_text().splitlines()
+        )
+    )
+    android = normalize_android(
+        args.night_mode.read_text(),
+        args.private_dns_mode.read_text(),
+        args.private_dns_specifier.read_text(),
+        args.roles.read_text().splitlines(),
+        args.disabled.read_text().splitlines(),
+        args.device_idle.read_text().splitlines(),
+        args.permission_definitions.read_text().splitlines(),
+    ) | {
+        "unparsedPermissionStateRows": unparsed_permission_details,
+        "runtimePermissionRestrictions": permission_restrictions,
+        "unparsedPermissionRestrictionRows": unparsed_permission_restrictions,
+        "derivedAppOpRows": derived_app_ops,
+        "unparsedAppOpRows": unparsed_app_ops,
+        "appLocales": app_locales,
+        "unparsedAppLocaleRows": unparsed_app_locales,
+        "inputMethod": normalize_input_method(
+            args.ime_enabled.read_text().splitlines(), args.ime_default.read_text()
+        ),
+        "dataSaver": normalize_network_policy(
+            args.data_saver.read_text(),
+            args.data_restricted.read_text(),
+            args.data_exempt.read_text(),
+        ),
+        "appLinks": app_links,
+        "unparsedAppLinkRows": unparsed_app_links,
+    }
     snapshot = normalize(
         dump,
         third_party,
@@ -415,15 +813,9 @@ def main():
             "securityPatch": args.security_patch,
             "managedUser": args.managed_user,
         },
-        normalize_android(
-            args.night_mode.read_text(),
-            args.private_dns_mode.read_text(),
-            args.private_dns_specifier.read_text(),
-            args.roles.read_text().splitlines(),
-            args.disabled.read_text().splitlines(),
-            args.device_idle.read_text().splitlines(),
-            args.permission_definitions.read_text().splitlines(),
-        ),
+        android,
+        permission_details,
+        app_ops,
     )
     json.dump(snapshot, fp=sys.stdout, indent=2, sort_keys=True)
     print()

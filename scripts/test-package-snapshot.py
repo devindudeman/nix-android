@@ -43,6 +43,110 @@ for fixture in fixtures.values():
         for entry in normalized["deviceIdleWhitelist"]["entries"]
         if entry["source"] == "user"
     ) == expected["userDeviceIdlePackages"]
+    package = expected["userDeviceIdlePackages"][0]
+    permission_details, unparsed_permissions = module.normalize_permission_details(
+        evidence["permissionDetails"], 0
+    )
+    app_ops, unparsed_app_ops, derived_app_ops = module.normalize_app_ops(
+        evidence["appOps"], 0
+    )
+    app_locales, unparsed_app_locales = module.normalize_app_locales(
+        evidence["appLocales"], 0
+    )
+    input_method = module.normalize_input_method(
+        evidence["inputMethodEnabled"], evidence["inputMethodSelected"]
+    )
+    data_saver = module.normalize_network_policy(
+        evidence["networkPolicyStatus"],
+        evidence["networkPolicyRestricted"],
+        evidence["networkPolicyExempt"],
+    )
+    app_links, unparsed_app_links = module.normalize_app_links(
+        evidence["appLinks"], 0
+    )
+    assert unparsed_permissions == []
+    assert unparsed_app_ops == []
+    assert derived_app_ops == []
+    assert unparsed_app_locales == []
+    assert unparsed_app_links == []
+    assert permission_details[package] == expected["permissionDetails"]
+    assert app_ops[package] == expected["appOps"]
+    assert app_locales[package] == expected["appLocales"]
+    assert input_method["enabled"] == expected["inputMethod"]["enabled"]
+    assert input_method["selected"] == expected["inputMethod"]["selected"]
+    assert data_saver == expected["dataSaver"]
+    assert app_links[package]["allowed"] == expected["appLinks"]["allowed"]
+    assert app_links[package]["selected"] == expected["appLinks"]["selected"]
+    fixture_snapshot = {
+        "schemaVersion": 2,
+        "device": {
+            "model": "Anonymized fixture",
+            "product": "fixture",
+            "abi": "arm64-v8a",
+            "sdk": 36,
+            "securityPatch": "2026-01-01",
+            "managedUser": 0,
+        },
+        "android": normalized
+        | {
+            "installedPackagesForManagedUser": [package],
+            "appOps": app_ops,
+            "derivedAppOpRows": [],
+            "unparsedAppOpRows": [],
+            "appLocales": app_locales,
+            "unparsedAppLocaleRows": [],
+            "inputMethod": input_method,
+            "dataSaver": data_saver,
+            "appLinks": app_links,
+            "unparsedAppLinkRows": [],
+            "unparsedPermissionStateRows": [],
+            "runtimePermissionRestrictions": {},
+            "unparsedPermissionRestrictionRows": [],
+        },
+        "packages": [
+            {
+                "name": package,
+                "installerName": "org.example.installer",
+                "thirdPartyForManagedUser": True,
+                "users": [{"id": 0, "suspended": False, "suspendingPackages": []}],
+                "userPermissions": [
+                    {
+                        "id": 0,
+                        "granted": [
+                            state["permission"]
+                            for state in permission_details[package]
+                            if state["granted"]
+                        ],
+                    }
+                ],
+                "runtimePermissionStates": permission_details[package],
+            }
+        ],
+    }
+    fixture_rendered, fixture_coverage = renderer.render_with_coverage(
+        fixture_snapshot
+    )
+    assert f'android.locales."{package}"' in fixture_rendered
+    assert expected["inputMethod"]["selected"] in fixture_rendered
+    assert expected["appLinks"]["selected"][0] in fixture_rendered
+    for operation, mode in expected["appOps"].items():
+        assert f'android.appOps."{package}"."{operation}" = "{mode}";' in fixture_rendered
+    for state in expected["permissionDetails"]:
+        for flag in state["flags"]:
+            assert flag.lower().replace("_", "-") in fixture_rendered
+    if any(state["granted"] for state in expected["permissionDetails"]):
+        granted = next(
+            state["permission"]
+            for state in expected["permissionDetails"]
+            if state["granted"]
+        )
+        assert granted in fixture_rendered
+    unselected_count = len(app_links[package]["unselected"])
+    assert any(
+        fact["surface"] == "android.appLinks.unselected"
+        and fact["itemCount"] == unselected_count
+        for fact in fixture_coverage["facts"]
+    )
 
 dump = module.package_dump_class()()
 package = dump.packages.add()
@@ -59,12 +163,15 @@ user = package.users.add()
 user.id = 0
 user.install_type = 1
 user.enabled_state = 3
+user.is_suspended = True
+user.suspending_package.append("com.android.shell")
 permissions = package.user_permissions.add()
 permissions.id = 0
 permissions.granted_permissions.extend(
     [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.CAMERA",
+        "android.permission.READ_SMS",
         "android.permission.INTERNET",
     ]
 )
@@ -94,9 +201,177 @@ android = module.normalize_android(
         "  + permission:android.permission.CAMERA",
         "    protectionLevel:dangerous",
         "  + permission:android.permission.POST_NOTIFICATIONS",
+        "  + permission:android.permission.READ_SMS",
+        "    protectionLevel:dangerous",
         "permission:invalid permission name",
     ],
 )
+permission_details, unparsed_permission_details = module.normalize_permission_details(
+    [
+        "### nix-android package org.example.app",
+        "    User 0: installed=true",
+        "      runtime permissions:",
+        "        android.permission.CAMERA: granted=true, flags=[ USER_SET|USER_FIXED|USER_SENSITIVE_WHEN_GRANTED]",
+        "        android.permission.POST_NOTIFICATIONS: granted=true, flags=[ USER_SENSITIVE_WHEN_GRANTED]",
+        "        com.google.android.gms.permission.CAR_FUEL: granted=false",
+        "        malformed permission state",
+        "    User 10: installed=true",
+        "      runtime permissions:",
+        "        android.permission.CAMERA: granted=false, flags=[ USER_SET]",
+    ],
+    0,
+)
+permission_restrictions, unparsed_permission_restrictions = (
+    module.normalize_permission_restrictions(
+        [
+            "  Permission [android.permission.READ_SMS] (abc123):",
+            "    sourcePackage=android",
+            "    flags=0x4",
+            "  Permission [android.permission.ACCESS_BACKGROUND_LOCATION] (def456):",
+            "    sourcePackage=android",
+            "    flags=0x8",
+            "  Permission [us.example.permission-group.ipc.sender] (ghi789):",
+            "    sourcePackage=us.example",
+            "    flags=0x0",
+        ]
+    )
+)
+assert next(
+    state
+    for state in permission_details["org.example.app"]
+    if state["permission"] == "com.google.android.gms.permission.CAR_FUEL"
+)["flags"] == []
+assert permission_restrictions == {
+    "android.permission.ACCESS_BACKGROUND_LOCATION": ["soft-restricted"],
+    "android.permission.READ_SMS": ["hard-restricted"],
+}
+assert unparsed_permission_restrictions == []
+app_ops, unparsed_app_ops, derived_app_ops = module.normalize_app_ops(
+    [
+        "  Uid u0a123:",
+        "      CAMERA: mode=allow",
+        "    Package org.example.app:",
+        "      RUN_IN_BACKGROUND (ignore): ",
+        "      ACCESS_RESTRICTED_SETTINGS (default): ",
+        "      GPS (allow / switch COARSE_LOCATION=allow): ",
+        "    Package android:",
+        "      CAMERA (allow): ",
+        "  Uid u10a123:",
+        "    Package org.example.app:",
+        "      RUN_IN_BACKGROUND (allow): ",
+    ],
+    0,
+)
+assert derived_app_ops == [
+    "org.example.app: GPS (allow / switch COARSE_LOCATION=allow):"
+]
+assert app_ops["android"] == {"CAMERA": "allow"}
+_, drifted_permission_rows = module.normalize_permission_details(
+    [
+        "### nix-android package org.example.drifted",
+        "    User #0: installed=true",
+        "      runtime-permissions:",
+    ],
+    0,
+)
+assert "org.example.drifted: managed user section not found" in drifted_permission_rows
+cross_user_permissions, drifted_cross_user_rows = module.normalize_permission_details(
+    [
+        "### nix-android package org.example.crossuser",
+        "    User 0: installed=true",
+        "      runtime permissions:",
+        "        android.permission.CAMERA: granted=true, flags=[]",
+        "    User all: installed=true",
+        "    User #10: installed=true",
+        "      runtime permissions:",
+        "        android.permission.RECORD_AUDIO: granted=true, flags=[]",
+    ],
+    0,
+)
+assert [state["permission"] for state in cross_user_permissions["org.example.crossuser"]] == [
+    "android.permission.CAMERA"
+]
+assert "org.example.crossuser: User #10: installed=true" in drifted_cross_user_rows
+drifted_app_ops_state, drifted_app_ops, drifted_derived_app_ops = (
+    module.normalize_app_ops(
+    [
+        "  Uid u0a123:",
+        "    Package org.example.owner:",
+        "      CAMERA (allow): ",
+        "  Uid [u10a123]:",
+        "    Package org.example.profile:",
+        "      RECORD_AUDIO (allow): ",
+        "    Package [org.example.drifted]:",
+    ],
+        0,
+    )
+)
+assert set(drifted_app_ops_state) == {"org.example.owner"}
+assert "Uid [u10a123]:" in drifted_app_ops
+assert "Package [org.example.drifted]:" in drifted_app_ops
+assert drifted_derived_app_ops == []
+app_locales, unparsed_app_locales = module.normalize_app_locales(
+    [
+        "### nix-android package org.example.app",
+        "Locales for org.example.app for user 0 are [en-US,fr-FR]",
+    ],
+    0,
+)
+input_method = module.normalize_input_method(
+    ["com.android.inputmethod.latin/.LatinIME"],
+    "com.android.inputmethod.latin/.LatinIME\n",
+)
+data_saver = module.normalize_network_policy(
+    "Restrict background status: enabled\n",
+    "Restrict background blacklisted UIDs: 10124 \n",
+    "Restrict background whitelisted UIDs: 9999 \n",
+)
+app_links, unparsed_app_links = module.normalize_app_links(
+    [
+        "### nix-android package org.example.app",
+        "  org.example.app:",
+        "    Invalid autoVerify domains:",
+        "      chat",
+        "      *",
+        "    Domain verification state:",
+        "      example.com: verified",
+        "    User 0:",
+        "      Verification link handling allowed: false",
+        "      Selection state:",
+        "        Enabled:",
+        "          example.com",
+        "        Disabled:",
+        "          www.example.com",
+        "      Future state: changed-format",
+    ],
+    0,
+)
+assert app_links["org.example.app"]["invalidAutoVerifyDomains"] == ["*", "chat"]
+_, drifted_app_link_rows = module.normalize_app_links(
+    [
+        "### nix-android package org.example.drifted",
+        "  org.example.drifted:",
+        "    Domain verification state:",
+        "      example.com: verified",
+        "    User 0:",
+        "      Link handling allowed: true",
+    ],
+    0,
+)
+assert "org.example.drifted: app-link allowed state not found" in drifted_app_link_rows
+android |= {
+    "unparsedPermissionStateRows": unparsed_permission_details,
+    "runtimePermissionRestrictions": permission_restrictions,
+    "unparsedPermissionRestrictionRows": unparsed_permission_restrictions,
+    "derivedAppOpRows": derived_app_ops,
+    "unparsedAppOpRows": unparsed_app_ops,
+    "appLocales": app_locales,
+    "unparsedAppLocaleRows": unparsed_app_locales,
+    "inputMethod": input_method,
+    "dataSaver": data_saver,
+    "appLinks": app_links,
+    "unparsedAppLinkRows": unparsed_app_links,
+}
 snapshot = module.normalize(
     decoded,
     {"org.example.app"},
@@ -110,6 +385,8 @@ snapshot = module.normalize(
         "managedUser": 0,
     },
     android,
+    permission_details,
+    app_ops,
 )
 
 assert snapshot["schemaVersion"] == 2
@@ -123,10 +400,30 @@ assert snapshot["android"]["disabledPackages"] == ["android", "org.example.app"]
 assert snapshot["android"]["runtimePermissionDefinitions"] == [
     "android.permission.CAMERA",
     "android.permission.POST_NOTIFICATIONS",
+    "android.permission.READ_SMS",
 ]
 assert snapshot["android"]["installedPackagesForManagedUser"] == [
     "com.example.omittedsystem",
     "org.example.app",
+]
+assert snapshot["android"]["appOps"] == {
+    "org.example.app": {
+        "ACCESS_RESTRICTED_SETTINGS": "default",
+        "RUN_IN_BACKGROUND": "ignore",
+    }
+}
+assert snapshot["android"]["appLocales"] == {
+    "org.example.app": ["en-US", "fr-FR"]
+}
+assert snapshot["android"]["inputMethod"]["selected"] == (
+    "com.android.inputmethod.latin/.LatinIME"
+)
+assert snapshot["android"]["dataSaver"]["restrictedUids"] == [10124]
+assert snapshot["android"]["appLinks"]["org.example.app"]["selected"] == [
+    "example.com"
+]
+assert snapshot["android"]["unparsedAppLinkRows"] == [
+    "org.example.app: Future state: changed-format"
 ]
 assert snapshot["android"]["unparsedPermissionDefinitionRows"] == [
     "permission:invalid permission name"
@@ -143,12 +440,30 @@ assert snapshot["packages"][0]["userPermissions"][0]["granted"] == [
     "android.permission.CAMERA",
     "android.permission.INTERNET",
     "android.permission.POST_NOTIFICATIONS",
+    "android.permission.READ_SMS",
+]
+assert snapshot["packages"][0]["runtimePermissionStates"] == [
+    {
+        "permission": "android.permission.CAMERA",
+        "granted": True,
+        "flags": ["USER_FIXED", "USER_SENSITIVE_WHEN_GRANTED", "USER_SET"],
+    },
+    {
+        "permission": "android.permission.POST_NOTIFICATIONS",
+        "granted": True,
+        "flags": ["USER_SENSITIVE_WHEN_GRANTED"],
+    },
+    {
+        "permission": "com.google.android.gms.permission.CAR_FUEL",
+        "granted": False,
+        "flags": [],
+    },
 ]
 
 framework_dump = module.package_dump_class()()
 framework_dump.packages.add().name = "android"
 framework_snapshot = module.normalize(
-    framework_dump, set(), {"android"}, snapshot["device"], android
+    framework_dump, set(), {"android"}, snapshot["device"], android, {}, {}
 )
 assert framework_snapshot["packages"][0]["name"] == "android"
 
@@ -161,6 +476,8 @@ try:
         {'org.example.bad"; builtins.abort "injected"'},
         snapshot["device"],
         android,
+        {},
+        {},
     )
 except ValueError:
     pass
@@ -174,6 +491,8 @@ try:
         {"org.example.omitted"},
         snapshot["device"],
         android,
+        {},
+        {},
     )
 except ValueError as error:
     assert "package protobuf omitted third-party package" in str(error)
@@ -182,6 +501,7 @@ else:
 
 play = decoded.packages.add()
 play.name = "com.example.play"
+play.uid = 10124
 play.installer_name = "com.android.vending"
 play_permissions = play.user_permissions.add()
 play_permissions.id = 0
@@ -197,6 +517,8 @@ rendered_snapshot = module.normalize(
     {"org.example.app", "com.example.play", "com.example.systemapp"},
     snapshot["device"],
     android,
+    permission_details,
+    app_ops,
 )
 rendered, coverage = renderer.render_with_coverage(rendered_snapshot)
 assert 'apps.play = [\n    "com.example.play"\n  ];' in rendered
@@ -211,15 +533,39 @@ assert (
     '    "android.permission.POST_NOTIFICATIONS"\n'
     "  ];"
 ) in rendered
+assert (
+    'android.permissions."org.example.app".flags."android.permission.CAMERA" = [\n'
+    '    "user-fixed"\n'
+    '    "user-set"\n'
+    "  ];"
+) in rendered
+assert (
+    'android.permissions."org.example.app".flags."android.permission.POST_NOTIFICATIONS" = [];'
+    in rendered
+)
+assert 'android.appOps."org.example.app"."RUN_IN_BACKGROUND" = "ignore";' in rendered
+assert 'android.packages.suspended = [\n    "org.example.app"\n  ];' in rendered
+assert 'android.locales."org.example.app" = [\n    "en-US"\n    "fr-FR"\n  ];' in rendered
+assert 'android.inputMethod.enabled = [\n    "com.android.inputmethod.latin/.LatinIME"\n  ];' in rendered
+assert 'android.inputMethod.default = "com.android.inputmethod.latin/.LatinIME";' in rendered
+assert "android.dataSaver.enabled = true;" in rendered
+assert 'android.dataSaver.packages."com.example.play"' not in rendered
+assert "2 per-UID Data Saver override(s)" in rendered
+assert 'android.appLinks."org.example.app" = {' in rendered
+assert "    allowed = false;" in rendered
+assert '      "example.com"' in rendered
 assert 'android.batteryOptimization.exempt = [\n    "org.example.app"\n  ];' in rendered
 assert "com.example.system" not in rendered
 assert "1 DeviceIdle row(s) were unparsed and omitted" in rendered
+assert "1 app-link row(s) were unparsed" in rendered
 assert "1 disabled system package(s)" in rendered
 assert "1 non-runtime granted-permission entries" in rendered
 assert "1 granted runtime-permission entries for system packages" in rendered
 assert "1 system-owned DeviceIdle row(s)" in rendered
 assert "1 user-added DeviceIdle row(s) for packages outside managed user 0" in rendered
 assert 'android.permission.INTERNET' not in rendered
+assert '"android.permission.READ_SMS"' not in rendered
+assert "1 restricted runtime-permission grant(s)" in rendered
 assert coverage["schemaVersion"] == 1
 assert coverage["snapshotSchemaVersion"] == 2
 assert set(coverage["summary"]) == {
@@ -237,6 +583,21 @@ assert coverage["facts"] == sorted(
     key=lambda item: (item["surface"], item["status"], item["reason"]),
 )
 assert not any("serial" in key.lower() for key in coverage["device"])
+
+incomplete_restrictions = copy.deepcopy(rendered_snapshot)
+incomplete_restrictions["android"]["unparsedPermissionRestrictionRows"] = [
+    "Permission [android.permission.CAMERA] (changed grammar):"
+]
+incomplete_rendered, incomplete_coverage = renderer.render_with_coverage(
+    incomplete_restrictions
+)
+assert 'android.permissions."org.example.app".grant' not in incomplete_rendered
+assert "restriction evidence was incomplete" in incomplete_rendered
+assert any(
+    fact["surface"] == "android.permissions.unknownRestrictionGrants"
+    and fact["status"] == "ambiguous"
+    for fact in incomplete_coverage["facts"]
+)
 
 auto_snapshot = copy.deepcopy(rendered_snapshot)
 auto_snapshot["android"]["nightMode"] = "Night mode: auto"

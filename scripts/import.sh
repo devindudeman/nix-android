@@ -8,6 +8,8 @@ set -euo pipefail
 serial=${ANDROID_SERIAL:-}
 snapshot_out=
 report_out=
+obtainium_export=
+app_manager_export=
 while [ $# -gt 0 ]; do
   case $1 in
   --serial)
@@ -22,10 +24,26 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || { echo "--report-out requires a value" >&2; exit 2; }
     report_out=$2; shift 2
     ;;
+  --obtainium-export)
+    [ $# -ge 2 ] || { echo "--obtainium-export requires a value" >&2; exit 2; }
+    obtainium_export=$2; shift 2
+    ;;
+  --app-manager-export)
+    [ $# -ge 2 ] || { echo "--app-manager-export requires a value" >&2; exit 2; }
+    app_manager_export=$2; shift 2
+    ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 [ -n "$serial" ] || { echo "import requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
+[ -z "$obtainium_export" ] || [ -r "$obtainium_export" ] || {
+  echo "cannot read Obtainium export: $obtainium_export" >&2
+  exit 2
+}
+[ -z "$app_manager_export" ] || [ -r "$app_manager_export" ] || {
+  echo "cannot read App Manager export: $app_manager_export" >&2
+  exit 2
+}
 adb=(adb -s "$serial")
 
 umask 077
@@ -64,6 +82,42 @@ done
   | tr -d '\r' > "$work/device-idle.txt"
 "${adb[@]}" shell pm list permissions -d -g -f </dev/null \
   | tr -d '\r' > "$work/permission-definitions.txt"
+"${adb[@]}" shell dumpsys package permissions </dev/null \
+  | tr -d '\r' > "$work/permission-restrictions.txt"
+: > "$work/permission-details.txt"
+while IFS= read -r package_line; do
+  package=${package_line#package:}
+  [[ $package =~ ^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+$ ]] || {
+    echo "invalid package in third-party inventory: $package" >&2
+    exit 1
+  }
+  printf '### nix-android package %s\n' "$package" >> "$work/permission-details.txt"
+  "${adb[@]}" shell dumpsys package "$package" </dev/null \
+    | tr -d '\r' >> "$work/permission-details.txt"
+done < "$work/third-party.txt"
+"${adb[@]}" shell dumpsys appops </dev/null \
+  | tr -d '\r' > "$work/app-ops.txt"
+"${adb[@]}" shell ime list -s --user 0 </dev/null \
+  | tr -d '\r' > "$work/ime-enabled.txt"
+"${adb[@]}" shell settings get --user 0 secure default_input_method </dev/null \
+  | tr -d '\r' > "$work/ime-default.txt"
+"${adb[@]}" shell cmd netpolicy get restrict-background </dev/null \
+  | tr -d '\r' > "$work/data-saver.txt"
+"${adb[@]}" shell cmd netpolicy list restrict-background-blacklist </dev/null \
+  | tr -d '\r' > "$work/data-restricted.txt"
+"${adb[@]}" shell cmd netpolicy list restrict-background-whitelist </dev/null \
+  | tr -d '\r' > "$work/data-exempt.txt"
+: > "$work/app-locales.txt"
+: > "$work/app-links.txt"
+while IFS= read -r package_line; do
+  package=${package_line#package:}
+  printf '### nix-android package %s\n' "$package" >> "$work/app-locales.txt"
+  "${adb[@]}" shell cmd locale get-app-locales "$package" --user 0 </dev/null \
+    | tr -d '\r' >> "$work/app-locales.txt"
+  printf '### nix-android package %s\n' "$package" >> "$work/app-links.txt"
+  "${adb[@]}" shell pm get-app-links --user 0 "$package" </dev/null \
+    | tr -d '\r' >> "$work/app-links.txt"
+done < "$work/third-party.txt"
 python3 "$NIX_ANDROID_SRC/scripts/package-snapshot.py" \
   --proto "$work/package.pb" \
   --installed "$work/installed.txt" \
@@ -80,7 +134,26 @@ python3 "$NIX_ANDROID_SRC/scripts/package-snapshot.py" \
   --disabled "$work/disabled.txt" \
   --device-idle "$work/device-idle.txt" \
   --permission-definitions "$work/permission-definitions.txt" \
+  --permission-restrictions "$work/permission-restrictions.txt" \
+  --permission-details "$work/permission-details.txt" \
+  --app-ops "$work/app-ops.txt" \
+  --app-locales "$work/app-locales.txt" \
+  --ime-enabled "$work/ime-enabled.txt" \
+  --ime-default "$work/ime-default.txt" \
+  --data-saver "$work/data-saver.txt" \
+  --data-restricted "$work/data-restricted.txt" \
+  --data-exempt "$work/data-exempt.txt" \
+  --app-links "$work/app-links.txt" \
   > "$work/snapshot.json"
+
+adapter_args=(--snapshot "$work/snapshot.json")
+[ -z "$obtainium_export" ] || adapter_args+=(--obtainium "$obtainium_export")
+[ -z "$app_manager_export" ] || adapter_args+=(--app-manager "$app_manager_export")
+if [ "${#adapter_args[@]}" -gt 2 ]; then
+  python3 "$NIX_ANDROID_SRC/scripts/provenance-adapters.py" "${adapter_args[@]}" \
+    > "$work/enriched-snapshot.json"
+  mv -- "$work/enriched-snapshot.json" "$work/snapshot.json"
+fi
 
 if [ -n "$snapshot_out" ]; then
   snapshot_dir=$(dirname -- "$snapshot_out")

@@ -33,10 +33,14 @@ if ! jq -e '
   def strings: type == "array" and all(.[]; type == "string");
   def package: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+\\z");
   def permission: type == "string" and test("^[A-Za-z0-9_.]+\\z");
+  def appop: type == "string" and test("^[A-Z][A-Z0-9_]*\\z");
+  def component: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+/[.]?[A-Za-z0-9_$]+([.][A-Za-z0-9_$]+)*\\z");
+  def locale: type == "string" and length <= 100 and test("^[a-z]{2,8}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?(-([a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(-[0-9a-wy-z](-[a-z0-9]{2,8})+)*(-x(-[a-z0-9]{1,8})+)?\\z");
+  def domain: type == "string" and length <= 253 and test("^(\\*\\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\\z");
   def packages: strings and all(.[]; package);
   def is_unique: length == (unique | length);
   (keys == ["android", "apps", "device", "manifestVersion"])
-  and .manifestVersion == 2
+  and .manifestVersion == 3
   and (.device | type == "object"
     and (keys == ["abi", "name", "user"])
     and (.name | type == "string" and test("^[A-Za-z0-9._-]+\\z"))
@@ -54,10 +58,13 @@ if ! jq -e '
       and (.versionCode | type == "number" and . >= 0 and floor == .)
       and (.apk | type == "string" and startswith("/")))))
   and (.android | type == "object"
-    and (keys == ["darkMode", "deviceidleExempt", "disabled", "permissions", "roles", "settings"])
+    and (keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"])
     and (.darkMode | . == null or type == "boolean")
-    and (.disabled | packages)
-    and (.deviceidleExempt | packages)
+    and (.disabled | packages and is_unique)
+    and (.suspended | packages and is_unique)
+    and (.unsuspended | packages and is_unique)
+    and ((.suspended + .unsuspended) | is_unique)
+    and (.deviceidleExempt | packages and is_unique)
     and (.roles | type == "object" and all(to_entries[];
       (.key | IN("browser", "sms", "dialer", "home"))
       and (.value | package)))
@@ -75,10 +82,40 @@ if ! jq -e '
     and (.permissions | type == "object" and all(to_entries[];
       (.key | package)
       and (.value | type == "object"
-        and (keys == ["grant", "revoke"])
+        and (keys == ["flags", "grant", "revoke"])
         and (.grant | strings and all(.[]; permission))
         and (.revoke | strings and all(.[]; permission))
-        and ((.grant + .revoke) | is_unique)))))
+        and ((.grant + .revoke) | is_unique)
+        and (.flags | type == "object" and all(to_entries[];
+          (.key | permission)
+          and (.value | strings and is_unique and all(.[];
+            IN("review-required", "revoked-compat", "revoke-when-requested", "user-fixed", "user-set"))))))))
+    and (.appOps | type == "object" and all(to_entries[];
+      (.key | package)
+      and (.value | type == "object" and all(to_entries[];
+        (.key | appop)
+        and (.value | IN("allow", "ignore", "deny", "default", "foreground"))))))
+    and (.locales | type == "object" and all(to_entries[];
+      (.key | package) and (.value | strings and is_unique and all(.[]; locale))))
+    and (.inputMethod | type == "object"
+      and (keys == ["default", "disabled", "enabled"])
+      and (.default | . == null or component)
+      and (.enabled | strings and is_unique and all(.[]; component))
+      and (.disabled | strings and is_unique and all(.[]; component))
+      and ((.enabled + .disabled) | is_unique)
+      and (.default as $default | $default == null or (.enabled | index($default)) != null))
+    and (.dataSaver | type == "object"
+      and (keys == ["enabled"])
+      and (.enabled | . == null or type == "boolean"))
+    and (.appLinks | type == "object" and all(to_entries[];
+      (.key | package)
+      and (.value | type == "object"
+        and (keys == ["allowed", "selected", "unselected"])
+        and (.allowed | . == null or type == "boolean")
+        and (.selected | strings and is_unique and all(.[]; domain))
+        and (.unselected | strings and is_unique and all(.[]; domain))
+        and ((.selected + .unselected) | is_unique))))
+    and ([.appLinks[].selected[]] | is_unique))
   and (([.apps.managed[].package] + .apps.attended + .apps.play) | is_unique)
 ' "$manifest" >/dev/null; then
   echo "invalid or unsupported manifest: $manifest" >&2
@@ -137,7 +174,6 @@ current_code() { # -> versionCode or empty
     fi
   done <<<"$installed"
 }
-
 todo_install=()
 todo_upgrade=()
 todo_remove=()
@@ -191,7 +227,20 @@ while read -r pkg; do
     package_query=$(adb_shell pm list packages --user "$user" "$pkg" | tr -d '\r')
     grep -Fqx "package:$pkg" <<<"$package_query" || missing_referenced+=("$pkg")
   fi
-done < <(jq -r '[.android.disabled[], .android.deviceidleExempt[], (.android.roles | values[]), (.android.permissions | keys[])] | unique[]' "$manifest")
+done < <(jq -r '
+  [
+    .android.disabled[], .android.suspended[], .android.unsuspended[],
+    .android.deviceidleExempt[],
+    (.android.roles | values[]),
+    (.android.permissions | keys[]),
+    (.android.appOps | keys[]),
+    (.android.locales | keys[]),
+    (.android.appLinks | keys[]),
+    ((.android.inputMethod.enabled + .android.inputMethod.disabled
+      + (if .android.inputMethod.default == null then [] else [.android.inputMethod.default] end))[]
+      | split("/")[0])
+  ] | unique[]
+' "$manifest")
 
 if [ "${#missing_referenced[@]}" -gt 0 ]; then
   printf 'referenced package is neither installed nor declared as an app: %s\n' "${missing_referenced[@]}" >&2
@@ -212,6 +261,18 @@ todo_role=()      # roleName \t cur \t wantPkg
 todo_disable=()   # pkg
 todo_grant=()     # pkg \t perm
 todo_revoke=()    # pkg \t perm
+todo_permflag=()  # pkg US perm US current-csv US wanted-csv
+todo_appop=()     # pkg US op US current US wanted
+todo_suspend=()   # pkg
+todo_unsuspend=() # pkg
+todo_locale=()    # pkg US current-csv US wanted-csv
+todo_ime_enable=()  # component
+todo_ime_disable=() # component
+todo_ime_default=() # current US wanted
+todo_data_saver=()  # current US wanted
+todo_link_allowed=()    # pkg US current US wanted
+todo_link_selected=()   # pkg US domain
+todo_link_unselected=() # pkg US domain
 todo_idle=()      # pkg
 
 for ns in global secure system; do
@@ -263,32 +324,195 @@ done < <(jq -r '.android.disabled // [] | .[]' "$manifest")
 declare -A permission_checked=()
 declare -A permission_present=()
 declare -A permission_dump=()
-# ponytail: permission read = one cached dumpsys per referenced package, then
-# grep "<perm>: granted=" — coarse (not per-user-sectioned), fine for the
-# single managed user. Replace with a structured API if Android exposes one.
-while IFS=$'\t' read -r pkg perm action; do
+declare -A permission_changing=()
+declare -A permission_package_changing=()
+permission_user_block() {
+  gawk -v wanted_user="$user" '
+    BEGIN { header = "    User " wanted_user ":" }
+    /^    [^ ]/ {
+      active = index($0, header) == 1
+      if (active) found = 1
+    }
+    active { print }
+    END { if (!found) exit 1 }
+  '
+}
+# One cached, explicitly owner-user-scoped package dump per referenced package.
+load_permission_package() {
+  local pkg=$1 full_dump scoped_dump
   if [ -z "${permission_checked[$pkg]+x}" ]; then
     permission_checked[$pkg]=1
     if [ -n "$(current_code "$pkg")" ]; then
       permission_present[$pkg]=1
-      permission_dump[$pkg]=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
+      full_dump=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
+      if ! scoped_dump=$(permission_user_block <<<"$full_dump"); then
+        echo "cannot locate User $user permission state for installed package $pkg" >&2
+        exit 2
+      fi
+      permission_dump[$pkg]=$scoped_dump
     else
       permission_present[$pkg]=0
       permission_dump[$pkg]=
     fi
   fi
+}
+while IFS=$'\t' read -r pkg perm action; do
+  load_permission_package "$pkg"
   package_present=${permission_present[$pkg]}
   granted=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" | sed 's/.*granted=\([a-z]*\).*/\1/' || true)
   if [ "$action" = grant ] && { [ "$granted" != "true" ] || [ -n "${changing[$pkg]:-}" ]; }; then
     todo_grant+=("${pkg}${US}${perm}")
+    permission_changing["$pkg/$perm"]=1
+    permission_package_changing[$pkg]=1
   elif [ "$action" = revoke ] \
     && { [ "$granted" = "true" ] || [ "$package_present" -eq 0 ] || [ -n "${changing[$pkg]:-}" ]; }; then
     # A missing target is either managed or presence-declared: the latter makes
     # the attended/Play preflight below abort before apply. Managed installs and
     # upgrades happen before permissions, so reassert revoke intent afterward.
     todo_revoke+=("${pkg}${US}${perm}")
+    permission_changing["$pkg/$perm"]=1
+    permission_package_changing[$pkg]=1
   fi
 done < <(jq -r '.android.permissions // {} | to_entries[] | .key as $p | ((.value.grant[] | [$p, ., "grant"]), (.value.revoke[] | [$p, ., "revoke"])) | @tsv' "$manifest")
+
+writable_permission_flags=(review-required revoke-when-requested revoked-compat user-fixed user-set)
+while IFS=$US read -r pkg perm want_csv; do
+  load_permission_package "$pkg"
+  permission_line=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" || true)
+  raw_flags=$(sed -n 's/.*flags=\[ *\([^]]*\) *\].*/\1/p' <<<"$permission_line")
+  current_flags=()
+  for flag in "${writable_permission_flags[@]}"; do
+    platform_flag=${flag^^}
+    platform_flag=${platform_flag//-/_}
+    if grep -Eq "(^|[|[:space:]])${platform_flag}([|[:space:]]|$)" <<<"$raw_flags"; then
+      current_flags+=("$flag")
+    fi
+  done
+  cur_csv=$(IFS=,; echo "${current_flags[*]}")
+  if [ "$cur_csv" != "$want_csv" ] \
+    || [ -n "${changing[$pkg]:-}" ] \
+    || [ -n "${permission_changing[$pkg/$perm]:-}" ]; then
+    todo_permflag+=("${pkg}${US}${perm}${US}${cur_csv}${US}${want_csv}")
+  fi
+done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.flags | to_entries[] | [$p, .key, (.value | sort | join(","))] | join("\u001f")' "$manifest")
+
+while IFS=$US read -r pkg op want; do
+  if [ -n "$(current_code "$pkg")" ]; then
+    appop_output=$(adb_shell appops get --user "$user" "$pkg" "$op" | tr -d '\r')
+    cur=$(sed -n "s/^${op}: \(allow\|ignore\|deny\|default\|foreground\).*/\1/p" <<<"$appop_output" | head -n1)
+    if [ -z "$cur" ]; then
+      unknown_appop_output=$(sed -E \
+        -e '/^No operations\.$/d' \
+        -e '/^Default mode: (allow|ignore|deny|default|foreground)$/d' \
+        -e "/^Uid mode: ${op}: (allow|ignore|deny|default|foreground)$/d" \
+        -e '/^$/d' <<<"$appop_output")
+      if [ -z "$unknown_appop_output" ] && [ -n "$appop_output" ]; then
+        cur=default
+      fi
+    fi
+    [ -n "$cur" ] || { echo "unable to read app-op $pkg $op" >&2; exit 1; }
+  else
+    cur=absent
+  fi
+  if [ "$cur" != "$want" ] \
+    || [ -n "${changing[$pkg]:-}" ] \
+    || [ -n "${permission_package_changing[$pkg]:-}" ]; then
+    todo_appop+=("${pkg}${US}${op}${US}${cur}${US}${want}")
+  fi
+done < <(jq -r '.android.appOps | to_entries[] | .key as $p | .value | to_entries[] | [$p, .key, .value] | join("\u001f")' "$manifest")
+
+has_shell_suspension() {
+  local pkg=$1 dump user_block
+  [ -n "$(current_code "$pkg")" ] || return 1
+  dump=$(adb_shell dumpsys package "$pkg" | tr -d '\r')
+  user_block=$(grep -A12 -E "^[[:space:]]+User ${user}: .*installed=" <<<"$dump" || true)
+  [ -n "$user_block" ] || { echo "unable to read suspension state for $pkg user $user" >&2; exit 1; }
+  grep -Fq "suspendingPackage=<$user>com.android.shell" <<<"$user_block"
+}
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  has_shell_suspension "$pkg" || todo_suspend+=("$pkg")
+done < <(jq -r '.android.suspended[]' "$manifest")
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  has_shell_suspension "$pkg" && todo_unsuspend+=("$pkg")
+done < <(jq -r '.android.unsuspended[]' "$manifest")
+
+while IFS=$US read -r pkg want; do
+  if [ -n "$(current_code "$pkg")" ]; then
+    locale_output=$(adb_shell cmd locale get-app-locales "$pkg" --user "$user" | tr -d '\r')
+    locale_prefix="Locales for $pkg for user $user are ["
+    if [[ $locale_output == "$locale_prefix"*"]" && $locale_output != *$'\n'* ]]; then
+      cur=${locale_output#"$locale_prefix"}
+      cur=${cur%]}
+    else
+      echo "unable to read app locales for $pkg" >&2
+      exit 1
+    fi
+  else
+    cur=
+  fi
+  [ "$cur" = "$want" ] || todo_locale+=("${pkg}${US}${cur}${US}${want}")
+done < <(jq -r '.android.locales | to_entries[] | [.key, (.value | join(","))] | join("\u001f")' "$manifest")
+
+enabled_imes=$(adb_shell ime list -s --user "$user" | tr -d '\r')
+while read -r component; do
+  [ -z "$component" ] && continue
+  grep -Fqx "$component" <<<"$enabled_imes" || todo_ime_enable+=("$component")
+done < <(jq -r '.android.inputMethod.enabled[]' "$manifest")
+while read -r component; do
+  [ -z "$component" ] && continue
+  grep -Fqx "$component" <<<"$enabled_imes" && todo_ime_disable+=("$component")
+done < <(jq -r '.android.inputMethod.disabled[]' "$manifest")
+want_ime=$(jq -r '.android.inputMethod.default' "$manifest")
+if [ "$want_ime" != null ]; then
+  cur_ime=$(adb_shell settings get --user "$user" secure default_input_method | tr -d '\r')
+  [ "$cur_ime" = null ] && cur_ime=
+  [ "$cur_ime" = "$want_ime" ] || todo_ime_default+=("${cur_ime}${US}${want_ime}")
+fi
+
+want_data_saver=$(jq -r '.android.dataSaver.enabled' "$manifest")
+if [ "$want_data_saver" != null ]; then
+  data_saver_output=$(adb_shell cmd netpolicy get restrict-background | tr -d '\r')
+  cur_data_saver=$(sed -n 's/^Restrict background status: \(enabled\|disabled\)$/\1/p' <<<"$data_saver_output")
+  [ -n "$cur_data_saver" ] || { echo "unable to read Data Saver state" >&2; exit 1; }
+  [ "$want_data_saver" = true ] && want_data_saver=enabled || want_data_saver=disabled
+  [ "$cur_data_saver" = "$want_data_saver" ] \
+    || todo_data_saver+=("${cur_data_saver}${US}${want_data_saver}")
+fi
+app_link_selected_domains() {
+  awk '
+    /^        Enabled:$/ { enabled=1; next }
+    /^        Disabled:$/ { enabled=0; next }
+    enabled && /^          [^[:space:]]/ { sub(/^          /, ""); print }
+  '
+}
+while IFS=$US read -r pkg allowed; do
+  if [ -n "$(current_code "$pkg")" ]; then
+    links=$(adb_shell pm get-app-links --user "$user" "$pkg" | tr -d '\r')
+    cur_allowed=$(sed -n 's/^      Verification link handling allowed: \(true\|false\)$/\1/p' <<<"$links")
+    [ -n "$cur_allowed" ] || { echo "unable to read app-link user state for $pkg" >&2; exit 1; }
+    grep -Fqx '      Selection state:' <<<"$links" \
+      || { echo "unable to read app-link selection state for $pkg" >&2; exit 1; }
+    grep -Eq '^        (Enabled|Disabled):$' <<<"$links" \
+      || { echo "unable to read app-link domain sections for $pkg" >&2; exit 1; }
+    selected=$(app_link_selected_domains <<<"$links")
+  else
+    cur_allowed=true
+    selected=
+  fi
+  if [ "$allowed" != null ] && [ "$cur_allowed" != "$allowed" ]; then
+    todo_link_allowed+=("${pkg}${US}${cur_allowed}${US}${allowed}")
+  fi
+  while read -r domain; do
+    [ -z "$domain" ] && continue
+    grep -Fqx "$domain" <<<"$selected" || todo_link_selected+=("${pkg}${US}${domain}")
+  done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].selected[]' "$manifest")
+  while read -r domain; do
+    [ -z "$domain" ] && continue
+    grep -Fqx "$domain" <<<"$selected" && todo_link_unselected+=("${pkg}${US}${domain}")
+  done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].unselected[]' "$manifest")
+done < <(jq -r '.android.appLinks | to_entries[] | [.key, (.value.allowed | tostring)] | join("\u001f")' "$manifest")
 
 idle_now=$(adb_shell cmd deviceidle whitelist | tr -d '\r')
 while read -r pkg; do
@@ -298,7 +522,12 @@ done < <(jq -r '.android.deviceidleExempt // [] | .[]' "$manifest")
 
 plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
   + ${#todo_setting[@]} + ${#todo_dark[@]} + ${#todo_role[@]} + ${#todo_disable[@]} \
-  + ${#todo_grant[@]} + ${#todo_revoke[@]} + ${#todo_idle[@]} ))
+  + ${#todo_grant[@]} + ${#todo_revoke[@]} + ${#todo_permflag[@]} \
+  + ${#todo_appop[@]} + ${#todo_suspend[@]} + ${#todo_unsuspend[@]} \
+  + ${#todo_locale[@]} + ${#todo_ime_enable[@]} + ${#todo_ime_disable[@]} \
+  + ${#todo_ime_default[@]} + ${#todo_data_saver[@]} \
+  + ${#todo_link_allowed[@]} + ${#todo_link_selected[@]} + ${#todo_link_unselected[@]} \
+  + ${#todo_idle[@]} ))
 for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
 for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
 for t in "${todo_remove[@]}";  do echo "remove   $t"; done
@@ -313,6 +542,27 @@ for t in "${todo_role[@]}";    do IFS=$US read -r r c w <<<"$t"; echo "role     
 for t in "${todo_disable[@]}"; do echo "disable  $t"; done
 for t in "${todo_grant[@]}";   do IFS=$US read -r p m <<<"$t"; echo "grant    $p $m"; done
 for t in "${todo_revoke[@]}";  do IFS=$US read -r p m <<<"$t"; echo "revoke   $p $m"; done
+for t in "${todo_permflag[@]}"; do
+  IFS=$US read -r p m c w <<<"$t"
+  echo "permflag $p $m (${c:-none} → ${w:-none})"
+done
+for t in "${todo_appop[@]}"; do
+  IFS=$US read -r p o c w <<<"$t"
+  echo "appop    $p $o ($c → $w)"
+done
+for p in "${todo_suspend[@]}"; do echo "suspend  $p (adb-shell authority)"; done
+for p in "${todo_unsuspend[@]}"; do echo "unsuspend $p (remove adb-shell authority)"; done
+for t in "${todo_locale[@]}"; do
+  IFS=$US read -r p c w <<<"$t"
+  echo "locales  $p (${c:-system} → ${w:-system})"
+done
+for c in "${todo_ime_enable[@]}"; do echo "ime-on   $c"; done
+for c in "${todo_ime_disable[@]}"; do echo "ime-off  $c"; done
+for t in "${todo_ime_default[@]}"; do IFS=$US read -r c w <<<"$t"; echo "ime      default (${c:-none} → $w)"; done
+for t in "${todo_data_saver[@]}"; do IFS=$US read -r c w <<<"$t"; echo "datasaver ($c → $w)"; done
+for t in "${todo_link_allowed[@]}"; do IFS=$US read -r p c w <<<"$t"; echo "link-ok  $p ($c → $w)"; done
+for t in "${todo_link_selected[@]}"; do IFS=$US read -r p d <<<"$t"; echo "link+    $p $d"; done
+for t in "${todo_link_unselected[@]}"; do IFS=$US read -r p d <<<"$t"; echo "link-    $p $d"; done
 for t in "${todo_idle[@]}";    do echo "idle-ok  $t (battery-optimization exempt)"; done
 for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install from its declared human source"; done
 for p in "${missing_play[@]}"; do echo "PLAY     $p — run android-rebuild assist"; done
@@ -358,6 +608,62 @@ done
 for t in "${todo_revoke[@]}"; do
   IFS=$US read -r p m <<<"$t"
   adb_shell pm revoke --user "$user" "$p" "$m"
+done
+for t in "${todo_permflag[@]}"; do
+  IFS=$US read -r p m cur_csv want_csv <<<"$t"
+  set_flags=()
+  clear_flags=()
+  for flag in "${writable_permission_flags[@]}"; do
+    if [[ ",$want_csv," == *",$flag,"* ]]; then
+      set_flags+=("$flag")
+    else
+      clear_flags+=("$flag")
+    fi
+  done
+  [ "${#set_flags[@]}" -eq 0 ] || adb_shell pm set-permission-flags --user "$user" "$p" "$m" "${set_flags[@]}"
+  [ "${#clear_flags[@]}" -eq 0 ] || adb_shell pm clear-permission-flags --user "$user" "$p" "$m" "${clear_flags[@]}"
+done
+for t in "${todo_appop[@]}"; do
+  IFS=$US read -r p o _ w <<<"$t"
+  adb_shell appops set --user "$user" "$p" "$o" "$w"
+done
+[ "${#todo_appop[@]}" -eq 0 ] || adb_shell appops write-settings >/dev/null
+for p in "${todo_suspend[@]}"; do
+  adb_shell pm suspend --user "$user" "$p" >/dev/null
+done
+for p in "${todo_unsuspend[@]}"; do
+  adb_shell pm unsuspend --user "$user" "$p" >/dev/null
+done
+for t in "${todo_locale[@]}"; do
+  IFS=$US read -r p _ w <<<"$t"
+  adb_shell cmd locale set-app-locales "$p" --user "$user" --locales "$w"
+done
+for c in "${todo_ime_enable[@]}"; do
+  adb_shell ime enable --user "$user" "$c" >/dev/null
+done
+for t in "${todo_ime_default[@]}"; do
+  IFS=$US read -r _ w <<<"$t"
+  adb_shell ime set --user "$user" "$w" >/dev/null
+done
+for c in "${todo_ime_disable[@]}"; do
+  adb_shell ime disable --user "$user" "$c" >/dev/null
+done
+for t in "${todo_data_saver[@]}"; do
+  IFS=$US read -r _ w <<<"$t"
+  [ "$w" = enabled ] && enabled=true || enabled=false
+  adb_shell cmd netpolicy set restrict-background "$enabled"
+done
+for t in "${todo_link_allowed[@]}"; do
+  IFS=$US read -r p _ w <<<"$t"
+  adb_shell pm set-app-links-allowed --user "$user" --package "$p" "$w"
+done
+for t in "${todo_link_selected[@]}"; do
+  IFS=$US read -r p d <<<"$t"
+  adb_shell pm set-app-links-user-selection --user "$user" --package "$p" true "$d"
+done
+for t in "${todo_link_unselected[@]}"; do
+  IFS=$US read -r p d <<<"$t"
+  adb_shell pm set-app-links-user-selection --user "$user" --package "$p" false "$d"
 done
 for pkg in "${todo_idle[@]}"; do
   adb_shell cmd deviceidle whitelist "+$pkg" >/dev/null

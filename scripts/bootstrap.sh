@@ -38,7 +38,14 @@ jq '
     darkMode: null,
     roles: {},
     disabled: [],
+    suspended: [],
+    unsuspended: [],
     permissions: {},
+    appOps: {},
+    locales: {},
+    inputMethod: {enabled: [], disabled: [], default: null},
+    dataSaver: {enabled: null},
+    appLinks: {},
     deviceidleExempt: []
   }
 ' "$manifest" > "$phase"

@@ -66,13 +66,18 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 - dark mode and Private DNS
 - browser, SMS, dialer, and home roles
 - explicit runtime permission grants/revocations
+- exact writable permission-policy flags and package-level app-op modes
+- per-app locales, input-method enablement/selection, and global Data Saver
+- adb-shell package suspension and user-owned app-link handling/selection
 - ensure-disabled packages
 - ensure-present battery-optimization exemptions
 
 ### Tooling and safety
 
 - read-only, versioned package/Android-state snapshot, conservative source
-  classification, runtime-grant filtering, and explicit omission report
+  classification, runtime-grant/flag filtering, package app-op import, and
+  explicit omission report
+- credential-free Obtainium release-source and App Manager signer adapters
 - read-only Atlas capture with one explicit serial and no stdin-drain truncation
 - resumable wiped-device bootstrap and user-confirmed Play installation queue
 - x86_64 AOSP emulator bench
@@ -91,12 +96,11 @@ These are useful but are not allowed to delay a small, honest initial release:
   cannot restore app data, downgrade packages, or invert ensure-only state
 - split APK/device-extracted app migration
 - optional cross-snapshot comparison tooling beyond the implemented coverage report
-- optional credential-free App Manager and Obtainium export adapters
 - optional device product/serial identity guards without forcing identifiers
   into public configuration
 - multi-user work after per-version owner/Private-Space/work-profile testing
-- verified modules for Wi-Fi secrets, locale, input methods, app-ops, package
-  suspension, app links, and network policy
+- verified Wi-Fi secret handling and per-app Data Saver policy once a
+  persistent owner-user primitive passes the emulator reboot gate
 - on-device Termux/rish execution
 - shell completion and selected Nix flag passthrough
 

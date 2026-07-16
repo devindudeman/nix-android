@@ -24,17 +24,78 @@
         ++ releaseNames;
       declaredApps =
         managedLockedNames ++ builtins.attrNames cfg.apps.local ++ cfg.apps.attended ++ cfg.apps.play;
+      inputMethodComponents =
+        cfg.android.inputMethod.enabled
+        ++ cfg.android.inputMethod.disabled
+        ++ lib.optional (cfg.android.inputMethod.default != null) cfg.android.inputMethod.default;
+      inputMethodPackages = map (
+        component: lib.head (lib.splitString "/" component)
+      ) inputMethodComponents;
       referencedPackages =
         declaredApps
         ++ cfg.android.packages.disabled
+        ++ cfg.android.packages.suspended
+        ++ cfg.android.packages.unsuspended
         ++ cfg.android.batteryOptimization.exempt
         ++ builtins.attrNames cfg.android.permissions
+        ++ builtins.attrNames cfg.android.appOps
+        ++ builtins.attrNames cfg.android.locales
+        ++ builtins.attrNames cfg.android.appLinks
+        ++ inputMethodPackages
         ++ builtins.attrValues (lib.filterAttrs (_: v: v != null) cfg.android.defaultApps);
       invalidPackageNames = builtins.filter (
         p: builtins.match "[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+" p == null
       ) referencedPackages;
       invalidPermissionNames = builtins.filter (p: builtins.match "[A-Za-z0-9_.]+" p == null) (
-        lib.concatMap (v: v.grant ++ v.revoke) (builtins.attrValues cfg.android.permissions)
+        lib.concatMap (v: v.grant ++ v.revoke ++ builtins.attrNames v.flags) (
+          builtins.attrValues cfg.android.permissions
+        )
+      );
+      invalidAppOpNames = lib.concatLists (
+        lib.mapAttrsToList (
+          p: operations:
+          map (operation: "${p}:${operation}") (
+            builtins.filter (operation: builtins.match "[A-Z][A-Z0-9_]*" operation == null) (
+              builtins.attrNames operations
+            )
+          )
+        ) cfg.android.appOps
+      );
+      invalidInputMethodComponents = builtins.filter (
+        component:
+        builtins.match "[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+/[.]?[A-Za-z0-9_$]+([.][A-Za-z0-9_$]+)*" component
+        == null
+      ) inputMethodComponents;
+      invalidLocales = lib.concatLists (
+        lib.mapAttrsToList (
+          package: locales:
+          map (locale: "${package}:${locale}") (
+            builtins.filter (
+              locale:
+              builtins.stringLength locale > 100
+              ||
+                builtins.match "[a-z]{2,8}(-[A-Z][a-z]{3})?(-([A-Z]{2}|[0-9]{3}))?(-([a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(-[0-9a-wy-z](-[a-z0-9]{2,8})+)*(-x(-[a-z0-9]{1,8})+)?" locale
+                == null
+            ) locales
+          )
+        ) cfg.android.locales
+      );
+      validDomain =
+        domain:
+        let
+          hostname = lib.removePrefix "*." domain;
+          labels = lib.splitString "." hostname;
+        in
+        builtins.stringLength domain <= 253
+        && builtins.length labels >= 2
+        && lib.all (label: builtins.match "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" label != null) labels;
+      invalidAppLinkDomains = lib.concatLists (
+        lib.mapAttrsToList (
+          package: state:
+          map (domain: "${package}:${domain}") (
+            builtins.filter (domain: !validDomain domain) (state.selected ++ state.unselected)
+          )
+        ) cfg.android.appLinks
       );
       duplicateApps = lib.unique (
         builtins.filter (p: lib.count (q: q == p) declaredApps > 1) declaredApps
@@ -55,6 +116,59 @@
             )
           )
         ) cfg.android.permissions
+      );
+      duplicatePermissionFlags = lib.concatLists (
+        lib.mapAttrsToList (
+          p: permissionState:
+          lib.concatLists (
+            lib.mapAttrsToList (
+              permission: flags:
+              map (flag: "${p}:${permission}:${flag}") (
+                lib.unique (builtins.filter (candidate: lib.count (f: f == candidate) flags > 1) flags)
+              )
+            ) permissionState.flags
+          )
+        ) cfg.android.permissions
+      );
+      duplicates =
+        values:
+        lib.unique (builtins.filter (value: lib.count (candidate: candidate == value) values > 1) values);
+      duplicateNewState =
+        map (value: "disabled:${value}") (duplicates cfg.android.packages.disabled)
+        ++ map (value: "suspended:${value}") (duplicates cfg.android.packages.suspended)
+        ++ map (value: "unsuspended:${value}") (duplicates cfg.android.packages.unsuspended)
+        ++ map (value: "deviceidle-exempt:${value}") (duplicates cfg.android.batteryOptimization.exempt)
+        ++ map (value: "ime-enabled:${value}") (duplicates cfg.android.inputMethod.enabled)
+        ++ map (value: "ime-disabled:${value}") (duplicates cfg.android.inputMethod.disabled)
+        ++ lib.concatLists (
+          lib.mapAttrsToList (
+            package: locales: map (locale: "locale:${package}:${locale}") (duplicates locales)
+          ) cfg.android.locales
+        )
+        ++ lib.concatLists (
+          lib.mapAttrsToList (
+            package: state:
+            map (domain: "app-link:${package}:${domain}") (duplicates (state.selected ++ state.unselected))
+          ) cfg.android.appLinks
+        );
+      suspensionConflicts = lib.intersectLists cfg.android.packages.suspended cfg.android.packages.unsuspended;
+      inputMethodConflicts = lib.intersectLists cfg.android.inputMethod.enabled cfg.android.inputMethod.disabled;
+      inputMethodDefaultDisabled =
+        cfg.android.inputMethod.default != null
+        && !builtins.elem cfg.android.inputMethod.default cfg.android.inputMethod.enabled;
+      appLinkConflicts = lib.concatLists (
+        lib.mapAttrsToList (
+          package: state:
+          map (domain: "${package}:${domain}") (lib.intersectLists state.selected state.unselected)
+        ) cfg.android.appLinks
+      );
+      selectedAppLinkDomains = lib.concatMap (state: state.selected) (
+        builtins.attrValues cfg.android.appLinks
+      );
+      duplicateSelectedAppLinkDomains = lib.unique (
+        builtins.filter (
+          domain: lib.count (candidate: candidate == domain) selectedAppLinkDomains > 1
+        ) selectedAppLinkDomains
       );
       invalidReleaseSources = builtins.attrNames (
         lib.filterAttrs (_: v: (v.github == null) == (v.gitea == null)) cfg.apps.release
@@ -145,12 +259,34 @@
           throw "nix-android: invalid Android package names: ${lib.concatStringsSep ", " (lib.unique invalidPackageNames)}"
         else if invalidPermissionNames != [ ] then
           throw "nix-android: invalid Android permission names: ${lib.concatStringsSep ", " (lib.unique invalidPermissionNames)}"
+        else if invalidAppOpNames != [ ] then
+          throw "nix-android: invalid Android app-op names: ${lib.concatStringsSep ", " invalidAppOpNames}"
+        else if invalidInputMethodComponents != [ ] then
+          throw "nix-android: invalid input-method components: ${lib.concatStringsSep ", " (lib.unique invalidInputMethodComponents)}"
+        else if invalidLocales != [ ] then
+          throw "nix-android: invalid portable app locale tags: ${lib.concatStringsSep ", " invalidLocales}"
+        else if invalidAppLinkDomains != [ ] then
+          throw "nix-android: invalid app-link domains: ${lib.concatStringsSep ", " invalidAppLinkDomains}"
         else if duplicateApps != [ ] then
           throw "nix-android: each app must have exactly one source; duplicate declarations: ${lib.concatStringsSep ", " duplicateApps}"
         else if permissionConflicts != [ ] then
           throw "nix-android: permissions cannot be both granted and revoked: ${lib.concatStringsSep ", " permissionConflicts}"
         else if duplicatePermissions != [ ] then
           throw "nix-android: permission entries must be unique: ${lib.concatStringsSep ", " duplicatePermissions}"
+        else if duplicatePermissionFlags != [ ] then
+          throw "nix-android: permission flags must be unique: ${lib.concatStringsSep ", " duplicatePermissionFlags}"
+        else if duplicateNewState != [ ] then
+          throw "nix-android: Android state list entries must be unique: ${lib.concatStringsSep ", " duplicateNewState}"
+        else if suspensionConflicts != [ ] then
+          throw "nix-android: packages cannot be both suspended and unsuspended: ${lib.concatStringsSep ", " suspensionConflicts}"
+        else if inputMethodConflicts != [ ] then
+          throw "nix-android: input methods cannot be both enabled and disabled: ${lib.concatStringsSep ", " inputMethodConflicts}"
+        else if inputMethodDefaultDisabled then
+          throw "nix-android: android.inputMethod.default must also appear in android.inputMethod.enabled"
+        else if appLinkConflicts != [ ] then
+          throw "nix-android: app-link domains cannot be both selected and unselected: ${lib.concatStringsSep ", " appLinkConflicts}"
+        else if duplicateSelectedAppLinkDomains != [ ] then
+          throw "nix-android: a domain can be selected for only one app: ${lib.concatStringsSep ", " duplicateSelectedAppLinkDomains}"
         else if invalidReleaseSources != [ ] then
           throw "nix-android: release apps must set exactly one of github/gitea: ${lib.concatStringsSep ", " invalidReleaseSources}"
         else if privateDnsRawConflict then
@@ -238,15 +374,25 @@
         assert validated;
         pkgs.writeText "nix-android-${cfg.device.name}-manifest-base.json" (
           builtins.toJSON {
-            manifestVersion = 2;
+            manifestVersion = 3;
             device = {
               inherit (cfg.device) name user abi;
             };
             android = {
               settings = settingsFinal;
               roles = lib.filterAttrs (_: v: v != null) cfg.android.defaultApps;
-              inherit (cfg.android) darkMode permissions;
+              inherit (cfg.android)
+                appLinks
+                appOps
+                darkMode
+                dataSaver
+                inputMethod
+                locales
+                permissions
+                ;
               disabled = cfg.android.packages.disabled;
+              suspended = cfg.android.packages.suspended;
+              unsuspended = cfg.android.packages.unsuspended;
               deviceidleExempt = cfg.android.batteryOptimization.exempt;
             };
             apps = {
@@ -294,6 +440,7 @@
         runtimeInputs = [
           pkgs.android-tools
           pkgs.coreutils
+          pkgs.gawk
           pkgs.gnugrep
           pkgs.gnused
           pkgs.jq

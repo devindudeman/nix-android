@@ -8,7 +8,7 @@ reapply a value safely.
 
 ## Model
 
-Import has three separate layers:
+Import has four separate layers:
 
 1. **Evidence** — raw, read-only command output from one explicitly selected
    adb serial.
@@ -83,18 +83,50 @@ The optional JSON snapshot has this top-level shape:
     "disabledPackages": [],
     "deviceIdleWhitelist": { "entries": [], "unparsed": [] },
     "runtimePermissionDefinitions": [],
-    "unparsedPermissionDefinitionRows": []
+    "runtimePermissionRestrictions": {},
+    "unparsedPermissionDefinitionRows": [],
+    "unparsedPermissionStateRows": [],
+    "unparsedPermissionRestrictionRows": [],
+    "appOps": {},
+    "derivedAppOpRows": [],
+    "unparsedAppOpRows": [],
+    "appLocales": {},
+    "unparsedAppLocaleRows": [],
+    "inputMethod": { "enabled": [], "selected": null, "unparsed": [] },
+    "dataSaver": { "enabled": false, "restrictedUids": [], "exemptUids": [] },
+    "appLinks": {},
+    "unparsedAppLinkRows": []
+  },
+  "provenance": {
+    "obtainium": { "schemaVersion": 2, "apps": [] },
+    "appManager": { "format": "app-list-json", "packages": [] }
   },
   "packages": []
 }
 ```
 
 Each package preserves the package proto's identity/version/install-source,
-split, per-user state, and per-user granted-permission fields, plus
-`thirdPartyForManagedUser`. Arrays and packages are sorted so two identical
-observations produce an identical snapshot. Capture time and adb serial are
-intentionally absent: neither is desired device state, and serials should not
-be encouraged into public configuration.
+split, per-user state, per-user granted-permission fields, and parsed runtime
+permission flags, plus `thirdPartyForManagedUser`. The Android object also
+preserves package-level AppOps rows separately from UID modes. Switch-derived
+effective AppOps rows are retained as observed-only evidence, not mistaken for
+explicit package overrides. The Android object also preserves per-app locales,
+input-method state, global/per-UID Data Saver evidence, and user plus verifier
+app-link state. Arrays and packages are sorted so two identical observations
+produce an identical snapshot. Capture time and adb serial are intentionally
+absent: neither is desired device state, and serials should not be encouraged
+into public configuration.
+
+`provenance` is present only when an explicit export adapter is supplied. The
+Obtainium adapter reads schema-v2 app IDs, source URLs, and source-type names.
+It accepts canonical GitHub URLs plus Codeberg or self-hosted Forgejo URLs
+identified by Obtainium's upstream `Codeberg` source identifier. It discards
+settings, per-app additional settings, timestamps, versions, credentials,
+unsupported host/source details, and arbitrary export fields. The App Manager
+adapter accepts the current JSON app-list array and preserves only package ID,
+signer SHA-256, and installer. Labels and timestamps are ignored. Both adapters
+intersect with ADB's third-party owner-user inventory, which remains
+authoritative for scope.
 
 `firstInstallTimeMsWire` is intentionally named as raw wire evidence. AOSP's
 schema declares its millisecond timestamp as signed `int32`, which cannot hold
@@ -106,15 +138,37 @@ Private DNS, four roles, disabled packages, DeviceIdle allowlist ownership, and
 runtime-toggleable permission definitions. The package protobuf's granted set
 is broader than runtime state: it also contains normal and app-defined
 permissions. Generated grants are therefore the intersection of the managed
-user's observed grants and `pm list permissions -d -g -f`; everything else is
-retained in JSON and counted as omitted. Import never generates a revoke from
-absence, because absence alone does not establish deliberate deny intent or
-app-op/foreground/one-time scope.
+user's observed grants and `pm list permissions -d -g -f`, minus hard/soft
+restricted permissions discovered from `dumpsys package permissions`.
+Restricted grants depend on installer/platform allowlisting and remain
+ambiguous evidence rather than a false post-wipe promise. If any restriction
+row is unparsed, all automatic grant rendering fails closed until that evidence
+is complete. Everything else is retained in JSON and counted as omitted.
+Import never generates a revoke from absence, because absence alone does not
+establish deliberate deny intent or
+app-op/foreground/one-time scope. A separate per-package `dumpsys package`
+read preserves permission flags. PackageManager's five writable flags are
+rendered exactly, including explicit empty lists; Android-owned flags remain
+observed evidence.
+
+Additional narrow reads capture `cmd locale`, `ime`, `cmd netpolicy`, and
+`pm get-app-links --user 0` state. The package protobuf supplies suspension
+authority metadata. Import activates only adb-shell suspension, non-default
+locale lists, internally consistent enabled/selected input methods, global
+Data Saver, and non-default user app-link choices. It retains but does not
+activate per-app NetworkPolicy UID rows (they failed the AOSP reboot gate),
+app-link verifier state, invalid manifest `autoVerify` domains, or
+disabled-domain rows that cannot be distinguished from never-selected defaults.
 
 Generated Nix additionally includes unambiguous roles, representable dark and
 Private DNS state, disabled third-party packages, user-added DeviceIdle
 exemptions whose packages are installed for the managed user, and filtered
-granted runtime permissions for third-party packages. Automatic/custom dark
+granted runtime permissions and writable permission flags for third-party
+packages, plus non-default package-level app-op overrides, adb-shell package
+suspension, non-default app locales, consistent input-method state, global
+Data Saver, and non-default user app-link choices. UID-wide app-op
+modes are retained as a separate boundary because they commonly mirror
+permission state and are not equivalent to package overrides. Automatic/custom dark
 mode, multiple role holders, disabled system packages, system-package
 permission state, system allowlists, other-profile DeviceIdle rows, and
 unparsed rows remain snapshot evidence with explicit omission comments.
@@ -156,8 +210,9 @@ None of the prior art reviewed for this design supplies the same locked-device,
 external-Nix, read-current-state workflow. The useful neighboring designs are:
 
 - [App Manager](https://muntashir.dev/AppManager/en/) inventories broad app
-  state and exports profiles. Its GPL-3.0 code is not copied into this MIT
-  project; a user-supplied export can become an optional adapter.
+  state. Its GPL-3.0 code is not copied into this MIT project; the implemented
+  adapter independently consumes the user-supplied JSON app-list format and
+  keeps only signer and installer evidence.
 - The [Android Management API policy](https://developers.google.com/android/management/reference/rest/v1/enterprises.policies)
   and [device](https://developers.google.com/android/management/reference/rest/v1/enterprises.devices)
   resources cleanly separate desired policy, observed state, and compliance,
@@ -166,17 +221,18 @@ external-Nix, read-current-state workflow. The useful neighboring designs are:
 - [Universal Android Debloater Next Generation](https://github.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation)
   models per-user package state and backup/restore. Its catalog and GPL-3.0
   implementation remain external prior art.
-- [Obtainium](https://github.com/ImranR98/Obtainium) export schema v2 can carry
-  the upstream release configuration that adb cannot infer. A future optional
-  adapter should consume a user-provided credential-free export.
+- [Obtainium](https://github.com/ImranR98/Obtainium) export schema v2 carries
+  upstream release configuration that adb cannot infer. The implemented
+  adapter consumes a user-provided export without copying credentials or
+  application settings.
 - [Nix-on-Droid](https://github.com/nix-community/nix-on-droid) manages a Nix
   userspace inside Termux; [robotnix](https://github.com/danielfullmer/robotnix)
   builds Android images. Neither imports/converges a stock locked device over
   adb.
 
-## Fidelity status and roadmap
+## Fidelity status
 
-The next fidelity slices are deliberately ordered by evidence quality:
+The importer layers were implemented in evidence order:
 
 1. **implemented:** package-protobuf snapshot plus conservative Play/attended
    rendering;
@@ -185,10 +241,15 @@ The next fidelity slices are deliberately ordered by evidence quality:
    third-party packages;
 3. **implemented:** runtime-permission definition filtering and conservative
    grant-only rendering;
-4. explicit App Manager and Obtainium export adapters for facts adb cannot
-   recover;
-5. **implemented:** a minimal machine-readable coverage report generated by the
+4. **implemented:** writable permission-flag and package-level app-op capture,
+   modeling, rendering, and convergence without conflating UID modes;
+5. **implemented:** credential-free App Manager and Obtainium export adapters
+   for signer and supported release-source facts adb cannot recover;
+6. **implemented:** a minimal machine-readable coverage report generated by the
    same branches as the starter Nix and omission comments.
+7. **implemented:** suspension authority, per-app locale, input-method,
+   global Data Saver, and user app-link import/convergence; per-app Data Saver
+   UID rows remain observed-only after a reproduced reboot-persistence failure.
 
 [CAPABILITIES.md](./CAPABILITIES.md) is the complete classification map for
 publicly managed, candidate, observed-only, and unreachable state.

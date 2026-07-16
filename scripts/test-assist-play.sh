@@ -42,7 +42,7 @@ chmod +x "$tmp/fakebin/adb"
 
 manifest() {
   jq -n --argjson play "$1" '{
-    manifestVersion: 2,
+    manifestVersion: 3,
     device: {user: 0, abi: "x86_64"},
     apps: {play: $play}
   }' > "$tmp/manifest.json"

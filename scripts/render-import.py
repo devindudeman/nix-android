@@ -9,6 +9,17 @@ from pathlib import Path
 
 PACKAGE_NAME = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
 PERMISSION_NAME = re.compile(r"[A-Za-z0-9_.]+")
+COMPONENT_NAME = re.compile(
+    r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+/[.]?[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)*"
+)
+LOCALE_TAG = re.compile(
+    r"[a-z]{2,8}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?"
+    r"(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*"
+    r"(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?"
+)
+DOMAIN_NAME = re.compile(
+    r"(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+)
 FDROID_INSTALLERS = {
     "org.fdroid.fdroid",
     "org.fdroid.basic",
@@ -20,6 +31,14 @@ OBTAINIUM_INSTALLERS = {
     "dev.imranr.obtainium.fdroid",
 }
 PLAY_INSTALLER = "com.android.vending"
+WRITABLE_PERMISSION_FLAGS = {
+    "REVIEW_REQUIRED": "review-required",
+    "REVOKED_COMPAT": "revoked-compat",
+    "REVOKE_WHEN_REQUESTED": "revoke-when-requested",
+    "USER_FIXED": "user-fixed",
+    "USER_SET": "user-set",
+}
+SHA256 = re.compile(r"[0-9A-Fa-f]{64}")
 
 
 def nix_list(values, indent="    "):
@@ -27,7 +46,7 @@ def nix_list(values, indent="    "):
 
 
 def comments(values):
-    return "\n".join(f"  # {value}" for value in values)
+    return "\n".join(f"  # {comment(value)}" for value in values)
 
 
 def comment(value):
@@ -59,6 +78,7 @@ def render_with_coverage(snapshot):
     model = str(device.get("model", "unknown")).replace("\r", " ").replace("\n", " ")
 
     packages = []
+    third_party_by_name = {}
     for package in snapshot.get("packages", []):
         if not package.get("thirdPartyForManagedUser"):
             continue
@@ -66,12 +86,68 @@ def render_with_coverage(snapshot):
         if not isinstance(name, str) or not PACKAGE_NAME.fullmatch(name):
             raise ValueError(f"invalid Android package name in snapshot: {name!r}")
         packages.append((name, package.get("installerName")))
+        third_party_by_name[name] = package
     packages.sort()
 
+    installers = dict(packages)
+    provenance = snapshot.get("provenance", {})
+    obtainium_entries = provenance.get("obtainium", {}).get("apps", [])
+    release_github = {}
+    release_gitea = {}
+    unresolved_obtainium = []
+    for entry in obtainium_entries:
+        name = entry.get("package") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not PACKAGE_NAME.fullmatch(name):
+            raise ValueError(f"invalid Obtainium provenance package: {name!r}")
+        source = entry.get("source")
+        if installers.get(name) not in OBTAINIUM_INSTALLERS or not isinstance(source, dict):
+            unresolved_obtainium.append(name)
+            continue
+        kind = source.get("kind")
+        value = source.get("value")
+        if kind == "github" and isinstance(value, str):
+            release_github[name] = value
+        elif kind == "gitea" and isinstance(value, str):
+            release_gitea[name] = value
+        else:
+            unresolved_obtainium.append(name)
+    release_packages = set(release_github) | set(release_gitea)
+
     play = [name for name, installer in packages if installer == PLAY_INSTALLER]
-    attended = [name for name, installer in packages if installer != PLAY_INSTALLER]
+    attended = [
+        name
+        for name, installer in packages
+        if installer != PLAY_INSTALLER and name not in release_packages
+    ]
     fdroid = [name for name, installer in packages if installer in FDROID_INSTALLERS]
-    obtainium = [name for name, installer in packages if installer in OBTAINIUM_INSTALLERS]
+    obtainium = [
+        name
+        for name, installer in packages
+        if installer in OBTAINIUM_INSTALLERS and name not in release_packages
+    ]
+
+    app_manager_entries = provenance.get("appManager", {}).get("packages", [])
+    signer_notes = []
+    installer_mismatches = 0
+    signer_count = 0
+    for entry in app_manager_entries:
+        name = entry.get("package") if isinstance(entry, dict) else None
+        signatures = entry.get("signerSha256") if isinstance(entry, dict) else None
+        if (
+            not isinstance(name, str)
+            or not PACKAGE_NAME.fullmatch(name)
+            or not isinstance(signatures, list)
+            or not all(
+                isinstance(signature, str) and SHA256.fullmatch(signature)
+                for signature in signatures
+            )
+        ):
+            raise ValueError("invalid App Manager provenance entry")
+        signer_count += len(signatures)
+        signer_notes.append(f"App Manager signer {name}: {', '.join(signatures)}")
+        exported_installer = entry.get("installerPackage")
+        if exported_installer is not None and exported_installer != installers.get(name):
+            installer_mismatches += 1
 
     android = snapshot.get("android", {})
     state_lines = []
@@ -107,10 +183,43 @@ def render_with_coverage(snapshot):
         "third-party packages without verified Play attribution remain attended",
     )
     fact(
+        "apps.release.obtainium",
+        "declarable",
+        len(release_packages),
+        "credential-free Obtainium repository URLs can restore supported GitHub or Forgejo release declarations",
+    )
+    if unresolved_obtainium:
+        report.extend(
+            f"Obtainium source for {name} was retained as evidence but not activated"
+            for name in sorted(set(unresolved_obtainium))
+        )
+        fact(
+            "apps.release.obtainiumUnsupported",
+            "ambiguous",
+            len(set(unresolved_obtainium)),
+            "the source was unsupported or its current installer did not confirm Obtainium delivery",
+        )
+    fact(
+        "apps.provenance.signers",
+        "observed-only",
+        signer_count,
+        "App Manager signer hashes are preserved for curation but not yet enforced during plan",
+    )
+    if installer_mismatches:
+        report.append(
+            f"{installer_mismatches} App Manager installer value(s) disagreed with the ADB package snapshot"
+        )
+        fact(
+            "apps.provenance.installerMismatch",
+            "ambiguous",
+            installer_mismatches,
+            "App Manager and ADB installer observations disagreed",
+        )
+    fact(
         "apps.provenance",
         "ambiguous",
-        len(packages),
-        "installer evidence does not prove repository, release URL, signer, or future delivery",
+        len(packages) - len(release_packages),
+        "remaining installer evidence does not prove repository, release URL, signer, or future delivery",
     )
 
     night_mode = android.get("nightMode")
@@ -186,6 +295,10 @@ def render_with_coverage(snapshot):
         for permission in runtime_permissions
         if isinstance(permission, str) and PERMISSION_NAME.fullmatch(permission)
     }
+    restricted_permissions = set(android.get("runtimePermissionRestrictions", {}))
+    restriction_evidence_complete = not android.get(
+        "unparsedPermissionRestrictionRows"
+    )
     if not runtime_permissions:
         report.append(
             "no supported runtime-permission definitions were observed; all permission grants were omitted"
@@ -206,6 +319,8 @@ def render_with_coverage(snapshot):
     observed_grants = 0
     rendered_grants = 0
     omitted_system_runtime_grants = 0
+    omitted_restricted_grants = 0
+    omitted_unknown_restriction_grants = 0
     for package in snapshot.get("packages", []):
         name = package.get("name")
         grants = set()
@@ -219,10 +334,17 @@ def render_with_coverage(snapshot):
             and PERMISSION_NAME.fullmatch(permission)
             and permission in runtime_permissions
         }
+        restricted_grants = runtime_grants & restricted_permissions
+        if package.get("thirdPartyForManagedUser"):
+            omitted_restricted_grants += len(restricted_grants)
+        runtime_grants -= restricted_permissions
         if not package.get("thirdPartyForManagedUser"):
             omitted_system_runtime_grants += len(runtime_grants)
             continue
         observed_grants += len(grants)
+        if not restriction_evidence_complete:
+            omitted_unknown_restriction_grants += len(runtime_grants)
+            runtime_grants = set()
         grants = runtime_grants
         rendered_grants += len(grants)
         if grants:
@@ -234,7 +356,12 @@ def render_with_coverage(snapshot):
                     "  ];",
                 ]
             )
-    omitted_grants = observed_grants - rendered_grants
+    omitted_grants = (
+        observed_grants
+        - rendered_grants
+        - omitted_restricted_grants
+        - omitted_unknown_restriction_grants
+    )
     fact(
         "android.permissions.grants",
         "declarable",
@@ -261,6 +388,26 @@ def render_with_coverage(snapshot):
             omitted_system_runtime_grants,
             "system-package runtime grants are image-specific",
         )
+    if omitted_restricted_grants:
+        report.append(
+            f"{omitted_restricted_grants} restricted runtime-permission grant(s) were preserved and omitted because installer/platform allowlisting is not portable"
+        )
+        fact(
+            "android.permissions.restrictedGrants",
+            "ambiguous",
+            omitted_restricted_grants,
+            "hard/soft restricted grants depend on installer or platform allowlisting",
+        )
+    if omitted_unknown_restriction_grants:
+        report.append(
+            f"{omitted_unknown_restriction_grants} runtime-permission grant(s) were omitted because restriction evidence was incomplete"
+        )
+        fact(
+            "android.permissions.unknownRestrictionGrants",
+            "ambiguous",
+            omitted_unknown_restriction_grants,
+            "incomplete PermissionInfo evidence makes automatic grant portability unknown",
+        )
     if android.get("unparsedPermissionDefinitionRows"):
         report.append(
             f"{len(android['unparsedPermissionDefinitionRows'])} permission-definition row(s) were unparsed; affected grants may be omitted"
@@ -270,6 +417,351 @@ def render_with_coverage(snapshot):
             "ambiguous",
             len(android["unparsedPermissionDefinitionRows"]),
             "permission-definition rows did not match the supported grammar",
+        )
+
+    rendered_permission_flag_rows = 0
+    android_owned_permission_flags = 0
+    for package in snapshot.get("packages", []):
+        if not package.get("thirdPartyForManagedUser"):
+            continue
+        name = package.get("name")
+        for state in package.get("runtimePermissionStates", []):
+            permission = state.get("permission")
+            if not isinstance(permission, str) or not PERMISSION_NAME.fullmatch(permission):
+                continue
+            observed_flags = set(state.get("flags", []))
+            writable = sorted(
+                WRITABLE_PERMISSION_FLAGS[flag]
+                for flag in observed_flags
+                if flag in WRITABLE_PERMISSION_FLAGS
+            )
+            android_owned_permission_flags += len(
+                observed_flags - WRITABLE_PERMISSION_FLAGS.keys()
+            )
+            if writable:
+                state_lines.extend(
+                    [
+                        "",
+                        f"  android.permissions.{json.dumps(name)}.flags.{json.dumps(permission)} = [",
+                        nix_list(writable),
+                        "  ];",
+                    ]
+                )
+            else:
+                state_lines.append(
+                    f"  android.permissions.{json.dumps(name)}.flags.{json.dumps(permission)} = [];"
+                )
+            rendered_permission_flag_rows += 1
+    fact(
+        "android.permissions.flags",
+        "declarable",
+        rendered_permission_flag_rows,
+        "writable PackageManager policy flags are represented exactly for every observed runtime-permission row",
+    )
+    if android_owned_permission_flags:
+        report.append(
+            f"{android_owned_permission_flags} Android-owned permission flag(s) were preserved in the snapshot and omitted"
+        )
+        fact(
+            "android.permissions.androidOwnedFlags",
+            "observed-only",
+            android_owned_permission_flags,
+            "PackageManager exposes these flags but adb shell cannot safely own them",
+        )
+    if android.get("unparsedPermissionStateRows"):
+        report.append(
+            f"{len(android['unparsedPermissionStateRows'])} runtime-permission state row(s) were unparsed"
+        )
+        fact(
+            "android.permissions.unparsedState",
+            "ambiguous",
+            len(android["unparsedPermissionStateRows"]),
+            "runtime-permission state rows did not match the supported grammar",
+        )
+    if android.get("unparsedPermissionRestrictionRows"):
+        report.append(
+            f"{len(android['unparsedPermissionRestrictionRows'])} permission-restriction row(s) were unparsed"
+        )
+        fact(
+            "android.permissions.unparsedRestrictions",
+            "ambiguous",
+            len(android["unparsedPermissionRestrictionRows"]),
+            "PermissionInfo restriction rows did not match the supported grammar",
+        )
+
+    rendered_app_ops = 0
+    default_app_ops = 0
+    for name, operations in sorted(android.get("appOps", {}).items()):
+        if name not in third_party_names or not PACKAGE_NAME.fullmatch(name):
+            continue
+        for operation, mode in sorted(operations.items()):
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]*", operation):
+                continue
+            if mode == "default":
+                default_app_ops += 1
+                continue
+            if mode not in {"allow", "ignore", "deny", "foreground"}:
+                continue
+            state_lines.append(
+                f"  android.appOps.{json.dumps(name)}.{json.dumps(operation)} = {json.dumps(mode)};"
+            )
+            rendered_app_ops += 1
+    fact(
+        "android.appOps.packageModes",
+        "declarable",
+        rendered_app_ops,
+        "non-default package-level AppOps overrides are representable",
+    )
+    if default_app_ops:
+        fact(
+            "android.appOps.explicitDefault",
+            "observed-only",
+            default_app_ops,
+            "explicit default rows carry no portable non-default policy",
+        )
+    fact(
+        "android.appOps.uidModes",
+        "observed-only",
+        None,
+        "UID-wide modes often derive from permission state and are not imported as package overrides",
+    )
+    if android.get("derivedAppOpRows"):
+        fact(
+            "android.appOps.switchDerivedModes",
+            "observed-only",
+            len(android["derivedAppOpRows"]),
+            "switch-op-derived effective modes are not explicit package overrides",
+        )
+    if android.get("unparsedAppOpRows"):
+        report.append(
+            f"{len(android['unparsedAppOpRows'])} package AppOps row(s) were unparsed"
+        )
+        fact(
+            "android.appOps.unparsed",
+            "ambiguous",
+            len(android["unparsedAppOpRows"]),
+            "package AppOps rows did not match the supported grammar",
+        )
+
+    shell_suspended = []
+    other_suspensions = 0
+    for name, package in sorted(third_party_by_name.items()):
+        user_state = next(
+            (
+                user
+                for user in package.get("users", [])
+                if user.get("id") == managed_user
+            ),
+            {},
+        )
+        if not user_state.get("suspended"):
+            continue
+        suspenders = set(user_state.get("suspendingPackages", []))
+        if "com.android.shell" in suspenders:
+            shell_suspended.append(name)
+        if suspenders - {"com.android.shell"} or not suspenders:
+            other_suspensions += 1
+    if shell_suspended:
+        state_lines.extend(
+            ["", "  android.packages.suspended = [", nix_list(shell_suspended), "  ];"]
+        )
+    fact(
+        "android.packages.suspended.shell",
+        "declarable",
+        len(shell_suspended),
+        "adb-shell suspension authority can be restored without claiming other authorities",
+    )
+    if other_suspensions:
+        report.append(
+            f"{other_suspensions} third-party package suspension(s) involved another or unknown authority and were omitted"
+        )
+        fact(
+            "android.packages.suspended.otherAuthority",
+            "observed-only",
+            other_suspensions,
+            "nix-android cannot portably recreate another package or administrator as suspender",
+        )
+
+    rendered_locales = 0
+    for name, locales in sorted(android.get("appLocales", {}).items()):
+        if name not in third_party_names or not locales:
+            continue
+        if not all(
+            isinstance(locale, str)
+            and len(locale) <= 100
+            and LOCALE_TAG.fullmatch(locale)
+            for locale in locales
+        ):
+            continue
+        state_lines.extend(
+            [
+                "",
+                f"  android.locales.{json.dumps(name)} = [",
+                nix_list(locales),
+                "  ];",
+            ]
+        )
+        rendered_locales += len(locales)
+    fact(
+        "android.locales",
+        "declarable",
+        rendered_locales,
+        "non-default per-app locale preferences are portable package state",
+    )
+    if android.get("unparsedAppLocaleRows"):
+        report.append(
+            f"{len(android['unparsedAppLocaleRows'])} app-locale row(s) were unparsed"
+        )
+        fact(
+            "android.locales.unparsed",
+            "ambiguous",
+            len(android["unparsedAppLocaleRows"]),
+            "app-locale output did not match the supported grammar",
+        )
+
+    input_method = android.get("inputMethod", {})
+    enabled_imes = sorted(
+        {
+            component
+            for component in input_method.get("enabled", [])
+            if isinstance(component, str) and COMPONENT_NAME.fullmatch(component)
+        }
+    )
+    selected_ime = input_method.get("selected")
+    if selected_ime is not None and (
+        not isinstance(selected_ime, str)
+        or not COMPONENT_NAME.fullmatch(selected_ime)
+        or selected_ime not in enabled_imes
+    ):
+        selected_ime = None
+        report.append("selected input method was invalid or not enabled; omitted")
+        fact(
+            "android.inputMethod.selected",
+            "ambiguous",
+            1,
+            "selected component was invalid or absent from the enabled set",
+        )
+    if enabled_imes:
+        state_lines.extend(
+            ["", "  android.inputMethod.enabled = [", nix_list(enabled_imes), "  ];"]
+        )
+    if selected_ime is not None:
+        state_lines.append(
+            f"  android.inputMethod.default = {json.dumps(selected_ime)};"
+        )
+    fact(
+        "android.inputMethod.enabled",
+        "declarable",
+        len(enabled_imes),
+        "enabled input-method components can be restored after their packages exist",
+    )
+    if selected_ime is not None:
+        fact(
+            "android.inputMethod.selected",
+            "declarable",
+            1,
+            "the selected enabled input-method component is representable",
+        )
+    if input_method.get("unparsed"):
+        fact(
+            "android.inputMethod.unparsed",
+            "ambiguous",
+            len(input_method["unparsed"]),
+            "input-method component output did not match the supported grammar",
+        )
+
+    data_saver = android.get("dataSaver", {})
+    if isinstance(data_saver.get("enabled"), bool):
+        state_lines.append(
+            f"  android.dataSaver.enabled = {str(data_saver['enabled']).lower()};"
+        )
+        fact(
+            "android.dataSaver.enabled",
+            "declarable",
+            1,
+            "global Data Saver state is directly readable and writable",
+        )
+    restricted_uids = set(data_saver.get("restrictedUids", []))
+    exempt_uids = set(data_saver.get("exemptUids", []))
+    uid_policy_count = len(restricted_uids | exempt_uids)
+    fact(
+        "android.dataSaver.packages",
+        "observed-only",
+        uid_policy_count,
+        "per-app UID policies pass read-back but are removed for user-installed apps by the supported AOSP reboot bench",
+    )
+    if uid_policy_count:
+        report.append(
+            f"{uid_policy_count} per-UID Data Saver override(s) were preserved as evidence but omitted because reboot persistence failed"
+        )
+
+    rendered_link_packages = 0
+    verifier_domains = 0
+    invalid_auto_verify_domains = 0
+    for name, link_state in sorted(android.get("appLinks", {}).items()):
+        if name not in third_party_names or not isinstance(link_state, dict):
+            continue
+        allowed = link_state.get("allowed")
+        selected = sorted(
+            {
+                domain
+                for domain in link_state.get("selected", [])
+                if isinstance(domain, str) and DOMAIN_NAME.fullmatch(domain)
+            }
+        )
+        verifier_domains += len(link_state.get("verification", {}))
+        invalid_auto_verify_domains += len(
+            link_state.get("invalidAutoVerifyDomains", [])
+        )
+        declarations = []
+        if allowed is False:
+            declarations.append("    allowed = false;")
+        if selected:
+            declarations.extend(
+                ["    selected = [", nix_list(selected, indent="      "), "    ];"]
+            )
+        if declarations:
+            state_lines.extend(
+                ["", f"  android.appLinks.{json.dumps(name)} = {{", *declarations, "  };"]
+            )
+            rendered_link_packages += 1
+    fact(
+        "android.appLinks.userState",
+        "declarable",
+        rendered_link_packages,
+        "non-default link-handling denial and positive user domain selections are representable",
+    )
+    fact(
+        "android.appLinks.verification",
+        "observed-only",
+        verifier_domains,
+        "domain verification belongs to the OS verifier and signer/domain relationship",
+    )
+    fact(
+        "android.appLinks.invalidAutoVerifyDomains",
+        "observed-only",
+        invalid_auto_verify_domains,
+        "invalid manifest autoVerify declarations are app metadata, not portable user state",
+    )
+    fact(
+        "android.appLinks.unselected",
+        "ambiguous",
+        sum(
+            len(state.get("unselected", []))
+            for state in android.get("appLinks", {}).values()
+            if isinstance(state, dict)
+        ),
+        "shell output does not distinguish never-selected domains from an explicit user deselection",
+    )
+    if android.get("unparsedAppLinkRows"):
+        report.append(
+            f"{len(android['unparsedAppLinkRows'])} app-link row(s) were unparsed; affected declarations may be omitted"
+        )
+        fact(
+            "android.appLinks.unparsed",
+            "ambiguous",
+            len(android["unparsedAppLinkRows"]),
+            "app-link rows did not match the supported stock/Graphene grammar",
         )
 
     whitelist = android.get("deviceIdleWhitelist", {})
@@ -352,16 +844,24 @@ def render_with_coverage(snapshot):
     ):
         fact(surface, "unreachable", None, reason)
 
+    release_lines = [
+        f"  apps.release.{json.dumps(name)}.github = {json.dumps(value)};"
+        for name, value in sorted(release_github.items())
+    ] + [
+        f"  apps.release.{json.dumps(name)}.gitea = {json.dumps(value)};"
+        for name, value in sorted(release_gitea.items())
+    ]
+
     rendered = f'''# Generated by android-rebuild import from a read-only package snapshot.
 # Observed device model: {model}
 # CURATE BEFORE CONVERGING. Notes:
 #  - Packages recorded with Play as installer are labeled apps.play; this is
 #    evidence, not verified provenance.
-#  - Every other observed third-party app is attended, so this starter config
-#    asserts presence without pretending installer attribution proves a source.
+#  - Credential-free Obtainium exports can recover supported release sources;
+#    every remaining third-party app stays attended instead of guessing.
 #  - The commented candidates below are evidence for manual curation only.
-#  - Runtime permission declarations reproduce PackageManager grant bits only;
-#    app-op modes and one-time/foreground scope remain separate Android state.
+#  - Runtime grant bits, writable permission-policy flags, and package-level
+#    app-op overrides are separate declarations; UID-wide app-ops stay evidence.
 {{
   device.name = "CHANGEME";
   device.abi = {json.dumps(abi)};
@@ -374,6 +874,8 @@ def render_with_coverage(snapshot):
 {nix_list(attended)}
   ];
 
+{chr(10).join(release_lines)}
+
   apps.cleanup = "none";
 
 {chr(10).join(state_lines)}
@@ -382,6 +884,8 @@ def render_with_coverage(snapshot):
 {comments(fdroid)}
   # Candidate Obtainium installs; recover the upstream URL from Obtainium:
 {comments(obtainium)}
+  # App Manager signing-certificate evidence (not yet enforced by plan):
+{comments(signer_notes)}
 
   # Import omissions / observations that are not safely declarable:
 {comments(report)}

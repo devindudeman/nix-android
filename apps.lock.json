@@ -1,6 +1,6 @@
 {
   "abi": "x86_64",
-  "lockedAt": 1784146122,
+  "lockedAt": 1784192903,
   "packages": {
     "org.fdroid.fdroid": {
       "versionCode": 1023052,
@@ -24,6 +24,17 @@
       ],
       "preferredSigner": "228fb2cfe90831c1499ec3ccaf61e96e8e1ce70766b9474672ce427334d41c42"
     },
+    "helium314.keyboard": {
+      "versionCode": 4005,
+      "versionName": "4.0",
+      "url": "https://f-droid.org/repo/helium314.keyboard_4005.apk",
+      "sha256": "8565efad70adb296c50555eded868274e607bc910165b3a4255d6709af9a887d",
+      "repoFingerprint": "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab",
+      "signerSha256": [
+        "5ec0a5313aa43558ee75b20b58ccd8194cdbf066df94a43ba288d933d60b86ce"
+      ],
+      "preferredSigner": "5ec0a5313aa43558ee75b20b58ccd8194cdbf066df94a43ba288d933d60b86ce"
+    },
     "com.edde746.plezy": {
       "versionCode": 4121,
       "versionName": "2.9.1",
@@ -33,10 +44,10 @@
       "apkPath": "plezy.apk"
     },
     "dev.imranr.obtainium.fdroid": {
-      "versionCode": 2346,
-      "versionName": "1.6.7",
-      "url": "https://github.com/ImranR98/Obtainium/releases/download/v1.6.7/app-fdroid-release.apk",
-      "sha256": "b4d1cf14b0997f09626f30b5ada94e9efe1aa9db2d2fd193ddba0dc90ad196fd",
+      "versionCode": 2347,
+      "versionName": "1.6.8",
+      "url": "https://github.com/ImranR98/Obtainium/releases/download/v1.6.8/app-fdroid-release.apk",
+      "sha256": "58f28ad8e9878030214de5ea92568b9b4834a1f400551bb026776d921aac5d7c",
       "source": "github:ImranR98/Obtainium"
     }
   }

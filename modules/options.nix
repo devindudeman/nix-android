@@ -149,10 +149,82 @@
         }
       );
 
-      packages.disabled = lib.mkOption {
-        type = with lib.types; listOf str;
-        default = [ ];
-        description = "Packages kept disabled for the managed user (`pm disable-user`). Ensure-disabled only: removing an entry does not re-enable (imperative escape: `pm enable`).";
+      packages = {
+        disabled = lib.mkOption {
+          type = with lib.types; listOf str;
+          default = [ ];
+          description = "Packages kept disabled for the managed user (`pm disable-user`). Ensure-disabled only: removing an entry does not re-enable (imperative escape: `pm enable`).";
+        };
+
+        suspended = lib.mkOption {
+          type = with lib.types; listOf str;
+          default = [ ];
+          description = "Packages suspended by the adb shell authority for the managed user (`pm suspend`). Other suspension authorities remain independent.";
+        };
+
+        unsuspended = lib.mkOption {
+          type = with lib.types; listOf str;
+          default = [ ];
+          description = "Packages from which nix-android removes adb-shell suspension (`pm unsuspend`). This cannot override suspension imposed by another package or administrator.";
+        };
+      };
+
+      locales = lib.mkOption {
+        type = with lib.types; attrsOf (listOf str);
+        default = { };
+        description = "Exact canonical BCP 47 per-app locale preference list (`cmd locale`). An empty list resets that app to the system language.";
+      };
+
+      inputMethod = {
+        enabled = lib.mkOption {
+          type = with lib.types; listOf str;
+          default = [ ];
+          description = "Input-method service components to ensure enabled (`ime enable`).";
+        };
+        disabled = lib.mkOption {
+          type = with lib.types; listOf str;
+          default = [ ];
+          description = "Input-method service components to ensure disabled (`ime disable`).";
+        };
+        default = lib.mkOption {
+          type = with lib.types; nullOr str;
+          default = null;
+          description = "Selected input-method service component (`ime set`). null = unmanaged; a selected component must also appear in enabled.";
+        };
+      };
+
+      dataSaver = {
+        enabled = lib.mkOption {
+          type = with lib.types; nullOr bool;
+          default = null;
+          description = "Global Android Data Saver state (`cmd netpolicy set restrict-background`). null = unmanaged.";
+        };
+      };
+
+      appLinks = lib.mkOption {
+        type =
+          with lib.types;
+          attrsOf (submodule {
+            options = {
+              allowed = lib.mkOption {
+                type = nullOr bool;
+                default = null;
+                description = "Whether this app may handle its verified links. null = unmanaged.";
+              };
+              selected = lib.mkOption {
+                type = listOf str;
+                default = [ ];
+                description = "Declared web domains to select for this app for owner user 0.";
+              };
+              unselected = lib.mkOption {
+                type = listOf str;
+                default = [ ];
+                description = "Declared web domains from which to clear this app's user selection.";
+              };
+            };
+          });
+        default = { };
+        description = "User-owned app-link handling and domain selections. Domain-verifier results and shell force-approval states are never managed.";
       };
 
       permissions = lib.mkOption {
@@ -170,10 +242,39 @@
                 default = [ ];
                 description = "Runtime permissions to ensure revoked (pm revoke).";
               };
+              flags = lib.mkOption {
+                type = attrsOf (
+                  listOf (enum [
+                    "review-required"
+                    "revoked-compat"
+                    "revoke-when-requested"
+                    "user-fixed"
+                    "user-set"
+                  ])
+                );
+                default = { };
+                description = "Exact writable PackageManager flags for each runtime permission. The listed flags are set and other writable flags are cleared; Android-owned flags remain untouched.";
+              };
             };
           });
         default = { };
-        description = "Per-package runtime-permission state, keyed by package id.";
+        description = "Per-package runtime-permission grant bits and writable policy flags, keyed by package id.";
+      };
+
+      appOps = lib.mkOption {
+        type =
+          with lib.types;
+          attrsOf (
+            attrsOf (enum [
+              "allow"
+              "ignore"
+              "deny"
+              "default"
+              "foreground"
+            ])
+          );
+        default = { };
+        description = "Explicit per-package AppOps overrides (`appops set`), keyed by package id and uppercase operation name. `default` clears the package override; UID-wide modes are intentionally outside this option.";
       };
 
       batteryOptimization.exempt = lib.mkOption {

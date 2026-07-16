@@ -35,13 +35,15 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 wait_ready() {
-  local old_boot=${1:-} deadline=$((SECONDS + 300)) boot pm
+  local old_boot=${1:-} deadline=$((SECONDS + 300)) boot pm netpolicy
   while [ "$SECONDS" -lt "$deadline" ]; do
     boot=$(adb shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r' || true)
     pm=$(adb shell pm path android 2>/dev/null || true)
+    netpolicy=$(adb shell cmd netpolicy get restrict-background 2>/dev/null || true)
     if [ -n "$boot" ] && [ "$boot" != "$old_boot" ] \
       && [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = 1 ] \
-      && grep -q '^package:' <<<"$pm"; then
+      && grep -q '^package:' <<<"$pm" \
+      && grep -q '^Restrict background status:' <<<"$netpolicy"; then
       adb shell cmd package wait-for-handler --timeout 60000 >/dev/null
       printf '%s\n' "$boot"
       return
@@ -67,8 +69,38 @@ role_id() {
   esac
 }
 
+permission_user_block() {
+  local wanted_user=$1
+  gawk -v wanted_user="$wanted_user" '
+    BEGIN { header = "    User " wanted_user ":" }
+    /^    [^ ]/ {
+      active = index($0, header) == 1
+      if (active) found = 1
+    }
+    active { print }
+    END { if (!found) exit 1 }
+  '
+}
+
+permission_scope_fixture=$(permission_user_block 0 <<'EOF'
+    User 10: installed=true
+      runtime permissions:
+        android.permission.CAMERA: granted=false, flags=[]
+    User 0: installed=true
+      runtime permissions:
+        android.permission.CAMERA: granted=true, flags=[ USER_SET]
+EOF
+)
+grep -Fq 'android.permission.CAMERA: granted=true' <<<"$permission_scope_fixture"
+if grep -Fq 'granted=false' <<<"$permission_scope_fixture"; then
+  echo "permission user-block parser crossed into another profile" >&2
+  exit 1
+fi
+
 verify_state() {
-  local manifest=$1 pkg want got ns key permission role dump packages line found
+  local manifest=$1 pkg want got ns key permission role dump packages line found component domain links selected enabled_imes
+  local want_csv raw_flags flag platform_flag appop_output unknown_appop_output
+  local -a writable_flags=(review-required revoke-when-requested revoked-compat user-fixed user-set)
   while IFS=$'\t' read -r pkg want; do
     packages=$(adb shell pm list packages --show-versioncode --user 0 "$pkg" | tr -d '\r')
     got=
@@ -101,16 +133,45 @@ verify_state() {
     grep -Fqx "package:$pkg" <<<"$packages"
   done < <(jq -r '.android.disabled[]' "$manifest")
   while IFS=$'\t' read -r pkg permission; do
-    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
+    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r' | permission_user_block 0)
     grep -F -m1 "  $permission: granted=true" <<<"$dump" >/dev/null
   done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.grant[] | [$p, .] | @tsv' "$manifest")
   while IFS=$'\t' read -r pkg permission; do
-    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
+    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r' | permission_user_block 0)
     if grep -F -m1 "  $permission: granted=true" <<<"$dump" >/dev/null; then
       echo "$pkg unexpectedly has $permission" >&2
       return 1
     fi
   done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.revoke[] | [$p, .] | @tsv' "$manifest")
+  while IFS=$'\t' read -r pkg permission want_csv; do
+    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r' | permission_user_block 0)
+    raw_flags=$(grep -F -m1 "  $permission: granted=" <<<"$dump" \
+      | sed -n 's/.*flags=\[ *\([^]]*\) *\].*/\1/p')
+    for flag in "${writable_flags[@]}"; do
+      platform_flag=${flag^^}
+      platform_flag=${platform_flag//-/_}
+      if [[ ",$want_csv," == *",$flag,"* ]]; then
+        grep -Eq "(^|[|[:space:]])${platform_flag}([|[:space:]]|$)" <<<"$raw_flags" \
+          || { echo "permission flag $pkg $permission: missing $flag" >&2; return 1; }
+      elif grep -Eq "(^|[|[:space:]])${platform_flag}([|[:space:]]|$)" <<<"$raw_flags"; then
+        echo "permission flag $pkg $permission: unexpected $flag" >&2
+        return 1
+      fi
+    done
+  done < <(jq -r '.android.permissions | to_entries[] | .key as $p | .value.flags | to_entries[] | [$p, .key, (.value | sort | join(","))] | @tsv' "$manifest")
+  while IFS=$'\t' read -r pkg operation mode; do
+    appop_output=$(adb shell appops get --user 0 "$pkg" "$operation" | tr -d '\r')
+    got=$(sed -n "s/^${operation}: \\(allow\\|ignore\\|deny\\|default\\|foreground\\).*/\\1/p" <<<"$appop_output" | head -n1)
+    if [ -z "$got" ]; then
+      unknown_appop_output=$(sed -E \
+        -e '/^No operations\.$/d' \
+        -e '/^Default mode: (allow|ignore|deny|default|foreground)$/d' \
+        -e "/^Uid mode: ${operation}: (allow|ignore|deny|default|foreground)$/d" \
+        -e '/^$/d' <<<"$appop_output")
+      [ -n "$unknown_appop_output" ] || got=default
+    fi
+    [ "$got" = "$mode" ] || { echo "app-op $pkg $operation: got '$got', want '$mode'" >&2; return 1; }
+  done < <(jq -r '.android.appOps | to_entries[] | .key as $p | .value | to_entries[] | [$p, .key, .value] | @tsv' "$manifest")
   while read -r pkg; do
     packages=$(adb shell cmd deviceidle whitelist | tr -d '\r')
     grep -Fq ",$pkg," <<<"$packages"
@@ -119,6 +180,67 @@ verify_state() {
     got=$(adb shell cmd role get-role-holders --user 0 "$(role_id "$role")" | tr -d '\r')
     [ "$got" = "$pkg" ] || { echo "role $role: got '$got', want '$pkg'" >&2; return 1; }
   done < <(jq -r '.android.roles | to_entries[] | [.key, .value] | @tsv' "$manifest")
+  while read -r pkg; do
+    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
+    grep -A12 -E "^[[:space:]]+User 0: .*installed=" <<<"$dump" \
+      | grep -Fq 'suspendingPackage=<0>com.android.shell'
+  done < <(jq -r '.android.suspended[]' "$manifest")
+  while read -r pkg; do
+    dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
+    if grep -A12 -E "^[[:space:]]+User 0: .*installed=" <<<"$dump" \
+      | grep -Fq 'suspendingPackage=<0>com.android.shell'; then
+      echo "$pkg remained suspended by adb shell" >&2
+      return 1
+    fi
+  done < <(jq -r '.android.unsuspended[]' "$manifest")
+  while IFS=$'\t' read -r pkg want; do
+    got=$(adb shell cmd locale get-app-locales "$pkg" --user 0 | tr -d '\r' \
+      | sed -n 's/^Locales for .* for user 0 are \[\(.*\)\]$/\1/p')
+    [ "$got" = "$want" ] || { echo "locales $pkg: got '$got', want '$want'" >&2; return 1; }
+  done < <(jq -r '.android.locales | to_entries[] | [.key, (.value | join(","))] | @tsv' "$manifest")
+  enabled_imes=$(adb shell ime list -s --user 0 | tr -d '\r')
+  while read -r component; do
+    grep -Fqx "$component" <<<"$enabled_imes"
+  done < <(jq -r '.android.inputMethod.enabled[]' "$manifest")
+  while read -r component; do
+    if grep -Fqx "$component" <<<"$enabled_imes"; then
+      echo "input method remained enabled: $component" >&2
+      return 1
+    fi
+  done < <(jq -r '.android.inputMethod.disabled[]' "$manifest")
+  want=$(jq -r '.android.inputMethod.default' "$manifest")
+  if [ "$want" != null ]; then
+    got=$(adb shell settings get --user 0 secure default_input_method | tr -d '\r')
+    [ "$got" = "$want" ] || { echo "default input method: got '$got', want '$want'" >&2; return 1; }
+  fi
+  want=$(jq -r '.android.dataSaver.enabled' "$manifest")
+  if [ "$want" != null ]; then
+    [ "$want" = true ] && want=enabled || want=disabled
+    got=$(adb shell cmd netpolicy get restrict-background | tr -d '\r' \
+      | sed -n 's/^Restrict background status: //p')
+    [ "$got" = "$want" ] || { echo "Data Saver: got '$got', want '$want'" >&2; return 1; }
+  fi
+  while IFS=$'\t' read -r pkg want; do
+    links=$(adb shell pm get-app-links --user 0 "$pkg" | tr -d '\r')
+    if [ "$want" != null ]; then
+      got=$(sed -n 's/^      Verification link handling allowed: //p' <<<"$links")
+      [ "$got" = "$want" ] || { echo "app links allowed $pkg: got '$got', want '$want'" >&2; return 1; }
+    fi
+    selected=$(awk '
+      /^        Enabled:$/ { enabled=1; next }
+      /^        Disabled:$/ { enabled=0; next }
+      enabled && /^          [^[:space:]]/ { sub(/^          /, ""); print }
+    ' <<<"$links")
+    while read -r domain; do
+      grep -Fqx "$domain" <<<"$selected"
+    done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].selected[]' "$manifest")
+    while read -r domain; do
+      if grep -Fqx "$domain" <<<"$selected"; then
+        echo "app link remained selected: $pkg $domain" >&2
+        return 1
+      fi
+    done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].unselected[]' "$manifest")
+  done < <(jq -r '.android.appLinks | to_entries[] | [.key, (.value.allowed | tostring)] | @tsv' "$manifest")
 }
 
 devices=$(adb devices)
@@ -169,7 +291,7 @@ for run in $(seq 1 "$runs"); do
     .android.disabled += ["org.example.play"] |
     .android.deviceidleExempt += ["org.example.play"] |
     .android.permissions."org.example.play" = {
-      grant: ["android.permission.POST_NOTIFICATIONS"], revoke: []
+      grant: ["android.permission.POST_NOTIFICATIONS"], revoke: [], flags: {}
     }
   ' "$manifest" > "$tmp/missing-play-$run.json"
   if bash engine/converge.sh "$tmp/missing-play-$run.json" --apply --serial "$serial" \
@@ -194,6 +316,37 @@ for run in $(seq 1 "$runs"); do
   nix run .#android-rebuild --accept-flake-config -- bootstrap --flake .#bench --serial "$serial"
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
+
+  # Exercise every safe inverse branch, persist it, then restore the declared
+  # bench state. The second IME is a reproducible managed APK, so both
+  # selection and disablement are real mutations rather than preexisting state.
+  jq '
+    .android.permissions."org.fdroid.fdroid".flags."android.permission.POST_NOTIFICATIONS" = [] |
+    .android.appOps."org.fdroid.fdroid".RUN_IN_BACKGROUND = "default" |
+    .android.suspended = [] |
+    .android.unsuspended = ["dev.imranr.obtainium.fdroid"] |
+    .android.locales."org.fdroid.fdroid" = [] |
+    .android.inputMethod = {
+      enabled: ["com.android.inputmethod.latin/.LatinIME"],
+      disabled: ["helium314.keyboard/.latin.LatinIME"],
+      default: "com.android.inputmethod.latin/.LatinIME"
+    } |
+    .android.dataSaver.enabled = false |
+    .android.appLinks."org.fdroid.fdroid" = {
+      allowed: true, selected: [], unselected: ["f-droid.org"]
+    }
+  ' "$manifest" > "$tmp/inverse-$run.json"
+  bash engine/converge.sh "$tmp/inverse-$run.json" --apply --serial "$serial"
+  verify_state "$tmp/inverse-$run.json"
+  [ "$(bash engine/converge.sh "$tmp/inverse-$run.json" --serial "$serial")" = "✓ device matches manifest" ]
+  inverse_boot=$(adb shell cat /proc/sys/kernel/random/boot_id | tr -d '\r')
+  adb shell svc power reboot userrequested || true
+  wait_ready "$inverse_boot" >/dev/null
+  verify_state "$tmp/inverse-$run.json"
+  [ "$(bash engine/converge.sh "$tmp/inverse-$run.json" --serial "$serial")" = "✓ device matches manifest" ]
+  bash engine/converge.sh "$manifest" --apply --serial "$serial"
+  verify_state "$manifest"
+  [ "$(bash engine/converge.sh "$manifest" --serial "$serial")" = "✓ device matches manifest" ]
 
   # A Play declaration must protect an installed third-party package from
   # explicit cleanup even though no APK is attached to that declaration.

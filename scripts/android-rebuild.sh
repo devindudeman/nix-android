@@ -8,6 +8,7 @@
 #   android-rebuild bootstrap --flake .#pixel --serial S  phased wiped-device rebuild
 #   android-rebuild update --flake .#pixel [--lock PATH]  refresh apps.lock.json
 #   android-rebuild import --serial S [--snapshot-out PATH] [--report-out PATH]
+#     [--obtainium-export PATH] [--app-manager-export PATH]
 #
 # Runs from the config repo (the flake). NIX_ANDROID_SRC points at the
 # nix-android checkout for helper scripts; the packaged CLI bakes it in.
@@ -27,6 +28,7 @@ Usage:
   android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
+                         [--obtainium-export PATH] [--app-manager-export PATH]
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
 EOF
@@ -43,6 +45,8 @@ serial=${ANDROID_SERIAL:-}
 lock=apps.lock.json
 snapshot_out=
 report_out=
+obtainium_export=
+app_manager_export=
 watch=0
 flake_set=0
 lock_set=0
@@ -68,6 +72,14 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || { echo "--report-out requires a value" >&2; exit 2; }
     report_out=$2; shift 2
     ;;
+  --obtainium-export)
+    [ $# -ge 2 ] || { echo "--obtainium-export requires a value" >&2; exit 2; }
+    obtainium_export=$2; shift 2
+    ;;
+  --app-manager-export)
+    [ $# -ge 2 ] || { echo "--app-manager-export requires a value" >&2; exit 2; }
+    app_manager_export=$2; shift 2
+    ;;
   --watch) watch=1; shift ;;
   -h | --help) usage; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -88,6 +100,14 @@ if [ -n "$report_out" ] && [ "$cmd" != import ]; then
   echo "--report-out is only valid with import" >&2
   exit 2
 fi
+if [ -n "$obtainium_export" ] && [ "$cmd" != import ]; then
+  echo "--obtainium-export is only valid with import" >&2
+  exit 2
+fi
+if [ -n "$app_manager_export" ] && [ "$cmd" != import ]; then
+  echo "--app-manager-export is only valid with import" >&2
+  exit 2
+fi
 if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
   echo "--watch is only valid with assist" >&2
   exit 2
@@ -100,6 +120,8 @@ import)
   import_args=(--serial "$serial")
   [ -z "$snapshot_out" ] || import_args+=(--snapshot-out "$snapshot_out")
   [ -z "$report_out" ] || import_args+=(--report-out "$report_out")
+  [ -z "$obtainium_export" ] || import_args+=(--obtainium-export "$obtainium_export")
+  [ -z "$app_manager_export" ] || import_args+=(--app-manager-export "$app_manager_export")
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
 build | plan | switch | assist | bootstrap | update) ;;

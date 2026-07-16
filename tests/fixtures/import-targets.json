@@ -9,7 +9,42 @@
       "disabled": [
         "package:com.example.system"
       ],
+      "appLinks": [
+        "### nix-android package org.example.graphene",
+        "  org.example.graphene:",
+        "    Domain verification state:",
+        "      privacy.example.test: verified",
+        "    User 0:",
+        "      Verification link handling allowed: false",
+        "      Selection state:",
+        "        Enabled:",
+        "          privacy.example.test",
+        "        Disabled:",
+        "          default.example.test"
+      ],
+      "appLocales": [
+        "### nix-android package org.example.graphene",
+        "Locales for org.example.graphene for user 0 are [en-US,fr-FR]"
+      ],
+      "appOps": [
+        "  Uid u0a123:",
+        "    Package org.example.graphene:",
+        "      RUN_IN_BACKGROUND (ignore): "
+      ],
       "nightMode": "Night mode: yes\n",
+      "inputMethodEnabled": [
+        "com.android.inputmethod.latin/.LatinIME"
+      ],
+      "inputMethodSelected": "com.android.inputmethod.latin/.LatinIME\n",
+      "networkPolicyExempt": "Restrict background whitelisted UIDs: none\n",
+      "networkPolicyRestricted": "Restrict background blacklisted UIDs: 10123\n",
+      "networkPolicyStatus": "Restrict background status: enabled\n",
+      "permissionDetails": [
+        "### nix-android package org.example.graphene",
+        "    User 0: installed=true",
+        "      runtime permissions:",
+        "        android.permission.OTHER_SENSORS: granted=true, flags=[ USER_SET]"
+      ],
       "permissionDefinitions": [
         "Dangerous Permissions:",
         "  + permission:android.permission.INTERNET",
@@ -28,6 +63,41 @@
     },
     "expected": {
       "nightMode": "Night mode: yes",
+      "appLinks": {
+        "allowed": false,
+        "selected": [
+          "privacy.example.test"
+        ]
+      },
+      "appLocales": [
+        "en-US",
+        "fr-FR"
+      ],
+      "appOps": {
+        "RUN_IN_BACKGROUND": "ignore"
+      },
+      "dataSaver": {
+        "enabled": true,
+        "exemptUids": [],
+        "restrictedUids": [
+          10123
+        ]
+      },
+      "inputMethod": {
+        "enabled": [
+          "com.android.inputmethod.latin/.LatinIME"
+        ],
+        "selected": "com.android.inputmethod.latin/.LatinIME"
+      },
+      "permissionDetails": [
+        {
+          "flags": [
+            "USER_SET"
+          ],
+          "granted": true,
+          "permission": "android.permission.OTHER_SENSORS"
+        }
+      ],
       "permissionDefinitions": [
         "android.permission.INTERNET",
         "android.permission.OTHER_SENSORS"
@@ -50,7 +120,41 @@
       "disabled": [
         "package:com.example.system"
       ],
+      "appLinks": [
+        "### nix-android package org.example.stock",
+        "  org.example.stock:",
+        "    Domain verification state:",
+        "      stock.example.test: verified",
+        "    User 0:",
+        "      Verification link handling allowed: true",
+        "      Selection state:",
+        "        Enabled:",
+        "          stock.example.test",
+        "        Disabled:"
+      ],
+      "appLocales": [
+        "### nix-android package org.example.stock",
+        "Locales for org.example.stock for user 0 are [de-DE]"
+      ],
+      "appOps": [
+        "  Uid u0a124:",
+        "    Package org.example.stock:",
+        "      RUN_ANY_IN_BACKGROUND (allow): "
+      ],
       "nightMode": "Night mode: auto\n",
+      "inputMethodEnabled": [
+        "org.example.stock/.KeyboardService"
+      ],
+      "inputMethodSelected": "org.example.stock/.KeyboardService\n",
+      "networkPolicyExempt": "Restrict background whitelisted UIDs: 10124\n",
+      "networkPolicyRestricted": "Restrict background blacklisted UIDs: none\n",
+      "networkPolicyStatus": "Restrict background status: disabled\n",
+      "permissionDetails": [
+        "### nix-android package org.example.stock",
+        "    User 0: installed=true",
+        "      runtime permissions:",
+        "        android.permission.POST_NOTIFICATIONS: granted=false, flags=[ USER_FIXED|USER_SET]"
+      ],
       "permissionDefinitions": [
         "Dangerous Permissions:",
         "  + permission:android.permission.CAMERA",
@@ -69,6 +173,41 @@
     },
     "expected": {
       "nightMode": "Night mode: auto",
+      "appLinks": {
+        "allowed": true,
+        "selected": [
+          "stock.example.test"
+        ]
+      },
+      "appLocales": [
+        "de-DE"
+      ],
+      "appOps": {
+        "RUN_ANY_IN_BACKGROUND": "allow"
+      },
+      "dataSaver": {
+        "enabled": false,
+        "exemptUids": [
+          10124
+        ],
+        "restrictedUids": []
+      },
+      "inputMethod": {
+        "enabled": [
+          "org.example.stock/.KeyboardService"
+        ],
+        "selected": "org.example.stock/.KeyboardService"
+      },
+      "permissionDetails": [
+        {
+          "flags": [
+            "USER_FIXED",
+            "USER_SET"
+          ],
+          "granted": false,
+          "permission": "android.permission.POST_NOTIFICATIONS"
+        }
+      ],
       "permissionDefinitions": [
         "android.permission.CAMERA",
         "android.permission.POST_NOTIFICATIONS"

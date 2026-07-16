@@ -9,3 +9,5 @@ devenv.local.nix
 .env*.local
 # nix
 result
+# Python test/import cache
+__pycache__/

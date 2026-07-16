@@ -33,6 +33,7 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/import.sh` | Read-only capture orchestration and starter Nix rendering |
 | `scripts/package-snapshot.py` | AOSP package-protobuf decoder and normalized snapshot writer |
 | `scripts/render-import.py` | Deterministic snapshot-to-Nix renderer and attended-source classification |
+| `scripts/provenance-adapters.py` | Credential-free Obtainium/App Manager export normalization |
 | `scripts/assist-play.sh` | Official Play listing queue; watch mode advances only after package presence |
 | `scripts/bootstrap.sh` | Resumable managed-APK, Play-consent, and full-state orchestration |
 | `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
@@ -126,18 +127,25 @@ The release persistence pass is:
 2. bootstrap the fresh device;
 3. verify the declared state directly;
 4. re-plan and require no changes;
-5. allow state to settle, run
+5. apply the inverse fixture for permission flags, package AppOps, suspension,
+   locales, input-method selection, Data Saver, and app links; verify it and
+   require a no-op plan;
+6. allow inverse state to settle, run a graceful reboot, then verify and
+   require a no-op plan again;
+7. restore the forward declaration and verify it;
+8. allow state to settle, run
    `adb -s emulator-5554 shell svc power reboot userrequested`, and wait for
    boot completion;
-6. re-plan and require no changes again.
+9. re-plan and require no changes again.
 
 Run that gate twice on independent fresh userdata with `just bench-e2e 2`.
 It owns emulator-5554, enforces boot/readiness deadlines, verifies exact state,
 requires a new boot ID after graceful reboot, exercises the structured importer
 and its Play/attended coverage, evaluates the generated module through
 `lib.mkDevice`, requires its plan to be a no-op, proves cleanup preserves a Play
-declaration, proves the phased bootstrap path, removes each temporary AVD, and
-waits for the ADB transport to disappear. Both
+declaration, uses HeliBoard as a real second input method, proves the phased
+bootstrap path, removes each temporary AVD, and waits for the ADB transport to
+disappear. Both
 cycles must pass before any real-phone mutation is proposed.
 
 ## Engine traps already found
