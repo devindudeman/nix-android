@@ -44,7 +44,7 @@
             - `nix run .#android-rebuild -- plan --flake .#phone --serial <SERIAL>`
 
             `phone.nix` documents the main option groups inline; the full
-            generated reference is docs/OPTIONS.md. See README.md.
+            generated reference is upstream at docs/OPTIONS.md. See README.md.
           '';
         };
 
@@ -133,10 +133,9 @@
             };
             default = android-rebuild;
 
-            # Option reference rendered from the typed module options. Most
-            # descriptions cite the executed read/write primitive behind the
-            # option, so that evidence renders straight into the docs. Regenerate
-            # the committed docs/OPTIONS.md with `just options-doc`.
+            # Option reference rendered from the typed module options. Executed
+            # device evidence lives in docs/PRIMITIVES.md. Regenerate the
+            # committed docs/OPTIONS.md with `just options-doc`.
             options-doc =
               let
                 eval = pkgs.lib.evalModules { modules = [ ./modules/options.nix ]; };
@@ -296,6 +295,13 @@
                 echo "docs/OPTIONS.md is stale — run 'just options-doc'" >&2
                 exit 1
               fi
+              printf 'fixture\n' > unreadable.md
+              chmod 000 unreadable.md
+              if bash ${inputs.self}/scripts/render-options-doc.sh unreadable.md > unreadable.out 2>/dev/null; then
+                echo "render-options-doc accepted an unreadable input" >&2
+                exit 1
+              fi
+              test ! -s unreadable.out
               touch $out
             '';
             suggest-sources =

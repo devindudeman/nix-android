@@ -31,6 +31,7 @@ record_generation 3 2>/dev/null
 [ "$(jq -r '.changes' "$log")" = 3 ] || fail "change count not recorded"
 [ "$(jq -r '.device' "$log")" = bench ] || fail "device name not recorded"
 [ "$(jq -r '.serial' "$log")" = emulator-5554 ] || fail "serial not recorded"
+[ "$(jq -r '.manifest' "$log")" = "$state/generations/1.json" ] || fail "ledger should point at saved manifest"
 
 # saved manifest is a faithful copy (status re-plans it)
 diff -q "$manifest" "$state/generations/1.json" >/dev/null || fail "saved manifest differs from applied"
@@ -47,15 +48,21 @@ rm -f "$state/generations/1.json"
 record_generation 1 2>/dev/null
 [ "$(tail -n1 "$log" | jq -r '.generation')" = 3 ] || fail "deleting a file must not lower the next number"
 
-# --- a failed manifest copy must not append a corrupt ledger entry -----------
-# Callers invoke via `&&` (errexit suppressed), so the function must self-guard.
+# --- a conflicting destination must not append a corrupt ledger entry --------
+# A directory at the next path makes plain `cp SOURCE TARGET` copy inside it;
+# the recorder must instead reject the occupied generation number.
 lines_before=$(wc -l <"$log")
-saved_manifest=$manifest
-manifest="$tmp/does-not-exist.json"   # cp source now missing → copy fails
+mkdir "$state/generations/4.json"
 record_generation 5 2>/dev/null && rc=0 || rc=$?
-manifest=$saved_manifest
-[ "$rc" -eq 0 ] || fail "a copy failure must not fail the caller"
-[ "$(wc -l <"$log")" -eq "$lines_before" ] || fail "a failed copy must not append a ledger entry"
-[ ! -f "$state/generations/4.json" ] || fail "a failed record must not leave an orphan manifest"
+[ "$rc" -eq 0 ] || fail "a receipt failure must not fail the converged switch"
+[ "$(wc -l <"$log")" -eq "$lines_before" ] || fail "an occupied generation must not append a ledger entry"
+[ ! -f "$state/generations/4.json/manifest.json" ] || fail "manifest was copied inside an occupied destination"
+rmdir "$state/generations/4.json"
+
+# A malformed ledger must fail closed instead of reusing generation numbers.
+printf '%s\n' 'not-json' >>"$log"
+record_generation 5 2>/dev/null && rc=0 || rc=$?
+[ "$rc" -eq 0 ] || fail "an invalid ledger must not fail the converged switch"
+[ ! -e "$state/generations/4.json" ] || fail "an invalid ledger must not create a generation"
 
 echo "test-generations: ok"

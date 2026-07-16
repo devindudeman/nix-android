@@ -35,7 +35,7 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/smoke-suggest-sources.sh` | Manual live check of release-hint verification against a real public GitHub release (network; not in CI) |
 | `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `status`, `generations`, `assist`, `bootstrap`, `import`, and `suggest-sources` CLI |
 | `engine/generations.sh` | Switch-receipt ledger (`record_generation`), sourced by the engine; backs `status`/`generations` (`generations` check) |
-| `scripts/test-generations.sh` | Device-free receipt-ledger tests: numbering, JSONL round-trip, manifest copy (`generations` check) |
+| `scripts/test-generations.sh` | Device-free receipt-ledger tests: numbering, durable manifest path, occupied destination, and malformed-ledger failure (`generations` check) |
 | `scripts/render-options-doc.sh` | Renders `docs/OPTIONS.md` from `nixosOptionsDoc` output; shared by `just options-doc` and the `options-doc` check |
 | `templates/default/` | `nix flake init -t` scaffold (consumer flake + self-documenting `phone.nix`); built by the `template` check |
 | `scripts/update-lock.sh` | Signed F-Droid metadata and GitHub/Gitea release resolution |
@@ -172,6 +172,9 @@ cycles must pass before any real-phone mutation is proposed.
 - Process substitutions do not make `set -e` notice producer failures. The
   strict manifest preflight runs before the first adb read, so malformed JSON
   can never turn into an empty destructive declaration set.
+- Bash also suppresses `set -e` inside functions invoked from conditional
+  lists. Receipt staging handles each failure explicitly and commits the saved
+  manifest before atomically replacing its JSONL ledger.
 - Android writes several `/data/system` files asynchronously. Hard reboot tests
   produced false persistence failures; graceful shutdown persisted them.
 - Keep shell-variable boundaries ASCII-obvious (`${name}` or ASCII punctuation).

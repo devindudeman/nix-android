@@ -1,5 +1,5 @@
-# Core option surface. Every option here must map to a verified primitive in
-# docs/PRIMITIVES.md — no options for unproven capabilities.
+# Core option surface. Every device-state option here must map to a verified
+# primitive in docs/PRIMITIVES.md — no options for unproven capabilities.
 { lib, ... }:
 {
   options = {

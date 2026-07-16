@@ -14,35 +14,84 @@
 # Uses the ambient $manifest and $serial from the converge engine's scope.
 # shellcheck disable=SC2154  # $manifest and $serial come from the sourcing engine
 record_generation() { # $1 = applied change count
-  local changes=$1 name state gens n
-  name=$(jq -r '.device.name' "$manifest")
+  local changes=$1 name state gens log last n saved manifest_tmp log_tmp line
+  if ! name=$(jq -er '.device.name | select(type == "string" and length > 0)' "$manifest"); then
+    echo "warning: could not read device name for generation receipt; not recording" >&2
+    return 0
+  fi
   state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
   gens="$state/generations"
   mkdir -p "$gens" || { echo "warning: could not write generation ledger under $state" >&2; return 0; }
   # Number from the ledger's max, not a file count: a hand-deleted generation
   # file must never make a new switch reuse a live number.
-  local last=0
-  [ -f "$state/log.jsonl" ] && last=$(jq -s 'map(.generation) | max // 0' "$state/log.jsonl")
+  log="$state/log.jsonl"
+  last=0
+  if [ -e "$log" ]; then
+    if [ ! -f "$log" ] || ! last=$(jq -se '
+      if all(.[];
+        type == "object"
+        and (.generation | type == "number")
+        and .generation >= 1
+        and (.generation | floor) == .generation)
+      then (map(.generation) | max // 0)
+      else error("invalid generation ledger")
+      end
+    ' "$log"); then
+      echo "warning: generation ledger is unreadable or invalid; not recording" >&2
+      return 0
+    fi
+  fi
   n=$(( last + 1 ))
-  # The callers invoke this via `&&`, which suppresses errexit inside; a failed
-  # step must not fall through and leave a ledger entry pointing at a manifest
-  # that was never written. Copy first, build the whole line, and only then
-  # append — a receipt is either complete or absent.
-  local line
-  if ! cp "$manifest" "$gens/${n}.json"; then
+  saved="$gens/${n}.json"
+  if [ -e "$saved" ]; then
+    echo "warning: generation ${n} already exists; not recording" >&2
+    return 0
+  fi
+
+  # The callers invoke this via `&&`, which suppresses errexit inside. Stage the
+  # complete receipt first, hard-link the manifest into place so an existing
+  # generation can never be overwritten, then atomically replace the ledger.
+  # A crash can leave an unreferenced manifest, never a log entry without one.
+  if ! manifest_tmp=$(mktemp "$gens/.generation-${n}.XXXXXX"); then
+    echo "warning: could not stage generation ${n} manifest; not recording" >&2
+    return 0
+  fi
+  if ! cp "$manifest" "$manifest_tmp"; then
     echo "warning: could not copy manifest for generation ${n}; not recording" >&2
+    rm -f "$manifest_tmp"
     return 0
   fi
   if ! line=$(jq -cn --argjson gen "$n" --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg serial "$serial" --arg name "$name" --arg manifest "$manifest" --argjson changes "$changes" \
+    --arg serial "$serial" --arg name "$name" --arg manifest "$saved" --argjson changes "$changes" \
     '{generation: $gen, time: $time, serial: $serial, device: $name, manifest: $manifest, changes: $changes}'); then
     echo "warning: could not build generation ${n} ledger entry; not recording" >&2
-    rm -f "$gens/${n}.json"
+    rm -f "$manifest_tmp"
     return 0
   fi
-  if ! printf '%s\n' "$line" >> "$state/log.jsonl"; then
-    echo "warning: could not append generation ${n} to the ledger; not recording" >&2
-    rm -f "$gens/${n}.json"
+  if ! log_tmp=$(mktemp "$state/.log.jsonl.XXXXXX"); then
+    echo "warning: could not stage generation ${n} ledger entry; not recording" >&2
+    rm -f "$manifest_tmp"
+    return 0
+  fi
+  if [ -f "$log" ] && ! cp "$log" "$log_tmp"; then
+    echo "warning: could not copy generation ledger; not recording" >&2
+    rm -f "$manifest_tmp" "$log_tmp"
+    return 0
+  fi
+  if ! printf '%s\n' "$line" >> "$log_tmp"; then
+    echo "warning: could not stage generation ${n} ledger entry; not recording" >&2
+    rm -f "$manifest_tmp" "$log_tmp"
+    return 0
+  fi
+  if ! ln "$manifest_tmp" "$saved"; then
+    echo "warning: could not commit generation ${n} manifest; not recording" >&2
+    rm -f "$manifest_tmp" "$log_tmp"
+    return 0
+  fi
+  rm -f "$manifest_tmp"
+  if ! mv "$log_tmp" "$log"; then
+    echo "warning: could not commit generation ${n} ledger entry; not recording" >&2
+    rm -f "$saved" "$log_tmp"
     return 0
   fi
   echo "recorded generation ${n} for '${name}'" >&2

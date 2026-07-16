@@ -116,10 +116,13 @@ that, not against surface breadth.
   id (iterating release flavors until one matches) and surfacing the resolved
   signer for the user to confirm. Package-id match is compatibility, not source
   identity; signer continuity is not yet enforced.
-- **Generations and drift (`status`/`generations`).** Every successful `switch`
-  records a generation — a copy of the applied manifest plus a JSONL log line
-  under `$XDG_STATE_HOME/nix-android/<device.name>/`, the home-manager profile
-  model minus the bootloader. `status` re-plans the last-applied generation
+- **Generations and drift (`status`/`generations`).** After every successful
+  `switch`, the controller attempts to stage a generation — a copy of the
+  applied manifest plus a JSONL log line under
+  `$XDG_STATE_HOME/nix-android/<device.name>/`, the home-manager profile model
+  minus the bootloader. A storage failure warns but does not turn an
+  already-converged device into a failed switch. `status` re-plans the
+  last-applied generation
   against the device to report drift since the last switch (distinct from
   `plan`, which diffs the current config); `generations` lists the ledger. This
   is a controller-side receipt, not a NixOS bootable snapshot: it cannot restore
@@ -136,9 +139,8 @@ that, not against surface breadth.
   the existing `import` command rather than duplicated.
 - **Generated option reference.** `docs/OPTIONS.md` is rendered from the typed
   module options via `nixosOptionsDoc` (`just options-doc`; the `options-doc`
-  check fails if the committed file drifts). Most option descriptions cite the
-  executed adb primitive behind them, so that read-back-verified evidence
-  renders straight into the public reference.
+  check fails if the committed file drifts). Executed adb evidence remains in
+  the separately maintained `docs/PRIMITIVES.md` matrix.
 - **`plan` reports induced effects.** A fresh install starts from default
   permission state and an upgrade can reset specific grants, flags, or app-ops,
   so the engine reasserts declared intent afterward (precautionary). `plan` now

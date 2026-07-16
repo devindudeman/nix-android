@@ -178,8 +178,9 @@ host-specific modules.
 
 Every option, with its type, default, and description, is in the generated
 [OPTIONS.md](./OPTIONS.md) (rendered from the typed module options via `just
-options-doc`); most descriptions cite the adb primitive behind the option. The
-annotated example below is a faster orientation.
+options-doc`). Executed device evidence is indexed separately in
+[PRIMITIVES.md](./PRIMITIVES.md). The annotated example below is a faster
+orientation.
 
 ```nix
 {
@@ -381,12 +382,15 @@ use `adb -s emulator-5554 shell svc power reboot userrequested`.
 
 ## Generations and drift
 
-Every successful `switch` (including a no-op switch on an already-converged
-device) records a *generation*: a copy of the applied manifest plus a log line
-under `${XDG_STATE_HOME:-~/.local/state}/nix-android/<device.name>/`. This is a
-controller-side receipt, like home-manager's profile generations — it is **not**
-a NixOS bootable snapshot. It cannot restore app data, downgrade an app, or undo
-an ensure-only entry the device later dropped.
+After every successful `switch` (including a no-op switch on an
+already-converged device), the controller attempts to record a *generation*: a
+copy of the applied manifest plus a log line under
+`${XDG_STATE_HOME:-~/.local/state}/nix-android/<device.name>/`. Receipt writes
+are staged atomically; if controller storage is unavailable, `switch` warns but
+remains successful because the device has already converged. This is like a
+home-manager profile generation, but it is **not** a NixOS bootable snapshot. It
+cannot restore app data, downgrade an app, or undo an ensure-only entry the
+device later dropped.
 
 ```console
 # Has the device drifted from what you last switched?
