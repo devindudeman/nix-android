@@ -351,6 +351,7 @@
               ! "$cli" switch --flake ${inputs.self}#bench >/dev/null 2>&1
               ! "$cli" assist --flake ${inputs.self}#bench >/dev/null 2>&1
               ! "$cli" bootstrap --flake ${inputs.self}#bench >/dev/null 2>&1
+              ! "$cli" status --flake ${inputs.self}#bench >/dev/null 2>&1
               ! "$cli" import >/dev/null 2>&1
               ! "$cli" unknown >/dev/null 2>&1
               ! "$cli" build --flake >/dev/null 2>&1

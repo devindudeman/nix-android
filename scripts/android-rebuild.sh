@@ -240,8 +240,15 @@ status)
   last=$(tail -n1 "$log")
   gen=$(jq -r '.generation' <<<"$last")
   when=$(jq -r '.time' <<<"$last")
+  recorded_serial=$(jq -r '.serial' <<<"$last")
   saved="$state/generations/${gen}.json"
-  echo "last converged: generation $gen at $when (serial $(jq -r '.serial' <<<"$last"))"
+  echo "last converged: generation $gen at $when (serial $recorded_serial)"
+  # Two devices are commonly attached; drift computed against the wrong one
+  # looks authoritative. Warn loudly, but proceed: a serial can legitimately
+  # change for the same device (USB vs wifi adb, re-provisioning).
+  if [ "$serial" != "$recorded_serial" ]; then
+    echo "warning: generation $gen was applied to serial $recorded_serial, but checking $serial — drift below is only meaningful if these are the same device" >&2
+  fi
   if [ ! -f "$saved" ]; then
     echo "generation $gen's manifest is missing (deleted or never fully written); cannot check drift" >&2
     exit 1
