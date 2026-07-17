@@ -543,6 +543,20 @@ plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
   + ${#todo_idle[@]} ))
 for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
 for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
+# Provenance heuristic: a Play-ecosystem installer means the installed copy is
+# Play-signed, so a differently-signed repo build cannot upgrade it in place
+# (INSTALL_FAILED_UPDATE_INCOMPATIBLE). Predict that at plan time instead of
+# failing mid-apply. Heuristic only — exact signer verification is deferred
+# (docs/PLAN.md); managed installs cannot mismatch (nothing to conflict with).
+for t in "${todo_upgrade[@]}"; do
+  IFS=$US read -r p _ _ <<<"$t"
+  installer=$(adb_shell dumpsys package "$p" | tr -d '\r' | installer_package_from_dump)
+  case $installer in
+  com.android.vending | com.aurora.store)
+    echo "note: $p upgrade will likely fail: the installed copy came from $installer (Play-signed) and the declared source is signed differently — uninstall it first or reclassify it to apps.play" >&2
+    ;;
+  esac
+done
 for t in "${todo_remove[@]}";  do echo "remove   $t"; done
 setting_field() { jq -Rr --argjson i "$2" '@base64d | fromjson | .[$i]' <<<"$1"; }
 # A permission/appop line for a package this run installs or upgrades is

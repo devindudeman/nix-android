@@ -97,4 +97,33 @@ EOF
 [ "$(app_link_selected_domains <<<"$links_dump")" = 'f-droid.org' ] \
   || fail "app-link selected domains misread"
 
+
+# --- installer_package_from_dump / other_users_with_install ------------------
+# Fixture captured from a GrapheneOS Pixel 6 (SDK 37) on 2026-07-17: an app
+# installed in the work profile (user 10) but not owner user 0, delivered by
+# Aurora Store.
+provenance_dump=$(cat <<'EOF'
+  Packages:
+    Package [com.example.crossprofile] (1234abc):
+      installerPackageName=com.aurora.store
+      versionName=21.26.364
+    User 0: ceDataInode=0 deDataInode=0 installed=false hidden=false stopped=true
+    User 10: ceDataInode=21299 deDataInode=22627 installed=true hidden=false stopped=false
+    User 11: ceDataInode=0 deDataInode=0 installed=false hidden=false stopped=false
+EOF
+)
+[ "$(installer_package_from_dump <<<"$provenance_dump")" = com.aurora.store ] \
+  || fail "installer package misread"
+[ "$(other_users_with_install 0 <<<"$provenance_dump")" = 10 ] \
+  || fail "other-profile install users misread"
+[ -z "$(other_users_with_install 10 <<<"$provenance_dump")" ] \
+  || fail "excluded user leaked into other-profile install list"
+adb_install_dump=$(cat <<'EOF'
+      installerPackageName=null
+    User 0: ceDataInode=11 deDataInode=12 installed=true hidden=false stopped=false
+EOF
+)
+[ -z "$(installer_package_from_dump <<<"$adb_install_dump")" ] \
+  || fail "null installer should read as empty"
+
 echo "✓ read-state parser fixtures passed"

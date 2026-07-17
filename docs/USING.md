@@ -370,7 +370,16 @@ device and applies a reviewed declaration in resumable phases; it is not a
 replacement for reviewing `plan` first.
 
 `switch` is sequential, not transactional. If a later adb action fails, earlier
-actions remain applied; re-run `plan` to see the remainder. Managed permission
+actions remain applied; re-run `plan` to see the remainder.
+
+An upgrade can fail with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` when the
+installed copy is signed by a different key than the declared source's build —
+Android refuses cross-signer upgrades. `plan` predicts the common case with a
+`note:` when the installed copy's installer is Play-ecosystem (Play Store,
+Aurora) but the declared source is F-Droid/GitHub. The fix is either
+uninstalling the app so switch reinstalls it from the declared source, or
+reclassifying it to `apps.play`. This is a provenance heuristic; exact
+plan-time signer verification is deferred (docs/PLAN.md). Managed permission
 intent is reasserted after an app install or upgrade. Destructive cleanup, when
 explicitly set to `"uninstall"`, runs last so a preceding failure cannot start
 removals.

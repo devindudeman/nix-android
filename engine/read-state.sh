@@ -90,3 +90,19 @@ app_link_selected_domains() {
     enabled && /^          [^[:space:]]/ { sub(/^          /, ""); print }
   '
 }
+
+# Installer package from a full `dumpsys package <pkg>` dump. Prints nothing
+# when unset/null (sideloads, adb installs). Provenance heuristic: a
+# Play-ecosystem installer means a Play-signed APK, which a differently-signed
+# repo build can never upgrade in place.
+installer_package_from_dump() {
+  sed -n 's/^ *installerPackageName=\(.*\)$/\1/p' | sed '/^null$/d' | head -n1
+}
+
+# Other user ids for which the package is installed, from a full
+# `dumpsys package <pkg>` dump. $1 = the managed user to exclude. Owner-profile
+# Play can wedge installing a package another profile already has (LIMITS.md).
+other_users_with_install() {
+  local exclude=$1
+  sed -n 's/^ *User \([0-9][0-9]*\):.*installed=true.*/\1/p' | grep -vx "$exclude" || true
+}

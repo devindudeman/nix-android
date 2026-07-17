@@ -176,6 +176,12 @@ that, not against surface breadth.
   site is ever published
 - broader resolver regression fixtures for release-asset selection and the
   no-`preferredSigner` multiple-lineage rejection path
+- exact plan-time signer verification (pull the installed APK, compare
+  `apksigner` digest against the lock's signer) — the shipped plan `note:` is
+  an installer-provenance heuristic; exactness costs apksigner+jdk in the
+  engine closure
+- `assist --watch` skip/reorder for a wedged Play install (today it is
+  head-of-line blocking in declaration order)
 - a rollback verb over recorded generations, documenting that it cannot restore
   app data, downgrade packages, or invert ensure-only state, and that missing
   APK store paths would need a re-fetch
