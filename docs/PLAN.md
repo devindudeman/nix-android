@@ -182,6 +182,12 @@ that, not against surface breadth.
   engine closure
 - `assist --watch` skip/reorder for a wedged Play install (today it is
   head-of-line blocking in declaration order)
+- an `assist` note when a declared Play app is already installed in another
+  profile (the cross-profile wedge in LIMITS.md; the
+  `other_users_with_install` parser already landed for it)
+- `update` verifying each resolved F-Droid APK URL is still downloadable
+  (volatile repos like IzzyOnDroid prune old versions, which otherwise 404 at
+  build time long after the lock was written)
 - a rollback verb over recorded generations, documenting that it cannot restore
   app data, downgrade packages, or invert ensure-only state, and that missing
   APK store paths would need a re-fetch
