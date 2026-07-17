@@ -116,6 +116,16 @@ GrapheneOS
 automatically update apps after their user-approved initial installation when
 Play remains the last installer.
 
+Cross-profile interference is real and outside nix-android's control: Android
+keeps one APK copy per device shared across profiles, and a declared Play app
+already installed in another profile (for example a work profile) can wedge
+the owner-profile Play install indefinitely when the on-device copy is stale —
+a current copy typically completes instantly without a download. The remedy is
+user-side (update the app inside the owning profile first). `assist` waits on
+package presence either way, and `--watch` follows declaration order, so one
+wedged install blocks the consents behind it; interrupt and re-run after
+resolving — already-installed apps are skipped.
+
 ## Outside the boundary
 
 - app data, Keystore keys, eSIMs, and backup-opted-out application state

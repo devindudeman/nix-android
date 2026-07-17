@@ -446,6 +446,13 @@ the person holding the unlocked phone completes the normal Play flow. Watch mode
 times out after 30 minutes per package by default and is safely resumable by
 rerunning the command. Run `plan` again afterward.
 
+Watch mode follows declaration order, so a wedged install blocks the consents
+behind it. A common wedge: the declared app is already installed in another
+profile with a stale version, which can hang the owner-profile Play install
+indefinitely (a current copy typically completes instantly) — update the app
+inside the owning profile first, then re-run `assist`; installed packages are
+skipped. See [LIMITS.md](./LIMITS.md).
+
 The declaration is a package-ID presence assertion, not a provenance check.
 Convergence does not verify Play entitlement, installer/update owner, signing
 identity, enabled state, or version for `apps.play` entries. The assistant also
