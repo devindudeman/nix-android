@@ -276,7 +276,11 @@ update)
   mapfile -t relspecs < <(jq -r '.release |
     to_entries[] | if .value.github != null
       then "--github\n\(.key)=\(.value.github)"
-      else "--gitea\n\(.key)=\(.value.gitea)" end' <<<"$config")
+      elif .value.gitea != null
+      then "--gitea\n\(.key)=\(.value.gitea)"
+      elif .value.url != null
+      then "--url\n\(.key)=\(.value.url)"
+      else "--urljson\n\(.key)=\(.value.updateJson)" end' <<<"$config")
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)
   # The config is the authoritative full set of locked packages, so a removed
   # declaration drops out of the lock: rewrite it rather than merge into it.

@@ -177,4 +177,91 @@ EOF
     || { echo "release lock is missing valid signerSha256 digests" >&2; exit 1; }
 fi
 
+# Direct vendor URL (--url) and update-manifest (--urljson) lanes, fully
+# offline via a fake curl.
+if [ -n "$raw_script" ]; then
+  fixture_sha=$(sha256sum "$fixture_apk" | cut -d' ' -f1)
+  urlbin="$tmp/urlbin"; mkdir -p "$urlbin"
+  jq -n --arg sha "$fixture_sha" \
+    '{url: "https://fake.example/v7.apk", sha256sum: $sha}' > "$tmp/manifest.json"
+  jq -n '{url: "https://fake.example/v7.apk", sha256sum: "1111111111111111111111111111111111111111111111111111111111111111"}' \
+    > "$tmp/manifest-badsha.json"
+  cat > "$urlbin/curl" <<EOF
+#!$bash_path
+set -euo pipefail
+url=""; out=""; prev=""
+for a in "\$@"; do
+  case "\$a" in https://*) url="\$a" ;; esac
+  [ "\$prev" = -o ] && out="\$a"
+  prev="\$a"
+done
+emit() { if [ -n "\$out" ]; then cp "\$1" "\$out"; else cat "\$1"; fi; }
+case "\$url" in
+  *latest.apk|*v7.apk) emit "$fixture_apk" ;;
+  *latest.json) emit "$tmp/manifest.json" ;;
+  *badsha.json) emit "$tmp/manifest-badsha.json" ;;
+  *) echo "fake curl: unexpected url \$url" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$urlbin/curl"
+
+  # Happy path: declared URL recorded verbatim, source-bound, signers present.
+  PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/url.lock.json" \
+    --abi x86_64 --replace --url "org.fdroid.fdroid=https://fake.example/latest.apk" >/dev/null
+  jq -e '.packages["org.fdroid.fdroid"]
+    | .url == "https://fake.example/latest.apk"
+      and .source == "url:https://fake.example/latest.apk"
+      and (.signerSha256 | type == "array" and length >= 1)' "$tmp/url.lock.json" >/dev/null
+
+  # No-arg refresh must re-resolve the url lane from the lock's source tag.
+  PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/url.lock.json" >/dev/null
+  jq -e '.packages["org.fdroid.fdroid"].source == "url:https://fake.example/latest.apk"' \
+    "$tmp/url.lock.json" >/dev/null
+
+  # Wrong declared package id must fail.
+  if PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/url-wrong.lock.json" \
+    --abi x86_64 --replace --url "org.example.wrong=https://fake.example/latest.apk" >/dev/null 2>&1; then
+    echo "url-lane package mismatch unexpectedly succeeded" >&2
+    exit 1
+  fi
+
+  # Non-HTTPS URLs are rejected.
+  if bash "$raw_script" --lock "$tmp/url-http.lock.json" \
+    --abi x86_64 --replace --url "org.fdroid.fdroid=http://fake.example/latest.apk" >/dev/null 2>&1; then
+    echo "non-HTTPS url unexpectedly succeeded" >&2
+    exit 1
+  fi
+
+  # Signer continuity: a lock whose recorded signer differs from the newly
+  # resolved one must refuse the refresh atomically...
+  jq '.packages["org.fdroid.fdroid"].signerSha256 =
+    ["2222222222222222222222222222222222222222222222222222222222222222"]' \
+    "$tmp/url.lock.json" > "$tmp/rotated.lock.json"
+  cp "$tmp/rotated.lock.json" "$tmp/rotated.before"
+  if PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/rotated.lock.json" >/dev/null 2>&1; then
+    echo "signer rotation unexpectedly accepted without --allow-signer-rotation" >&2
+    exit 1
+  fi
+  cmp "$tmp/rotated.before" "$tmp/rotated.lock.json"
+  # ...and accept it only with the explicit override.
+  PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/rotated.lock.json" \
+    --abi x86_64 --replace --allow-signer-rotation org.fdroid.fdroid \
+    --url "org.fdroid.fdroid=https://fake.example/latest.apk" >/dev/null
+  jq -e '.packages["org.fdroid.fdroid"].signerSha256 != ["2222222222222222222222222222222222222222222222222222222222222222"]' \
+    "$tmp/rotated.lock.json" >/dev/null
+
+  # urljson: lock records the manifest-resolved (immutable) APK url, bound to
+  # the manifest source; a lying sha256sum fails.
+  PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/urljson.lock.json" \
+    --abi x86_64 --replace --urljson "org.fdroid.fdroid=https://fake.example/latest.json" >/dev/null
+  jq -e '.packages["org.fdroid.fdroid"]
+    | .url == "https://fake.example/v7.apk"
+      and .source == "urljson:https://fake.example/latest.json"' "$tmp/urljson.lock.json" >/dev/null
+  if PATH="$urlbin:$PATH" bash "$raw_script" --lock "$tmp/urljson-bad.lock.json" \
+    --abi x86_64 --replace --urljson "org.fdroid.fdroid=https://fake.example/badsha.json" >/dev/null 2>&1; then
+    echo "urljson sha256sum mismatch unexpectedly succeeded" >&2
+    exit 1
+  fi
+fi
+
 echo "signed F-Droid and release-asset resolver tests passed"

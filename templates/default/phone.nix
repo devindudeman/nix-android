@@ -37,6 +37,8 @@
     # one of github/gitea each. Assets may be a bare .apk or a .tar.gz with one.
     # release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
     # release."com.example.app".gitea = "git.example.com/owner/repo";
+    # release."us.zoom.videomeetings".url = "https://zoom.us/client/latest/zoom.apk";
+    # release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
 
     # Self-built / locally sourced APKs (the file IS the pin; no lock entry).
     # Keep the APK OUTSIDE the repo — public git is forever. The build copies

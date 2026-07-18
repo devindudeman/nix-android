@@ -190,7 +190,17 @@
         ) selectedAppLinkDomains
       );
       invalidReleaseSources = builtins.attrNames (
-        lib.filterAttrs (_: v: (v.github == null) == (v.gitea == null)) cfg.apps.release
+        lib.filterAttrs (
+          _: v:
+          builtins.length (
+            builtins.filter (s: s != null) [
+              v.github
+              v.gitea
+              v.url
+              v.updateJson
+            ]
+          ) != 1
+        ) cfg.apps.release
       );
       privateDnsRawConflict =
         cfg.android.privateDns != null
@@ -261,7 +271,15 @@
         ++ lib.mapAttrsToList (p: release: {
           name = p;
           value = {
-            source = if release.github != null then "github:${release.github}" else "gitea:${release.gitea}";
+            source =
+              if release.github != null then
+                "github:${release.github}"
+              else if release.gitea != null then
+                "gitea:${release.gitea}"
+              else if release.url != null then
+                "url:${release.url}"
+              else
+                "urljson:${release.updateJson}";
             repoFingerprint = null;
           };
         }) cfg.apps.release
@@ -307,7 +325,7 @@
         else if duplicateSelectedAppLinkDomains != [ ] then
           throw "nix-android: a domain can be selected for only one app: ${lib.concatStringsSep ", " duplicateSelectedAppLinkDomains}"
         else if invalidReleaseSources != [ ] then
-          throw "nix-android: release apps must set exactly one of github/gitea: ${lib.concatStringsSep ", " invalidReleaseSources}"
+          throw "nix-android: release apps must set exactly one of github/gitea/url/updateJson: ${lib.concatStringsSep ", " invalidReleaseSources}"
         else if inputMethodRawConflict then
           throw "nix-android: android.inputMethod conflicts with raw default_input_method/enabled_input_methods settings"
         else if privateDnsRawConflict then

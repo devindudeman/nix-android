@@ -4,7 +4,8 @@
 #
 # Usage: update-lock.sh --lock apps.lock.json [--abi arm64-v8a] [--replace] \
 #          [pkg ...] [--fdroid pkg repo-url fingerprint ...] [--github pkg=owner/repo ...] \
-#          [--gitea pkg=host/owner/repo ...]
+#          [--gitea pkg=host/owner/repo ...] [--url pkg=https://... ...] \
+#          [--urljson pkg=https://... ...] [--allow-signer-rotation pkg ...]
 #   Plain pkg args resolve against f-droid.org; --fdroid pins a package to a
 #   third-party F-Droid repo and authenticates its signed entry.jar using the
 #   repository certificate's SHA-256 fingerprint (64 hex characters).
@@ -26,6 +27,16 @@
 # versionName out of it AND verifies the manifest package id matches the
 # declared one — a wrong `pkg=owner/repo` mapping fails loudly here, not on
 # the device.
+#
+# Direct vendor URLs (--url): the URL is fetched as-is (HTTPS only), must
+# resolve to a single APK (or a .tar.gz containing one), and gets the same
+# aapt2 package-id and apksigner checks. --urljson fetches a small vendor
+# update-manifest JSON first and follows its .url (the schema Signal publishes
+# at updates.signal.org/android/latest.json); a sha256sum field, when present,
+# is cross-checked against the downloaded APK. Both lanes have only TLS-to-
+# vendor plus the recorded signer as trust anchors, so a refresh REFUSES a
+# signer change unless the package is listed via --allow-signer-rotation —
+# verify the vendor actually announced a key rotation before passing it.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -45,6 +56,9 @@ pkgs=()
 fspecs=()
 ghspecs=()
 gtspecs=()
+uspecs=()
+ujspecs=()
+allow_rotation=()
 test_asset=()
 fetch_index_spec=()
 
@@ -128,6 +142,18 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || { echo "--gitea requires PACKAGE=HOST/OWNER/REPO" >&2; exit 2; }
     gtspecs+=("$2"); shift 2
     ;;
+  --url)
+    [ $# -ge 2 ] && [[ $2 == *=* ]] || { echo "--url requires PACKAGE=HTTPS_URL" >&2; exit 2; }
+    uspecs+=("$2"); shift 2
+    ;;
+  --urljson)
+    [ $# -ge 2 ] && [[ $2 == *=* ]] || { echo "--urljson requires PACKAGE=HTTPS_URL" >&2; exit 2; }
+    ujspecs+=("$2"); shift 2
+    ;;
+  --allow-signer-rotation)
+    [ $# -ge 2 ] || { echo "--allow-signer-rotation requires PACKAGE" >&2; exit 2; }
+    allow_rotation+=("$2"); shift 2
+    ;;
   --inspect-release-asset)
     [ $# -ge 3 ] || { echo "--inspect-release-asset requires PACKAGE ASSET" >&2; exit 2; }
     test_asset=("$2" "$3"); shift 3
@@ -147,14 +173,14 @@ if [ "${#test_asset[@]}" -gt 0 ]; then
   exit
 fi
 if [ "${#fetch_index_spec[@]}" -eq 0 ] \
-  && [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
+  && [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
   if ! jq -e '
     (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64"))
     and (.packages | type == "object" and all(to_entries[];
       (.key | type == "string")
       and (.value | type == "object")
       and (.value.source == null
-        or (.value.source | type == "string" and test("^(fdroid:|github:|gitea:).+")))
+        or (.value.source | type == "string" and test("^(fdroid:|github:|gitea:|url:|urljson:).+")))
       and (if (.value.source // "" | startswith("fdroid:"))
         then (.value.repoFingerprint | type == "string" and test("^[0-9A-Fa-f]{64}$"))
         else true end)))
@@ -170,7 +196,11 @@ if [ "${#fetch_index_spec[@]}" -eq 0 ] \
       github: [.packages | to_entries[] | select(.value.source // "" | startswith("github:"))
         | "\(.key)=\(.value.source | sub("^github:"; ""))"],
       gitea: [.packages | to_entries[] | select(.value.source // "" | startswith("gitea:"))
-        | "\(.key)=\(.value.source | sub("^gitea:"; ""))"]
+        | "\(.key)=\(.value.source | sub("^gitea:"; ""))"],
+      url: [.packages | to_entries[] | select(.value.source // "" | startswith("url:"))
+        | "\(.key)=\(.value.source | sub("^url:"; ""))"],
+      urljson: [.packages | to_entries[] | select(.value.source // "" | startswith("urljson:"))
+        | "\(.key)=\(.value.source | sub("^urljson:"; ""))"]
     }
   ' "$lock")
   mapfile -t pkgs < <(jq -r '.plain[]' <<<"$refresh")
@@ -179,11 +209,21 @@ if [ "${#fetch_index_spec[@]}" -eq 0 ] \
   done < <(jq -r '.fdroid[] | @tsv' <<<"$refresh")
   mapfile -t ghspecs < <(jq -r '.github[]' <<<"$refresh")
   mapfile -t gtspecs < <(jq -r '.gitea[]' <<<"$refresh")
+  mapfile -t uspecs < <(jq -r '.url[]' <<<"$refresh")
+  mapfile -t ujspecs < <(jq -r '.urljson[]' <<<"$refresh")
   [ "$abi_set" -eq 1 ] || abi=$(jq -r '.abi' "$lock")
 fi
 [ "${#fetch_index_spec[@]}" -gt 0 ] \
-  || [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} )) -gt 0 ] \
+  || [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} )) -gt 0 ] \
   || { echo "no packages to lock" >&2; exit 1; }
+
+# Pre-update snapshot for the url/urljson signer-continuity check; tolerate a
+# missing or malformed lock (the malformed-refresh guard above already handles
+# the refresh path).
+old_packages='{}'
+if [ -f "$lock" ]; then
+  old_packages=$(jq '.packages // {}' "$lock" 2>/dev/null) || old_packages='{}'
+fi
 
 # Entries resolved for one ABI must never silently coexist with (or silently
 # drop) entries locked for another.
@@ -361,11 +401,69 @@ resolved=$({
     host=${gt%%/*} orepo=${gt#*/}
     resolve_release "$p" "https://$host/api/v1/repos/$orepo/releases/latest" "gitea:$gt"
   done
+
+  # Direct vendor URL: no discovery API — the declared URL is downloaded and
+  # inspected exactly like a release asset (package id, signature, archive
+  # safety all enforced by inspect_release_asset).
+  resolve_url_direct() { # $1=pkg $2=apk-url $3=source-tag $4=recorded-url
+    local p=$1 url=$2 srctag=$3 rec=$4 tmp inspected
+    [[ $url == https://* ]] || { echo "vendor APK URL is not HTTPS for $p: $url" >&2; exit 1; }
+    tmp=$(mktemp -d)
+    curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --max-filesize 500M "$url" -o "$tmp/asset" \
+      || { echo "download failed or exceeded limits for $p: $url" >&2; rm -rf "$tmp"; exit 1; }
+    inspected=$(inspect_release_asset "$p" "$tmp/asset" "$url") || { rm -rf "$tmp"; exit 1; }
+    rm -rf "$tmp"
+    jq --arg p "$p" --arg src "$srctag" --arg url "$rec" \
+      '{($p): ({versionCode: .versionCode, versionName: .versionName, url: $url, sha256: .sha256, signerSha256: .signerSha256, source: $src}
+               + (if .apkPath != "" then {apkPath: .apkPath} else {} end))}' <<<"$inspected"
+  }
+
+  for spec in "${uspecs[@]}"; do
+    p=${spec%%=*} u=${spec#*=}
+    resolve_url_direct "$p" "$u" "url:$u" "$u"
+  done
+  for spec in "${ujspecs[@]}"; do
+    p=${spec%%=*} ju=${spec#*=}
+    [[ $ju == https://* ]] || { echo "update-manifest URL is not HTTPS for $p: $ju" >&2; exit 1; }
+    manifest=$(curl --proto '=https' --tlsv1.2 -fsS --max-time 60 --max-filesize 1M "$ju") \
+      || { echo "failed to fetch update manifest for $p: $ju" >&2; exit 1; }
+    apk_url=$(jq -er '.url' <<<"$manifest") || { echo "update manifest for $p has no .url: $ju" >&2; exit 1; }
+    # The manifest points at a versioned (immutable) APK; record THAT url so a
+    # stale lock still fetches, while the source tag binds the manifest url.
+    entry=$(resolve_url_direct "$p" "$apk_url" "urljson:$ju" "$apk_url")
+    expected_sha=$(jq -r '.sha256sum // empty' <<<"$manifest")
+    if [ -n "$expected_sha" ]; then
+      got_sha=$(jq -r --arg p "$p" '.[$p].sha256' <<<"$entry")
+      [ "${expected_sha,,}" = "$got_sha" ] \
+        || { echo "update manifest sha256sum mismatch for $p: manifest ${expected_sha,,} != downloaded $got_sha" >&2; exit 1; }
+    fi
+    printf '%s\n' "$entry"
+  done
 } | jq -s 'add')
 
-expected=$(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} ))
+expected=$(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} ))
 actual=$(jq -r 'length' <<<"$resolved")
 [ "$actual" -eq "$expected" ] || { echo "resolved $actual unique packages, expected $expected — duplicate or missing declaration" >&2; exit 1; }
+
+# url/urljson lanes have only TLS + the recorded signer as trust anchors:
+# refuse to re-lock a package whose signer set no longer overlaps the previous
+# lock's, unless explicitly allowed (a verified vendor key rotation).
+allow_json=$(printf '%s\n' ${allow_rotation[@]+"${allow_rotation[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')
+rotated=$(jq -nc --argjson old "$old_packages" --argjson new "$resolved" --argjson allow "$allow_json" '
+  [$new | to_entries[]
+    | select(.value.source // "" | test("^url(json)?:"))
+    | select(.key as $k | ($allow | index($k)) == null)
+    | select(($old[.key] // null) != null)
+    | select(($old[.key].source // "" | test("^url(json)?:")))
+    | select((($old[.key].signerSha256 // []) | length) > 0)
+    | select((.value.signerSha256 - ($old[.key].signerSha256 // [])) == .value.signerSha256)
+    | "\(.key): locked \($old[.key].signerSha256 | join(",")) -> now \(.value.signerSha256 | join(","))"]')
+if [ "$(jq -r 'length' <<<"$rotated")" -gt 0 ]; then
+  echo "signer changed for direct-URL package(s) — refusing to re-lock:" >&2
+  jq -r '.[]' <<<"$rotated" >&2
+  echo "if the vendor really rotated its signing key, re-run with --allow-signer-rotation PACKAGE" >&2
+  exit 1
+fi
 
 lock_tmp="$lock.tmp.$$"
 trap 'rm -f "$lock_tmp"' EXIT

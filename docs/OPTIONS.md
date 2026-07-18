@@ -789,7 +789,7 @@ list of string
 
 
 
-Apps installed from GitHub/Gitea release APKs (Obtainium-style), keyed by Android package id, pinned via apps\.lock\.json\. Exactly one of github/gitea per app\. Release assets may be bare \.apk or a \.tar\.gz containing one\.
+Apps installed from release APKs (Obtainium-style), keyed by Android package id, pinned via apps\.lock\.json\. Exactly one of github/gitea/url/updateJson per app\. GitHub/Gitea assets may be bare \.apk or a \.tar\.gz containing one\.
 
 
 
@@ -860,6 +860,64 @@ null
 
 ```nix
 "ImranR98/Obtainium"
+```
+
+
+
+## apps\.release\.\<name>\.updateJson
+
+
+
+HTTPS URL of a vendor update-manifest JSON with a ` url ` field pointing at the APK (the schema Signal publishes at updates\.signal\.org/android/latest\.json; an optional ` sha256sum ` field is cross-checked)\. Preferred over ` url ` when offered — the manifest points at versioned, immutable APK URLs, so a stale lock still fetches\. Signer continuity is enforced across refreshes for this source\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"https://updates.signal.org/android/latest.json"
+```
+
+
+
+## apps\.release\.\<name>\.url
+
+
+
+HTTPS URL of the vendor’s direct-download APK (a stable ‘latest’ link)\. Locked like a release: ` update ` downloads it, validates the package id with aapt2, and records sha256 + signer\. Because the URL’s content changes in place on vendor updates, a stale lock can fail the store fetch with a hash mismatch until the next ` update ` (the copy fetched at lock time keeps working from the local store or a binary cache)\. Signer continuity is enforced across refreshes for this source\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"https://zoom.us/client/latest/zoom.apk"
 ```
 
 

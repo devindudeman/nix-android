@@ -26,7 +26,8 @@ mutation test bench.
 ## What is declarative today?
 
 - F-Droid and third-party F-Droid repository apps
-- GitHub/Gitea release APKs and local APK files
+- GitHub/Gitea release APKs, direct vendor-URL APKs (bare URL or a Signal-style
+  update-manifest JSON), and local APK files
 - Google Play apps as user-confirmed presence assertions with Play-specific assistance
 - other attended apps as generic presence assertions
 - credential-free Obtainium release-source and App Manager signer import adapters

@@ -210,6 +210,12 @@ orientation.
     release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
     release."com.example.app".gitea = "git.example.com/owner/repo";
 
+    # Direct vendor APK channel: a stable HTTPS link, or (preferred when the
+    # vendor offers one) an update-manifest JSON pointing at versioned APKs.
+    # A signer change across refreshes is refused without --allow-signer-rotation.
+    release."us.zoom.videomeetings".url = "https://zoom.us/client/latest/zoom.apk";
+    release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
+
     # The file itself is the pin. Keep personal/self-signed APKs outside the
     # public repo; package ID and versionCode are read with aapt2 at build time.
     local."com.example.mine".apk = /absolute/path/to/mine.apk;
@@ -579,22 +585,33 @@ preference order, most- to least-declarative:
 2. **`apps.fdroid.repos.<name>`** — a third-party F-Droid repo you already
    trust (IzzyOnDroid, a vendor's own repo), same lock guarantees under your
    pinned fingerprint.
-3. **`apps.release`** — GitHub/Gitea releases, hash- and signer-recorded at
-   lock time.
-4. **`apps.local`** — the APK file is the pin (self-built, custom-signed).
-5. **`apps.attended` + a vendor-direct APK** — many major vendors publish the
-   same build they ship to Play, under the *same signing key*, on their own
-   site. Verify before assuming:
+3. **`apps.release`** — GitHub/Gitea releases (`github`/`gitea`) or the
+   vendor's own direct APK channel (`url`/`updateJson`), hash- and
+   signer-recorded at lock time. Many major vendors publish the same build
+   they ship to Play, under the *same signing key*, on their own site — a
+   vendor update-manifest JSON (`updateJson`, Signal's `latest.json` schema)
+   beats a bare `url` when offered, because the manifest points at versioned
+   immutable APKs, while a mutable "latest" URL can hash-mismatch at fetch
+   time once the vendor replaces the file (the copy fetched at lock time
+   keeps working from the local store or a binary cache; `update` is the
+   remedy). For `url`/`updateJson` the only trust anchors are TLS and the
+   recorded signer, so `update` refuses a signer change unless explicitly
+   allowed (`--allow-signer-rotation`). Verify the vendor channel before
+   declaring it:
 
    ```console
    apksigner verify --print-certs installed.apk   # pulled via adb
    apksigner verify --print-certs vendor.apk      # from the vendor's site
    ```
 
-   Identical signer digests mean the app never needs the Play lane: declare it
-   attended and let an on-device updater (e.g. Obtainium) deliver it. Different
-   digests mean the installed copy can only be upgraded by its current channel
-   — switching requires an uninstall.
+   Identical signer digests mean the vendor channel can upgrade the installed
+   copy in place. Different digests mean the installed copy can only be
+   upgraded by its current channel — switching requires an uninstall.
+4. **`apps.local`** — the APK file is the pin (self-built, custom-signed).
+5. **`apps.attended` + a human-driven vendor download** — for vendors whose
+   direct URLs are bot-guarded or expiring-signed (a lock refresh cannot
+   absorb that breakage), declare the app attended and let an on-device
+   updater (e.g. Obtainium) or a human deliver it.
 6. **`apps.play`** — only for apps with no other distribution at all.
 
 Every step down the list costs reproducibility: lanes 1–4 reinstall unattended
@@ -605,10 +622,6 @@ upgrade) is the same one F-Droid's `AllowedAPKSigningKeys` and Accrescent use �
 the lock-time signer record closes Android's trust-on-first-use gap, the OS
 covers the rest. Floors-not-pins matches Android's own managed-device model
 (`minimumVersionCode`), where on-device stores may run ahead but never behind.
-
-Vendor pages are deliberately *not* a fetched lane: direct-download URLs are
-routinely bot-guarded or expiring-signed, which is exactly the breakage a lock
-refresh cannot absorb — that is what lane 5 delegates to an on-device updater.
 
 ## Move apps off the Play install-consent path
 
