@@ -755,7 +755,7 @@ attribute set of (submodule)
 
 
 
-Absolute path to a locally-built/self-signed APK (kept OUTSIDE the repo — the store copy is fine, a public git history is not)\. versionCode and package id are read from the APK at build time via aapt2; a package-id mismatch fails the build\.
+Absolute path to a locally-built/self-signed APK (kept OUTSIDE the repo — a public git history is forever)\. The build copies the file into the Nix store: if the APK embeds secrets (API keys, tokens), the store path is world-readable on the build host and anything that replicates new store paths (a binary-cache push hook/timer, nix copy) will exfiltrate it — exclude these paths from any cache push\. versionCode and package id are read from the APK at build time via aapt2; a package-id mismatch fails the build\.
 
 
 

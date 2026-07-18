@@ -569,6 +569,47 @@ public repository and copy only declarations you deliberately choose to
 publish. See [IMPORT.md](./IMPORT.md) for the schema, evidence boundaries, and
 export adapters.
 
+## Choosing a lane
+
+`apps.play` should be the last resort, not the default. The recommended
+preference order, most- to least-declarative:
+
+1. **`apps.fdroid`** (main f-droid.org) — signed index, hash-locked,
+   unattended.
+2. **`apps.fdroid.repos.<name>`** — a third-party F-Droid repo you already
+   trust (IzzyOnDroid, a vendor's own repo), same lock guarantees under your
+   pinned fingerprint.
+3. **`apps.release`** — GitHub/Gitea releases, hash- and signer-recorded at
+   lock time.
+4. **`apps.local`** — the APK file is the pin (self-built, custom-signed).
+5. **`apps.attended` + a vendor-direct APK** — many major vendors publish the
+   same build they ship to Play, under the *same signing key*, on their own
+   site. Verify before assuming:
+
+   ```console
+   apksigner verify --print-certs installed.apk   # pulled via adb
+   apksigner verify --print-certs vendor.apk      # from the vendor's site
+   ```
+
+   Identical signer digests mean the app never needs the Play lane: declare it
+   attended and let an on-device updater (e.g. Obtainium) deliver it. Different
+   digests mean the installed copy can only be upgraded by its current channel
+   — switching requires an uninstall.
+6. **`apps.play`** — only for apps with no other distribution at all.
+
+Every step down the list costs reproducibility: lanes 1–4 reinstall unattended
+on a wiped phone; lane 5 needs a human with the vendor URL; lane 6 needs Play
+consent per app. The trust model behind lanes 1–3 (record the APK hash and
+signer at lock time; Android itself enforces signer continuity on every
+upgrade) is the same one F-Droid's `AllowedAPKSigningKeys` and Accrescent use —
+the lock-time signer record closes Android's trust-on-first-use gap, the OS
+covers the rest. Floors-not-pins matches Android's own managed-device model
+(`minimumVersionCode`), where on-device stores may run ahead but never behind.
+
+Vendor pages are deliberately *not* a fetched lane: direct-download URLs are
+routinely bot-guarded or expiring-signed, which is exactly the breakage a lock
+refresh cannot absorb — that is what lane 5 delegates to an on-device updater.
+
 ## Move apps off the Play install-consent path
 
 An import records apps as `apps.play` (presence assertions Play delivers with

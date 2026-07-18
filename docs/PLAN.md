@@ -200,6 +200,19 @@ that, not against surface breadth.
   persistent owner-user primitive passes the emulator reboot gate
 - on-device Termux/rish execution
 - shell completion and selected Nix flag passthrough
+- signer key-rotation handling: model lock `signerSha256` as a set of allowed
+  digests and, on mismatch, check the APK's v3/v3.1 proof-of-rotation lineage
+  (`apksigner verify --print-certs -v`) — a pinned cert appearing in the new
+  APK's lineage is a legitimate rotation, surfaced as an explicit re-lock
+  action, never auto-accepted; require v2+ signatures when verifying (v1-only
+  cert checks have a known bypass class, fdroidserver#1251)
+- attended entries asserting a minimum versionCode (not mere presence) with
+  staleness reporting — on-device updaters fail silently by design, and some
+  vendor builds (e.g. Signal's website flavor) hard-expire
+- document/bench Android 14 update-ownership interplay: never pass
+  `--update-ownership` on installs, and note that an engine `install -r` makes
+  shell the installer of record, demoting an on-device store's silent-update
+  ability for that package until its next consented update
 
 ### Not planned
 

@@ -39,7 +39,9 @@
     # release."com.example.app".gitea = "git.example.com/owner/repo";
 
     # Self-built / locally sourced APKs (the file IS the pin; no lock entry).
-    # Keep the APK OUTSIDE the repo — the store copy is fine, public git is not.
+    # Keep the APK OUTSIDE the repo — public git is forever. The build copies
+    # it into the Nix store: if the APK embeds secrets, exclude it from any
+    # binary-cache push on the build host.
     # local."com.example.app".apk = /absolute/path/to/app.apk;
 
     # Google Play apps: asserted present, installed with your consent. Open the
