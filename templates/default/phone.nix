@@ -33,12 +33,19 @@
     #   packages = [ "org.futo.voiceinput.shared" ];
     # };
 
-    # GitHub/Gitea release APKs (Obtainium-style), keyed by package id. Exactly
-    # one of github/gitea each. Assets may be a bare .apk or a .tar.gz with one.
+    # Release APKs (Obtainium-style), keyed by package id. Exactly one of
+    # github/gitea/url/updateJson/html each; assets may be a bare .apk or a
+    # .tar.gz containing one. All five verify the package id with aapt2 and
+    # record signers at lock time; url/updateJson/html additionally refuse a
+    # signer change on refresh (update --allow-signer-rotation to accept one).
     # release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
     # release."com.example.app".gitea = "git.example.com/owner/repo";
+    # Stable vendor link — content mutates in place; a stale lock can hash-
+    # mismatch at fetch until the next update:
     # release."us.zoom.videomeetings".url = "https://zoom.us/client/latest/zoom.apk";
+    # Vendor update-manifest JSON — preferred: points at versioned immutable APKs:
     # release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
+    # Page-only vendors — the page nominates exactly one linkFilter match:
     # release."com.valvesoftware.android.steam.community".html = {
     #   url = "https://store.steampowered.com/mobile";
     #   linkFilter = "apps/steam-android/steam-[0-9.]+\\.apk$";
@@ -54,8 +61,11 @@
     # next missing one with `android-rebuild assist --flake .#phone`.
     # play = [ "com.google.android.apps.maps" ];
 
-    # Other human-installed apps with no more specific source (presence + TODO).
-    # attended = [ "com.whatsapp" ];
+    # Other human-installed apps with no more specific source (presence + TODO):
+    # private-store/beta apps, or vendors whose download URLs are expiring or
+    # bot-guarded (check for a direct vendor APK first — see docs/USING.md
+    # "Choosing a lane").
+    # attended = [ "com.example.private-beta" ];
 
     # What to do with installed-but-undeclared apps. Default "none" is additive
     # (leaves them alone). "uninstall" removes undeclared third-party apps —
@@ -71,6 +81,7 @@
     # Default-app roles (`cmd role`); null = unmanaged.
     # defaultApps.browser = "org.mozilla.fennec_fdroid";
     # defaultApps.sms = "com.android.messaging";
+    # defaultApps.home = "app.lawnchair";
 
     # Expert escape hatch: raw `settings put <ns> <key>`. Keys are
     # Android-version-specific — verify write/read-back/persistence yourself.

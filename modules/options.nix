@@ -107,7 +107,7 @@
             };
           });
         default = { };
-        description = "Apps installed from release APKs (Obtainium-style), keyed by Android package id, pinned via apps.lock.json. Exactly one of github/gitea/url/updateJson per app. GitHub/Gitea assets may be bare .apk or a .tar.gz containing one.";
+        description = "Apps installed from release APKs (Obtainium-style), keyed by Android package id, pinned via apps.lock.json. Exactly one of github/gitea/url/updateJson/html per app. GitHub/Gitea assets may be bare .apk or a .tar.gz containing one.";
       };
 
       local = lib.mkOption {
