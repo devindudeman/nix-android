@@ -39,6 +39,10 @@
     # release."com.example.app".gitea = "git.example.com/owner/repo";
     # release."us.zoom.videomeetings".url = "https://zoom.us/client/latest/zoom.apk";
     # release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
+    # release."com.valvesoftware.android.steam.community".html = {
+    #   url = "https://store.steampowered.com/mobile";
+    #   linkFilter = "apps/steam-android/steam-[0-9.]+\\.apk$";
+    # };
 
     # Self-built / locally sourced APKs (the file IS the pin; no lock entry).
     # Keep the APK OUTSIDE the repo — public git is forever. The build copies

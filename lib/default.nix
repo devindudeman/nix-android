@@ -198,6 +198,7 @@
               v.gitea
               v.url
               v.updateJson
+              v.html
             ]
           ) != 1
         ) cfg.apps.release
@@ -278,9 +279,12 @@
                 "gitea:${release.gitea}"
               else if release.url != null then
                 "url:${release.url}"
+              else if release.updateJson != null then
+                "urljson:${release.updateJson}"
               else
-                "urljson:${release.updateJson}";
+                "html:${release.html.url}";
             repoFingerprint = null;
+            linkFilter = if release.html != null then release.html.linkFilter else null;
           };
         }) cfg.apps.release
       );
@@ -325,7 +329,7 @@
         else if duplicateSelectedAppLinkDomains != [ ] then
           throw "nix-android: a domain can be selected for only one app: ${lib.concatStringsSep ", " duplicateSelectedAppLinkDomains}"
         else if invalidReleaseSources != [ ] then
-          throw "nix-android: release apps must set exactly one of github/gitea/url/updateJson: ${lib.concatStringsSep ", " invalidReleaseSources}"
+          throw "nix-android: release apps must set exactly one of github/gitea/url/updateJson/html: ${lib.concatStringsSep ", " invalidReleaseSources}"
         else if inputMethodRawConflict then
           throw "nix-android: android.inputMethod conflicts with raw default_input_method/enabled_input_methods settings"
         else if privateDnsRawConflict then
@@ -357,6 +361,8 @@
               throw "nix-android: '${p}' lock source is stale — run android-rebuild update"
             else if expected.repoFingerprint != null && actualFingerprint != expected.repoFingerprint then
               throw "nix-android: '${p}' repository fingerprint is stale — run android-rebuild update"
+            else if (expected.linkFilter or null) != null && (l0.linkFilter or null) != expected.linkFilter then
+              throw "nix-android: '${p}' link filter is stale — run android-rebuild update"
             else
               l0;
           src = pkgs.fetchurl {

@@ -86,6 +86,24 @@
                 description = "HTTPS URL of a vendor update-manifest JSON with a `url` field pointing at the APK (the schema Signal publishes at updates.signal.org/android/latest.json; an optional `sha256sum` field is cross-checked). Preferred over `url` when offered — the manifest points at versioned, immutable APK URLs, so a stale lock still fetches. Signer continuity is enforced across refreshes for this source.";
                 example = "https://updates.signal.org/android/latest.json";
               };
+              html = lib.mkOption {
+                type = nullOr (submodule {
+                  options = {
+                    url = lib.mkOption {
+                      type = str;
+                      description = "HTTPS page whose links include the vendor's APK download.";
+                      example = "https://store.steampowered.com/mobile";
+                    };
+                    linkFilter = lib.mkOption {
+                      type = str;
+                      description = "Extended regex the APK link must match. `update` requires EXACTLY ONE page link to match — zero or several fail loudly (tighten the regex rather than trusting a sort heuristic).";
+                      example = "steam-android/steam-[0-9.]+\\\\.apk$";
+                    };
+                  };
+                });
+                default = null;
+                description = "Discovery-only HTML scrape for vendors that publish versioned APK links on a page but no stable URL or manifest (e.g. Steam). The page only NOMINATES a URL: the download still passes the full aapt2 package-id check, signer recording, and cross-refresh signer-continuity enforcement, so a changed or hostile page can only fail the update — never install the wrong app. Page redesigns break discovery loudly at lock time; fix the regex and re-run update.";
+              };
             };
           });
         default = { };

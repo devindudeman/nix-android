@@ -280,7 +280,9 @@ update)
       then "--gitea\n\(.key)=\(.value.gitea)"
       elif .value.url != null
       then "--url\n\(.key)=\(.value.url)"
-      else "--urljson\n\(.key)=\(.value.updateJson)" end' <<<"$config")
+      elif .value.updateJson != null
+      then "--urljson\n\(.key)=\(.value.updateJson)"
+      else "--html\n\(.key)=\(.value.html.url)\n\(.value.html.linkFilter)" end' <<<"$config")
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)
   # The config is the authoritative full set of locked packages, so a removed
   # declaration drops out of the lock: rewrite it rather than merge into it.

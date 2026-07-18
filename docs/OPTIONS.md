@@ -864,6 +864,69 @@ null
 
 
 
+## apps\.release\.\<name>\.html
+
+
+
+Discovery-only HTML scrape for vendors that publish versioned APK links on a page but no stable URL or manifest (e\.g\. Steam)\. The page only NOMINATES a URL: the download still passes the full aapt2 package-id check, signer recording, and cross-refresh signer-continuity enforcement, so a changed or hostile page can only fail the update — never install the wrong app\. Page redesigns break discovery loudly at lock time; fix the regex and re-run update\.
+
+
+
+*Type:*
+null or (submodule)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+## apps\.release\.\<name>\.html\.linkFilter
+
+
+
+Extended regex the APK link must match\. ` update ` requires EXACTLY ONE page link to match — zero or several fail loudly (tighten the regex rather than trusting a sort heuristic)\.
+
+
+
+*Type:*
+string
+
+
+
+*Example:*
+
+```nix
+"steam-android/steam-[0-9.]+\\\\.apk$"
+```
+
+
+
+## apps\.release\.\<name>\.html\.url
+
+
+
+HTTPS page whose links include the vendor’s APK download\.
+
+
+
+*Type:*
+string
+
+
+
+*Example:*
+
+```nix
+"https://store.steampowered.com/mobile"
+```
+
+
+
 ## apps\.release\.\<name>\.updateJson
 
 

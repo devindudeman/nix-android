@@ -264,4 +264,67 @@ EOF
   fi
 fi
 
+# HTML discovery lane: the page nominates exactly one link; zero or several
+# matches fail loudly; the download still passes package-id verification.
+if [ -n "$raw_script" ]; then
+  cat > "$tmp/page-one.html" <<'HTML'
+<html><body>
+<a href="https://fake.example/other/tool-1.2.zip">decoy</a>
+<a href="https://fake.example/apps/app-7.0.1.apk">get the app</a>
+<a href="https://fake.example/help">help</a>
+</body></html>
+HTML
+  cat > "$tmp/page-many.html" <<'HTML'
+<html><body>
+<a href="https://fake.example/apps/app-7.0.1.apk">a</a>
+<a href="https://fake.example/apps/app-6.9.0.apk">b</a>
+</body></html>
+HTML
+  htmlbin="$tmp/htmlbin"; mkdir -p "$htmlbin"
+  cat > "$htmlbin/curl" <<EOF
+#!$bash_path
+set -euo pipefail
+url=""; out=""; prev=""
+for a in "\$@"; do
+  case "\$a" in https://*) url="\$a" ;; esac
+  [ "\$prev" = -o ] && out="\$a"
+  prev="\$a"
+done
+emit() { if [ -n "\$out" ]; then cp "\$1" "\$out"; else cat "\$1"; fi; }
+case "\$url" in
+  *page-one) emit "$tmp/page-one.html" ;;
+  *page-many) emit "$tmp/page-many.html" ;;
+  *app-7.0.1.apk) emit "$fixture_apk" ;;
+  *) echo "fake curl: unexpected url \$url" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$htmlbin/curl"
+
+  # Exactly-one match resolves; the versioned link and the filter are recorded.
+  PATH="$htmlbin:$PATH" bash "$raw_script" --lock "$tmp/html.lock.json" \
+    --abi x86_64 --replace --html "org.fdroid.fdroid=https://fake.example/page-one" 'apps/app-[0-9.]+\.apk$' >/dev/null
+  jq -e '.packages["org.fdroid.fdroid"]
+    | .url == "https://fake.example/apps/app-7.0.1.apk"
+      and .source == "html:https://fake.example/page-one"
+      and .linkFilter == "apps/app-[0-9.]+\\.apk$"
+      and (.signerSha256 | length >= 1)' "$tmp/html.lock.json" >/dev/null
+
+  # No-arg refresh re-resolves the html lane from source tag + linkFilter.
+  PATH="$htmlbin:$PATH" bash "$raw_script" --lock "$tmp/html.lock.json" >/dev/null
+  jq -e '.packages["org.fdroid.fdroid"].source == "html:https://fake.example/page-one"' \
+    "$tmp/html.lock.json" >/dev/null
+
+  # Multiple matches must fail (no sort heuristics), as must zero matches.
+  if PATH="$htmlbin:$PATH" bash "$raw_script" --lock "$tmp/html-many.lock.json" \
+    --abi x86_64 --replace --html "org.fdroid.fdroid=https://fake.example/page-many" 'apps/app-[0-9.]+\.apk$' >/dev/null 2>&1; then
+    echo "multi-match html discovery unexpectedly succeeded" >&2
+    exit 1
+  fi
+  if PATH="$htmlbin:$PATH" bash "$raw_script" --lock "$tmp/html-zero.lock.json" \
+    --abi x86_64 --replace --html "org.fdroid.fdroid=https://fake.example/page-one" 'nomatch-[0-9.]+\.apk$' >/dev/null 2>&1; then
+    echo "zero-match html discovery unexpectedly succeeded" >&2
+    exit 1
+  fi
+fi
+
 echo "signed F-Droid and release-asset resolver tests passed"

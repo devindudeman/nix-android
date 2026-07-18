@@ -5,7 +5,8 @@
 # Usage: update-lock.sh --lock apps.lock.json [--abi arm64-v8a] [--replace] \
 #          [pkg ...] [--fdroid pkg repo-url fingerprint ...] [--github pkg=owner/repo ...] \
 #          [--gitea pkg=host/owner/repo ...] [--url pkg=https://... ...] \
-#          [--urljson pkg=https://... ...] [--allow-signer-rotation pkg ...]
+#          [--urljson pkg=https://... ...] [--html pkg=page-url link-regex ...] \
+#          [--allow-signer-rotation pkg ...]
 #   Plain pkg args resolve against f-droid.org; --fdroid pins a package to a
 #   third-party F-Droid repo and authenticates its signed entry.jar using the
 #   repository certificate's SHA-256 fingerprint (64 hex characters).
@@ -37,6 +38,13 @@
 # vendor plus the recorded signer as trust anchors, so a refresh REFUSES a
 # signer change unless the package is listed via --allow-signer-rotation —
 # verify the vendor actually announced a key rotation before passing it.
+#
+# HTML discovery (--html): for vendors with versioned APK links on a page but
+# no stable URL or manifest (e.g. Steam). The page only NOMINATES a link:
+# exactly one page link must match the extended regex (zero or several fail
+# loudly — tighten the regex, no sort heuristics), and the download then gets
+# the identical package-id/signature/continuity treatment. A page redesign
+# breaks the update loudly; it can never install the wrong app.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -58,6 +66,7 @@ ghspecs=()
 gtspecs=()
 uspecs=()
 ujspecs=()
+hspecs=()
 allow_rotation=()
 test_asset=()
 fetch_index_spec=()
@@ -150,6 +159,10 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] && [[ $2 == *=* ]] || { echo "--urljson requires PACKAGE=HTTPS_URL" >&2; exit 2; }
     ujspecs+=("$2"); shift 2
     ;;
+  --html)
+    [ $# -ge 3 ] && [[ $2 == *=* ]] || { echo "--html requires PACKAGE=PAGE_URL LINK_REGEX" >&2; exit 2; }
+    hspecs+=("${2}${US}${3}"); shift 3
+    ;;
   --allow-signer-rotation)
     [ $# -ge 2 ] || { echo "--allow-signer-rotation requires PACKAGE" >&2; exit 2; }
     allow_rotation+=("$2"); shift 2
@@ -173,16 +186,19 @@ if [ "${#test_asset[@]}" -gt 0 ]; then
   exit
 fi
 if [ "${#fetch_index_spec[@]}" -eq 0 ] \
-  && [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
+  && [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} + ${#hspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
   if ! jq -e '
     (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64"))
     and (.packages | type == "object" and all(to_entries[];
       (.key | type == "string")
       and (.value | type == "object")
       and (.value.source == null
-        or (.value.source | type == "string" and test("^(fdroid:|github:|gitea:|url:|urljson:).+")))
+        or (.value.source | type == "string" and test("^(fdroid:|github:|gitea:|url:|urljson:|html:).+")))
       and (if (.value.source // "" | startswith("fdroid:"))
         then (.value.repoFingerprint | type == "string" and test("^[0-9A-Fa-f]{64}$"))
+        else true end)
+      and (if (.value.source // "" | startswith("html:"))
+        then (.value.linkFilter | type == "string" and length > 0)
         else true end)))
   ' "$lock" >/dev/null; then
     echo "cannot refresh malformed lock: $lock" >&2
@@ -200,7 +216,9 @@ if [ "${#fetch_index_spec[@]}" -eq 0 ] \
       url: [.packages | to_entries[] | select(.value.source // "" | startswith("url:"))
         | "\(.key)=\(.value.source | sub("^url:"; ""))"],
       urljson: [.packages | to_entries[] | select(.value.source // "" | startswith("urljson:"))
-        | "\(.key)=\(.value.source | sub("^urljson:"; ""))"]
+        | "\(.key)=\(.value.source | sub("^urljson:"; ""))"],
+      html: [.packages | to_entries[] | select(.value.source // "" | startswith("html:"))
+        | "\(.key)=\(.value.source | sub("^html:"; ""))\u001f\(.value.linkFilter)"]
     }
   ' "$lock")
   mapfile -t pkgs < <(jq -r '.plain[]' <<<"$refresh")
@@ -211,10 +229,13 @@ if [ "${#fetch_index_spec[@]}" -eq 0 ] \
   mapfile -t gtspecs < <(jq -r '.gitea[]' <<<"$refresh")
   mapfile -t uspecs < <(jq -r '.url[]' <<<"$refresh")
   mapfile -t ujspecs < <(jq -r '.urljson[]' <<<"$refresh")
+  while IFS= read -r hspec; do
+    [ -n "$hspec" ] && hspecs+=("$hspec")
+  done < <(jq -r '.html[]' <<<"$refresh")
   [ "$abi_set" -eq 1 ] || abi=$(jq -r '.abi' "$lock")
 fi
 [ "${#fetch_index_spec[@]}" -gt 0 ] \
-  || [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} )) -gt 0 ] \
+  || [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} + ${#hspecs[@]} )) -gt 0 ] \
   || { echo "no packages to lock" >&2; exit 1; }
 
 # Pre-update snapshot for the url/urljson signer-continuity check; tolerate a
@@ -439,9 +460,34 @@ resolved=$({
     fi
     printf '%s\n' "$entry"
   done
+  for spec in "${hspecs[@]}"; do
+    IFS=$US read -r pu lf <<<"$spec"
+    p=${pu%%=*} page=${pu#*=}
+    [[ $page == https://* ]] || { echo "discovery page URL is not HTTPS for $p: $page" >&2; exit 1; }
+    body=$(curl --proto '=https' --tlsv1.2 -fsSL --max-time 60 --max-filesize 5M "$page") \
+      || { echo "failed to fetch discovery page for $p: $page" >&2; exit 1; }
+    # The page only nominates a link; everything downstream is verified.
+    mapfile -t matched < <(grep -oiE "href=[\"'][^\"']+[\"']" <<<"$body" \
+      | sed -E "s/^[hH][rR][eE][fF]=[\"']//; s/[\"']\$//" \
+      | { grep -E -- "$lf" || true; } | sort -u)
+    if [ "${#matched[@]}" -ne 1 ]; then
+      echo "link filter for $p matched ${#matched[@]} page link(s), need exactly 1 — adjust linkFilter" >&2
+      printf '  %s\n' "${matched[@]:0:8}" >&2
+      exit 1
+    fi
+    link=${matched[0]}
+    # Root-relative links resolve against the page's origin; anything else
+    # must already be absolute HTTPS (resolve_url_direct enforces it).
+    if [[ $link == /* ]]; then
+      origin=$(sed -E 's#^(https://[^/]+).*#\1#' <<<"$page")
+      link="$origin$link"
+    fi
+    entry=$(resolve_url_direct "$p" "$link" "html:$page" "$link")
+    jq --arg p "$p" --arg lf "$lf" '.[$p] += {linkFilter: $lf}' <<<"$entry"
+  done
 } | jq -s 'add')
 
-expected=$(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} ))
+expected=$(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} + ${#hspecs[@]} ))
 actual=$(jq -r 'length' <<<"$resolved")
 [ "$actual" -eq "$expected" ] || { echo "resolved $actual unique packages, expected $expected — duplicate or missing declaration" >&2; exit 1; }
 
@@ -451,10 +497,10 @@ actual=$(jq -r 'length' <<<"$resolved")
 allow_json=$(printf '%s\n' ${allow_rotation[@]+"${allow_rotation[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')
 rotated=$(jq -nc --argjson old "$old_packages" --argjson new "$resolved" --argjson allow "$allow_json" '
   [$new | to_entries[]
-    | select(.value.source // "" | test("^url(json)?:"))
+    | select(.value.source // "" | test("^(url(json)?|html):"))
     | select(.key as $k | ($allow | index($k)) == null)
     | select(($old[.key] // null) != null)
-    | select(($old[.key].source // "" | test("^url(json)?:")))
+    | select(($old[.key].source // "" | test("^(url(json)?|html):")))
     | select((($old[.key].signerSha256 // []) | length) > 0)
     | select((.value.signerSha256 - ($old[.key].signerSha256 // [])) == .value.signerSha256)
     | "\(.key): locked \($old[.key].signerSha256 | join(",")) -> now \(.value.signerSha256 | join(","))"]')

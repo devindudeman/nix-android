@@ -216,6 +216,13 @@ orientation.
     release."us.zoom.videomeetings".url = "https://zoom.us/client/latest/zoom.apk";
     release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
 
+    # Page-only vendors: discovery-only scrape. Exactly one page link must
+    # match linkFilter; the download gets the full package-id/signer checks.
+    release."com.valvesoftware.android.steam.community".html = {
+      url = "https://store.steampowered.com/mobile";
+      linkFilter = "apps/steam-android/steam-[0-9.]+\\.apk$";
+    };
+
     # The file itself is the pin. Keep personal/self-signed APKs outside the
     # public repo; package ID and versionCode are read with aapt2 at build time.
     local."com.example.mine".apk = /absolute/path/to/mine.apk;
@@ -586,7 +593,7 @@ preference order, most- to least-declarative:
    trust (IzzyOnDroid, a vendor's own repo), same lock guarantees under your
    pinned fingerprint.
 3. **`apps.release`** — GitHub/Gitea releases (`github`/`gitea`) or the
-   vendor's own direct APK channel (`url`/`updateJson`), hash- and
+   vendor's own direct APK channel (`url`/`updateJson`/`html`), hash- and
    signer-recorded at lock time. Many major vendors publish the same build
    they ship to Play, under the *same signing key*, on their own site — a
    vendor update-manifest JSON (`updateJson`, Signal's `latest.json` schema)
@@ -594,10 +601,15 @@ preference order, most- to least-declarative:
    immutable APKs, while a mutable "latest" URL can hash-mismatch at fetch
    time once the vendor replaces the file (the copy fetched at lock time
    keeps working from the local store or a binary cache; `update` is the
-   remedy). For `url`/`updateJson` the only trust anchors are TLS and the
-   recorded signer, so `update` refuses a signer change unless explicitly
-   allowed (`--allow-signer-rotation`). Verify the vendor channel before
-   declaring it:
+   remedy). Vendors that only link a versioned APK from a web page (Steam)
+   use `html`: a discovery-only scrape where exactly one page link must match
+   your `linkFilter` regex — the page merely *nominates* the URL, and the
+   download still passes every package-id and signature check, so a changed
+   or hostile page can only fail the update, never install the wrong app.
+   For all three the only trust anchors are TLS and the recorded signer, so
+   `update` refuses a signer change unless explicitly allowed
+   (`--allow-signer-rotation`). Verify the vendor channel before declaring
+   it:
 
    ```console
    apksigner verify --print-certs installed.apk   # pulled via adb
@@ -610,9 +622,30 @@ preference order, most- to least-declarative:
 4. **`apps.local`** — the APK file is the pin (self-built, custom-signed).
 5. **`apps.attended` + a human-driven vendor download** — for vendors whose
    direct URLs are bot-guarded or expiring-signed (a lock refresh cannot
-   absorb that breakage), declare the app attended and let an on-device
-   updater (e.g. Obtainium) or a human deliver it.
+   absorb that breakage, e.g. WhatsApp's expiring signed CDN links), declare
+   the app attended and let an on-device updater (e.g. Obtainium) or a human
+   deliver it.
 6. **`apps.play`** — only for apps with no other distribution at all.
+
+Picking a source for a new app — stop at the first rung that holds:
+
+1. `suggest-sources` finds it on f-droid.org or a repo you already pin →
+   `apps.fdroid`.
+2. The vendor has GitHub/Gitea releases shipping an APK → `github`/`gitea`
+   (confirm the signer you trust once, from the lock's recorded digests).
+3. The vendor publishes an update-manifest JSON → `updateJson`.
+4. The vendor publishes a stable direct APK URL → `url`.
+5. The vendor's page links a versioned APK → `html` with a `linkFilter`
+   tight enough to match exactly one link.
+6. The APK is self-built, or the vendor URL is expiring/bot-guarded →
+   `apps.local`, or `apps.attended` + an on-device updater.
+7. Nothing above exists → `apps.play`.
+
+Whenever a lane change would take over an app that is already installed,
+compare signers first (the apksigner recipe above): the same digest means the
+new channel upgrades in place; a different digest means uninstall/reinstall.
+Locked versions are floors, so an on-device updater running ahead of the lock
+is never a conflict.
 
 Every step down the list costs reproducibility: lanes 1–4 reinstall unattended
 on a wiped phone; lane 5 needs a human with the vendor URL; lane 6 needs Play
