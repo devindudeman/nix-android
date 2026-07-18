@@ -387,12 +387,16 @@ actions remain applied; re-run `plan` to see the remainder.
 
 An upgrade can fail with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` when the
 installed copy is signed by a different key than the declared source's build —
-Android refuses cross-signer upgrades. `plan` predicts the common case with a
-`note:` when the installed copy's installer is Play-ecosystem (Play Store,
-Aurora) but the declared source is F-Droid/GitHub. The fix is either
-uninstalling the app so switch reinstalls it from the declared source, or
-reclassifying it to `apps.play`. This is a provenance heuristic; exact
-plan-time signer verification is deferred (docs/PLAN.md). Managed permission
+Android refuses cross-signer upgrades. For every pending upgrade `plan` runs an
+exact signer preflight: it pulls the installed APK, compares its `apksigner`
+digest set against the manifest APK's, and stays silent on an overlap (the
+in-place upgrade is verified acceptable) or emits a definitive `note: … WILL
+fail` on disjoint sets. When `apksigner` is unavailable (a standalone engine)
+or the pull fails, it falls back to the older provenance heuristic: a `note:
+… will likely fail` when the installed copy's installer is Play-ecosystem
+(Play Store, Aurora) but the declared source is F-Droid/GitHub. The fix in
+either case is uninstalling the app so switch reinstalls it from the declared
+source, or reclassifying its lane. Managed permission
 intent is reasserted after an app install or upgrade. Destructive cleanup, when
 explicitly set to `"uninstall"`, runs last so a preceding failure cannot start
 removals.
@@ -786,6 +790,12 @@ checks the index-v2 hash, and records each APK hash. A failed update writes no
 partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
 is checked before the lock is written. Release resolution uses anonymous public
 APIs and is therefore subject to the host's unauthenticated rate limits.
+
+Refreshes short-circuit versioned release sources: when a github/gitea/
+updateJson/html source resolves to the same URL already locked (same ABI,
+complete entry), the previous entry is reused without re-downloading the APK,
+so a no-change refresh costs only the metadata fetches. Mutable `url` sources
+always re-download — the same URL serves new content after a vendor update.
 
 F-Droid selection follows `metadata.preferredSigner` before versionCode and
 records the chosen signing lineage. A repository exposing multiple lineages

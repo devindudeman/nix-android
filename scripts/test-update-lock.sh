@@ -327,4 +327,65 @@ EOF
   fi
 fi
 
+# Refresh short-circuit: versioned lanes (github/urljson/html) must NOT
+# re-download an unchanged APK; mutable url lanes and changed assets must.
+# The poisoned curl serves metadata but hard-fails every APK download.
+if [ -n "$raw_script" ]; then
+  scbin="$tmp/scbin"; mkdir -p "$scbin"
+  cat > "$scbin/curl" <<EOF
+#!$bash_path
+set -euo pipefail
+url=""; out=""; prev=""
+for a in "\$@"; do
+  case "\$a" in https://*) url="\$a" ;; esac
+  [ "\$prev" = -o ] && out="\$a"
+  prev="\$a"
+done
+emit() { if [ -n "\$out" ]; then cp "\$1" "\$out"; else cat "\$1"; fi; }
+case "\$url" in
+  *releases/latest) emit "$tmp/release.json" ;;
+  *latest.json) emit "$tmp/manifest.json" ;;
+  *page-one) emit "$tmp/page-one.html" ;;
+  *.apk) echo "poison: unexpected APK download: \$url" >&2; exit 22 ;;
+  *) echo "poison curl: unexpected url \$url" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$scbin/curl"
+
+  # Unchanged github release: reused without download, lock byte-identical.
+  cp "$tmp/flavor.lock.json" "$tmp/flavor.before"
+  PATH="$scbin:$PATH" bash "$raw_script" --lock "$tmp/flavor.lock.json" >/dev/null
+  cmp <(jq -S .packages "$tmp/flavor.before") <(jq -S .packages "$tmp/flavor.lock.json")
+
+  # Unchanged urljson manifest: reused without download.
+  cp "$tmp/urljson.lock.json" "$tmp/urljson.before"
+  PATH="$scbin:$PATH" bash "$raw_script" --lock "$tmp/urljson.lock.json" >/dev/null
+  cmp <(jq -S .packages "$tmp/urljson.before") <(jq -S .packages "$tmp/urljson.lock.json")
+
+  # Unchanged html nomination: reused without download.
+  cp "$tmp/html.lock.json" "$tmp/html.before"
+  PATH="$scbin:$PATH" bash "$raw_script" --lock "$tmp/html.lock.json" >/dev/null
+  cmp <(jq -S .packages "$tmp/html.before") <(jq -S .packages "$tmp/html.lock.json")
+
+  # Mutable url lane: must still attempt the download (poisoned -> fails,
+  # atomically leaving the lock untouched).
+  cp "$tmp/url.lock.json" "$tmp/url.before"
+  if PATH="$scbin:$PATH" bash "$raw_script" --lock "$tmp/url.lock.json" >/dev/null 2>&1; then
+    echo "mutable url lane skipped its re-download" >&2
+    exit 1
+  fi
+  cmp "$tmp/url.before" "$tmp/url.lock.json"
+
+  # A CHANGED release asset must re-download (poisoned -> fails, atomic).
+  jq '.assets[1].browser_download_url = "https://fake.example/right-v2.apk"
+      | .assets[1].name = "app-release-v2.apk"' "$tmp/release.json" > "$tmp/release2.json"
+  mv "$tmp/release2.json" "$tmp/release.json"
+  cp "$tmp/flavor.lock.json" "$tmp/flavor2.before"
+  if PATH="$scbin:$PATH" bash "$raw_script" --lock "$tmp/flavor.lock.json" >/dev/null 2>&1; then
+    echo "changed release asset was wrongly reused" >&2
+    exit 1
+  fi
+  cmp "$tmp/flavor2.before" "$tmp/flavor.lock.json"
+fi
+
 echo "signed F-Droid and release-asset resolver tests passed"

@@ -126,4 +126,28 @@ EOF
 [ -z "$(installer_package_from_dump <<<"$adb_install_dump")" ] \
   || fail "null installer should read as empty"
 
+
+# --- apk_signer_digests: signer lines only, stamp excluded, normalized ------
+whatsapp_installed=$(cat <<'DUMP'
+Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: FB920D381BEE1B2093F27DC8F13D994DA629DC91887D0529B35C9A2DC4F4A6C2
+Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-1 digest: 1111111111111111111111111111111111111111
+Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: 3987d043d10aefaf5a8710b3671418fe57e0e19b653c9df82558feb5ffce5d44
+Source Stamp Signer certificate SHA-256 digest: 3257d599a49d2c961a471ca9843f59d341a405884583fc087df4237b733bbd6d
+DUMP
+)
+got=$(apk_signer_digests <<<"$whatsapp_installed")
+[ "$got" = "3987d043d10aefaf5a8710b3671418fe57e0e19b653c9df82558feb5ffce5d44
+fb920d381bee1b2093f27dc8f13d994da629dc91887d0529b35c9a2dc4f4a6c2" ] \
+  || fail "apk_signer_digests: per-SDK signers not normalized/deduped or stamp leaked"
+
+signal_lineage=$(cat <<'DUMP'
+Signer #1 certificate SHA-256 digest: 29f34e5f27f211b424bc5bf9d67162c0eafba2da35af35c16416fc446276ba26
+Signer #1 certificate MD5 digest: 22222222222222222222222222222222
+Signer #2 certificate SHA-256 digest: 4be4f6cd5be844083e900279dc822af65a547fecc26aba7ff1f5203a45518cd8
+DUMP
+)
+got=$(apk_signer_digests <<<"$signal_lineage")
+[ "$(wc -l <<<"$got")" -eq 2 ] || fail "apk_signer_digests: lineage digests miscounted"
+apk_signer_digests </dev/null | grep -q . && fail "apk_signer_digests: empty input produced output"
+
 echo "✓ read-state parser fixtures passed"

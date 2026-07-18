@@ -176,10 +176,11 @@ that, not against surface breadth.
   site is ever published
 - broader resolver regression fixtures for release-asset selection and the
   no-`preferredSigner` multiple-lineage rejection path
-- exact plan-time signer verification (pull the installed APK, compare
-  `apksigner` digest against the lock's signer) — the shipped plan `note:` is
-  an installer-provenance heuristic; exactness costs apksigner+jdk in the
-  engine closure
+- ~~exact plan-time signer verification~~ — shipped: `plan` pulls the
+  installed APK for each pending upgrade and compares `apksigner` digest sets
+  against the manifest APK's (match = silent, disjoint = definitive `WILL
+  fail` note); falls back to the installer-provenance heuristic when
+  apksigner is unavailable (standalone engine) or the pull fails
 - `assist --watch` skip/reorder for a wedged Play install (today it is
   head-of-line blocking in declaration order)
 - an `assist` note when a declared Play app is already installed in another

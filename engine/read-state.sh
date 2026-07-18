@@ -106,3 +106,15 @@ other_users_with_install() {
   local exclude=$1
   sed -n 's/^ *User \([0-9][0-9]*\):.*installed=true.*/\1/p' | grep -vx "$exclude" || true
 }
+
+# Normalized APK signer digests from `apksigner verify --print-certs` output:
+# one lowercase sha256 per line, sorted, deduplicated. Accepts both signer
+# spellings ("Signer #N ..." and the v3.1 per-SDK "Signer (minSdkVersion=..)
+# ...") and rejects the Play "Source Stamp Signer" line — that digest is
+# Play's delivery stamp, not an app signing certificate. SHA-1/MD5 lines are
+# excluded by the {64} length anchor.
+apk_signer_digests() {
+  grep '^Signer ' \
+    | sed -n 's/.*certificate SHA-256 digest:[[:space:]]*\([0-9A-Fa-f]\{64\}\).*/\1/p' \
+    | tr 'A-F' 'a-f' | sort -u
+}

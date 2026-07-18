@@ -484,6 +484,10 @@
         name = "nix-android-converge-${cfg.device.name}";
         runtimeInputs = [
           pkgs.android-tools
+          # For the exact plan-time signer preflight on pending upgrades; the
+          # engine degrades to the installer-provenance heuristic without it
+          # (standalone Termux/rish later).
+          pkgs.apksigner
           pkgs.coreutils
           pkgs.gawk
           pkgs.gnugrep

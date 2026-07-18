@@ -39,6 +39,12 @@
 # signer change unless the package is listed via --allow-signer-rotation —
 # verify the vendor actually announced a key rotation before passing it.
 #
+# Refresh short-circuit: github/gitea/urljson/html resolve to VERSIONED urls;
+# when the freshly-resolved url equals the locked one (same ABI, complete
+# entry), the previous entry is reused without re-downloading the APK — a
+# no-change refresh costs only the metadata fetches. --url lanes always
+# re-download: the same url serves new content after a vendor update.
+#
 # HTML discovery (--html): for vendors with versioned APK links on a page but
 # no stable URL or manifest (e.g. Steam). The page only NOMINATES a link:
 # exactly one page link must match the extended regex (zero or several fail
@@ -242,8 +248,10 @@ fi
 # missing or malformed lock (the malformed-refresh guard above already handles
 # the refresh path).
 old_packages='{}'
+old_abi=""
 if [ -f "$lock" ]; then
   old_packages=$(jq '.packages // {}' "$lock" 2>/dev/null) || old_packages='{}'
+  old_abi=$(jq -r '.abi // empty' "$lock" 2>/dev/null) || old_abi=""
 fi
 
 # Entries resolved for one ABI must never silently coexist with (or silently
@@ -359,6 +367,23 @@ resolved=$({
     resolve_fdroid "$p" "$rurl" "$fp" "fdroid:$rurl"
   done
 
+  # Short-circuit: a versioned source whose freshly-resolved URL equals the
+  # locked one cannot have changed (the URL is immutable) — re-downloading
+  # proves nothing the lock does not already pin. Requires the same ABI and a
+  # complete previous entry. Mutable --url lanes never reuse: their content
+  # changes in place behind the same URL.
+  reuse_locked() { # $1=pkg $2=source-tag $3=resolved-url [$4=linkFilter]
+    [ "$old_abi" = "$abi" ] || return 1
+    jq -e --arg p "$1" --arg src "$2" --arg url "$3" --arg lf "${4-}" '
+      .[$p] // empty
+      | select(.source == $src and .url == $url)
+      | select((.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+          and (.versionCode | type == "number")
+          and ((.signerSha256 // []) | length > 0))
+      | select($lf == "" or .linkFilter == $lf)
+      | {($p): .}' <<<"$old_packages" 2>/dev/null
+  }
+
   # Shared resolver for GitHub + Gitea releases (compatible asset JSON shape).
   # Assets may be bare .apk or a .tar.gz containing one (recorded as apkPath).
   resolve_release() { # $1=pkg $2=api-url $3=source-tag
@@ -383,6 +408,13 @@ resolved=$({
          + [$tars[] | select(.name | test(architecture; "i") | not)])
       | map({name, url: .browser_download_url})' <<<"$rel")
     [ "$(jq -r 'length' <<<"$assets")" -gt 0 ] || { echo "no suitable .apk/.tar.gz asset in release for $p" >&2; exit 1; }
+    local old_url reused
+    old_url=$(jq -r --arg p "$p" '.[$p].url // empty' <<<"$old_packages")
+    if [ -n "$old_url" ] && jq -e --arg u "$old_url" 'any(.[]; .url == $u)' <<<"$assets" >/dev/null \
+      && reused=$(reuse_locked "$p" "$srctag" "$old_url"); then
+      printf '%s\n' "$reused"
+      return 0
+    fi
     tmp=$(mktemp -d)
     matched=
     # Bound the work an untrusted release can impose: at most 8 candidate
@@ -449,10 +481,15 @@ resolved=$({
     manifest=$(curl --proto '=https' --tlsv1.2 -fsS --max-time 60 --max-filesize 1M "$ju") \
       || { echo "failed to fetch update manifest for $p: $ju" >&2; exit 1; }
     apk_url=$(jq -er '.url' <<<"$manifest") || { echo "update manifest for $p has no .url: $ju" >&2; exit 1; }
+    expected_sha=$(jq -r '.sha256sum // empty' <<<"$manifest")
+    if { [ -z "$expected_sha" ] || [ "${expected_sha,,}" = "$(jq -r --arg p "$p" '.[$p].sha256 // ""' <<<"$old_packages")" ]; } \
+      && entry=$(reuse_locked "$p" "urljson:$ju" "$apk_url"); then
+      printf '%s\n' "$entry"
+      continue
+    fi
     # The manifest points at a versioned (immutable) APK; record THAT url so a
     # stale lock still fetches, while the source tag binds the manifest url.
     entry=$(resolve_url_direct "$p" "$apk_url" "urljson:$ju" "$apk_url")
-    expected_sha=$(jq -r '.sha256sum // empty' <<<"$manifest")
     if [ -n "$expected_sha" ]; then
       got_sha=$(jq -r --arg p "$p" '.[$p].sha256' <<<"$entry")
       [ "${expected_sha,,}" = "$got_sha" ] \
@@ -481,6 +518,10 @@ resolved=$({
     if [[ $link == /* ]]; then
       origin=$(sed -E 's#^(https://[^/]+).*#\1#' <<<"$page")
       link="$origin$link"
+    fi
+    if entry=$(reuse_locked "$p" "html:$page" "$link" "$lf"); then
+      printf '%s\n' "$entry"
+      continue
     fi
     entry=$(resolve_url_direct "$p" "$link" "html:$page" "$link")
     jq --arg p "$p" --arg lf "$lf" '.[$p] += {linkFilter: $lf}' <<<"$entry"
