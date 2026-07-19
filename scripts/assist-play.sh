@@ -20,15 +20,15 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$serial" ] || { echo "assist requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
 
-# Validate every field this helper consumes before the first adb call.
-if ! jq -e '
-  def package: type == "string" and test("^[A-Za-z0-9_]+([.][A-Za-z0-9_]+)+\\z");
-  (.manifestVersion == 3 or .manifestVersion == 4)
-  and .device.user == 0
-  and (.device.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64"))
-  and (.apps.play | type == "array" and all(.[]; package)
-    and length == (unique | length))
-' "$manifest" >/dev/null; then
+# Validate with the SHARED full-manifest validator — one schema, one source.
+# (A per-consumer subset check here once duplicated the manifestVersion pin
+# and missed a bump; the bench caught it, 2026-07-19.)
+# shellcheck source-path=SCRIPTDIR/../engine
+# shellcheck source=../engine/read-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../engine/read-state.sh"
+writable_permission_flags_json=$(printf '%s\n' "${writable_permission_flags[@]}" | jq -cRn '[inputs]')
+if ! jq -e --argjson writableFlags "$writable_permission_flags_json" \
+  -f "$(dirname "${BASH_SOURCE[0]}")/../engine/validate-manifest.jq" "$manifest" >/dev/null; then
   echo "invalid or unsupported manifest: $manifest" >&2
   exit 2
 fi

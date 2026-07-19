@@ -40,11 +40,20 @@ esac
 EOF
 chmod +x "$tmp/fakebin/adb"
 
+# Full valid manifest (assist validates the complete shared schema now, not a
+# per-consumer subset), varying only the Play list under test.
 manifest() {
   jq -n --argjson play "$1" '{
-    manifestVersion: 3,
-    device: {user: 0, abi: "x86_64"},
-    apps: {play: $play}
+    manifestVersion: 4,
+    device: {name: "test", user: 0, abi: "x86_64"},
+    apps: {cleanup: "none", attended: [], play: $play, managed: []},
+    android: {
+      darkMode: null, disabled: [], deviceidleExempt: [], deviceidleUnexempt: [], roles: {},
+      settings: {global: {}, secure: {}, system: {}},
+      permissions: {}, appOps: {}, suspended: [], unsuspended: [],
+      locales: {}, inputMethod: {enabled: [], disabled: [], default: null},
+      dataSaver: {enabled: null}, appLinks: {}
+    }
   }' > "$tmp/manifest.json"
 }
 
