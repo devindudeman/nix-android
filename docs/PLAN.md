@@ -214,6 +214,28 @@ that, not against surface breadth.
   `--update-ownership` on installs, and note that an engine `install -r` makes
   shell the installer of record, demoting an on-device store's silent-update
   ability for that package until its next consented update
+- HEAD-probe for mutable `url` release sources (ETag/Last-Modified before
+  download) — a no-change refresh still re-fetches hundreds of MB for
+  content-mutating vendor links (Zoom alone is ~330 MB); versioned sources
+  already short-circuit
+- further ensure-absent / inverse verbs (`packages.enabled`, role clearing)
+  strictly on demand — the unexempt work showed need-driven verbs get built
+  right because a live end state exists to verify against; no speculative
+  vocabulary
+- special-app-access verification sweep: bench whether notification-listener
+  (`cmd notification allow_listener`), usage-access and draw-over (appops
+  `GET_USAGE_STATS` / `SYSTEM_ALERT_WINDOW`), and the battery "restricted"
+  tri-state (`RUN_ANY_IN_BACKGROUND deny`) are already expressible via
+  existing options — several may need only a documented recipe, not code
+- Seedvault/`bmgr` research: backup manager is shell-drivable on GrapheneOS;
+  a verified primitive could make backup scheduling/transport declarative —
+  the only principled path to app DATA surviving a wipe without root
+- vendor-channel registry for `suggest-sources`: curated package-id →
+  vendor-recipe data (Signal latest.json, WhatsApp /android/current, Steam
+  storefront+filter, protonapps links) so migration proposals cover
+  vendor-direct lanes, not just F-Droid
+- `diff-generations`: render app/version/permission deltas between two
+  recorded generation receipts (the ledger exists; it deserves a viewer)
 
 ### Not planned
 

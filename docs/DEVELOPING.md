@@ -213,6 +213,13 @@ Follow the whole flow in one change:
 6. one small negative or idempotence check;
 7. user and developer documentation.
 
+Before the bench run, adversarially review the diff for state-class
+asymmetries — ensure-absent verbs especially: confirm the primitive can
+actually remove every state the matcher can match. The deviceidle whitelist is
+the canonical trap (`-pkg` only removes `user`-class entries; a broad matcher
+would demand impossible removals and drift forever) — caught by review, not by
+any check, 2026-07-19.
+
 The raw `android.settings` namespace is an expert escape hatch, not evidence
 that every settings key is supported. SystemUI-owned Quick Settings state is a
 known example that accepts a write and then reverts it.
