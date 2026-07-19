@@ -348,6 +348,25 @@ for run in $(seq 1 "$runs"); do
   verify_state "$manifest"
   [ "$(bash engine/converge.sh "$manifest" --serial "$serial")" = "✓ device matches manifest" ]
 
+  # cleanup="report": an installed-but-undeclared app must surface as a note
+  # on stderr, NOT dirty the in-sync verdict, and NOT be uninstalled by apply.
+  # The dropped app must have ZERO android.* references — referenced packages
+  # count as declared (cleanup preserves them), which is also correct for
+  # report mode: it flags apps the config knows nothing about.
+  dropped=com.edde746.plezy
+  jq --arg drop "$dropped" \
+    '.apps.managed = [.apps.managed[] | select(.package != $drop)] | .apps.cleanup = "report"' \
+    "$manifest" > "$tmp/report-cleanup-$run.json"
+  report_out=$(bash engine/converge.sh "$tmp/report-cleanup-$run.json" --serial "$serial" 2>&1)
+  grep -q "note: undeclared third-party package: $dropped" <<<"$report_out" \
+    || { echo "report mode did not note the undeclared package" >&2; exit 1; }
+  grep -q "✓ device matches manifest" <<<"$report_out" \
+    || { echo "report note wrongly dirtied the in-sync verdict" >&2; exit 1; }
+  bash engine/converge.sh "$tmp/report-cleanup-$run.json" --apply --serial "$serial" >/dev/null 2>&1
+  packages=$(adb shell pm list packages --user 0 "$dropped" | tr -d '\r')
+  grep -Fqx "package:$dropped" <<<"$packages" \
+    || { echo "report mode uninstalled $dropped" >&2; exit 1; }
+
   # A Play declaration must protect an installed third-party package from
   # explicit cleanup even though no APK is attached to that declaration.
   jq '.apps.play += [.apps.managed[0].package] |

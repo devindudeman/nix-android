@@ -629,12 +629,12 @@ list of string
 
 
 
-What converge does with installed-but-undeclared owner-user apps\. “none” = additive (default); “uninstall” removes undeclared third-party apps after all other actions succeed\.
+What converge does with installed-but-undeclared owner-user apps\. “none” = additive (default)\. “report” = additive, but plan/switch print a note per undeclared third-party app — reverse-drift detection without ever uninstalling (notes are informational: they do not count as plan changes or block the in-sync verdict)\. “uninstall” removes undeclared third-party apps after all other actions succeed\.
 
 
 
 *Type:*
-one of “none”, “uninstall”
+one of “none”, “report”, “uninstall”
 
 
 

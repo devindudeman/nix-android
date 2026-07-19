@@ -68,9 +68,11 @@
     # attended = [ "com.example.private-beta" ];
 
     # What to do with installed-but-undeclared apps. Default "none" is additive
-    # (leaves them alone). "uninstall" removes undeclared third-party apps —
+    # (leaves them alone). "report" is additive too but plan prints a note per
+    # undeclared app — reverse-drift detection, recommended once your config
+    # covers the phone. "uninstall" removes undeclared third-party apps —
     # review every removal in `plan` before ever setting this.
-    # cleanup = "none";
+    # cleanup = "report";
   };
 
   # --- Android state ---------------------------------------------------------

@@ -645,6 +645,11 @@ Picking a source for a new app — stop at the first rung that holds:
    `apps.local`, or `apps.attended` + an on-device updater.
 7. Nothing above exists → `apps.play`.
 
+Set `apps.cleanup = "report"` once your declaration covers the device: every
+plan then notes installed-but-undeclared apps (without ever uninstalling or
+dirtying the in-sync verdict), so drift finds you instead of accumulating
+until the next manual import.
+
 Whenever a lane change would take over an app that is already installed,
 compare signers first (the apksigner recipe above): the same digest means the
 new channel upgrades in place; a different digest means uninstall/reinstall.

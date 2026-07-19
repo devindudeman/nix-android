@@ -182,10 +182,20 @@ if [ "${#missing_referenced[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# Cleanup: undeclared user apps (only in uninstall mode).
-if [ "$(jq -r '.apps.cleanup' "$manifest")" = "uninstall" ]; then
+# Cleanup: undeclared user apps. "uninstall" queues removals; "report" only
+# surfaces them as notes — reverse-drift detection with zero mutation. Report
+# notes are NOT plan changes: an undeclared app must never fail a plan or make
+# an in-sync device look dirty.
+cleanup_mode=$(jq -r '.apps.cleanup' "$manifest")
+report_undeclared=()
+if [ "$cleanup_mode" = "uninstall" ] || [ "$cleanup_mode" = "report" ]; then
   while read -r pkg; do
-    [ -n "${declared[$pkg]:-}" ] || todo_remove+=("$pkg")
+    [ -n "${declared[$pkg]:-}" ] && continue
+    if [ "$cleanup_mode" = "uninstall" ]; then
+      todo_remove+=("$pkg")
+    else
+      report_undeclared+=("$pkg")
+    fi
   done < <(sed -n 's/^package:\([^ ]*\) .*/\1/p' <<<"$installed_third_party")
 fi
 
@@ -564,6 +574,9 @@ if [ $(( ${#missing_attended[@]} + ${#missing_play[@]} )) -gt 0 ]; then
   exit 1
 fi
 
+for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
+  echo "note: undeclared third-party package: $pkg (apps.cleanup = \"report\")" >&2
+done
 if [ "$plan_lines" -eq 0 ]; then
   echo "✓ device matches manifest"
   # A no-op switch still confirms convergence — record it as a generation.

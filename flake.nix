@@ -464,6 +464,11 @@
                   ! PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
                     valid.json --serial expected-contact >/dev/null 2>&1
                   test -e contacted
+                  rm contacted
+                  jq '.apps.cleanup = "report"' valid.json > report.json
+                  ! PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
+                    report.json --serial expected-contact >/dev/null 2>&1
+                  test -e contacted
                   touch $out
                 '';
             update-lock-safety =

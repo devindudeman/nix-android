@@ -22,7 +22,7 @@
     and (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64")))
   and (.apps | type == "object"
     and (keys == ["attended", "cleanup", "managed", "play"])
-    and (.cleanup | IN("none", "uninstall"))
+    and (.cleanup | IN("none", "report", "uninstall"))
     and (.attended | packages)
     and (.play | packages)
     and (.managed | type == "array" and all(.[];
