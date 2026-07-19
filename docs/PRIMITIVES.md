@@ -34,7 +34,7 @@ writable or persistent interface.
 | `ime list/enable/disable/set --user 0` | AOSP enable/disable/set round trip, idempotence, and graceful-reboot persistence; declared components are canonicalized to Android's short `ime list -s` form; GrapheneOS enumeration read shape | `android.inputMethod.*` |
 | `cmd netpolicy get/set restrict-background` | AOSP global Data Saver change/read-back, idempotence, and graceful-reboot persistence | `android.dataSaver.enabled` |
 | `pm get-app-links/set-app-links-allowed/set-app-links-user-selection --user 0` | AOSP owner-user handling denial and positive domain selection round trip, idempotence, and graceful-reboot persistence | `android.appLinks.*` |
-| `cmd deviceidle whitelist +/-package` | real-device reversible check; AOSP change/read-back/idempotence | `android.batteryOptimization.exempt` |
+| `cmd deviceidle whitelist +/-package` | real-device reversible check; AOSP change/read-back/idempotence | `android.batteryOptimization.exempt` / `.unexempt` |
 
 Raw `android.settings` is intentionally an expert surface. This table proves
 the command path, not every Android-version-specific key. A key is suitable

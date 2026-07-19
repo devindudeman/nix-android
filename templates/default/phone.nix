@@ -122,7 +122,9 @@
     #   selected = [ "f-droid.org" ];
     # };
 
-    # Battery-optimization exemptions (ensure-present).
+    # Battery-optimization allowlist: exempt = ensure-present,
+    # unexempt = ensure-absent (a package may appear in only one).
     # batteryOptimization.exempt = [ "com.termux" ];
+    # batteryOptimization.unexempt = [ "com.example.app" ];
   };
 }

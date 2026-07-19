@@ -57,6 +57,7 @@
         ++ cfg.android.packages.suspended
         ++ cfg.android.packages.unsuspended
         ++ cfg.android.batteryOptimization.exempt
+        ++ cfg.android.batteryOptimization.unexempt
         ++ builtins.attrNames cfg.android.permissions
         ++ builtins.attrNames cfg.android.appOps
         ++ builtins.attrNames cfg.android.locales
@@ -148,6 +149,7 @@
         ++ map (value: "suspended:${value}") (duplicates cfg.android.packages.suspended)
         ++ map (value: "unsuspended:${value}") (duplicates cfg.android.packages.unsuspended)
         ++ map (value: "deviceidle-exempt:${value}") (duplicates cfg.android.batteryOptimization.exempt)
+        ++ map (value: "deviceidle-unexempt:${value}") (duplicates cfg.android.batteryOptimization.unexempt)
         ++ map (value: "ime-enabled:${value}") (duplicates inputMethodFinal.enabled)
         ++ map (value: "ime-disabled:${value}") (duplicates inputMethodFinal.disabled)
         ++ lib.concatLists (
@@ -162,6 +164,7 @@
           ) cfg.android.appLinks
         );
       suspensionConflicts = lib.intersectLists cfg.android.packages.suspended cfg.android.packages.unsuspended;
+      deviceidleConflicts = lib.intersectLists cfg.android.batteryOptimization.exempt cfg.android.batteryOptimization.unexempt;
       inputMethodConflicts = lib.intersectLists inputMethodFinal.enabled inputMethodFinal.disabled;
       inputMethodDefaultDisabled =
         inputMethodFinal.default != null
@@ -320,6 +323,8 @@
           throw "nix-android: Android state list entries must be unique: ${lib.concatStringsSep ", " duplicateNewState}"
         else if suspensionConflicts != [ ] then
           throw "nix-android: packages cannot be both suspended and unsuspended: ${lib.concatStringsSep ", " suspensionConflicts}"
+        else if deviceidleConflicts != [ ] then
+          throw "nix-android: packages cannot be both battery-optimization exempt and unexempt: ${lib.concatStringsSep ", " deviceidleConflicts}"
         else if inputMethodConflicts != [ ] then
           throw "nix-android: input methods cannot be both enabled and disabled: ${lib.concatStringsSep ", " inputMethodConflicts}"
         else if inputMethodDefaultDisabled then
@@ -419,7 +424,7 @@
         assert validated;
         pkgs.writeText "nix-android-${cfg.device.name}-manifest-base.json" (
           builtins.toJSON {
-            manifestVersion = 3;
+            manifestVersion = 4;
             device = {
               inherit (cfg.device) name user abi;
             };
@@ -439,6 +444,7 @@
               suspended = cfg.android.packages.suspended;
               unsuspended = cfg.android.packages.unsuspended;
               deviceidleExempt = cfg.android.batteryOptimization.exempt;
+              deviceidleUnexempt = cfg.android.batteryOptimization.unexempt;
             };
             apps = {
               # One unified list regardless of source — the engine doesn't care

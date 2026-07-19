@@ -65,6 +65,10 @@
       selected = [ "f-droid.org" ];
     };
     batteryOptimization.exempt = [ "com.termux" ];
+    # The e2e harness pre-seeds this into the whitelist before the first
+    # converge, so the apply path genuinely removes it (and reasserts removal
+    # across reboot + no-op cycles).
+    batteryOptimization.unexempt = [ "org.fdroid.fdroid" ];
     # Read-path + idempotence coverage (AOSP image has only one SMS app, so a
     # role *change* isn't testable here; the write was Pixel-verified).
     defaultApps.sms = "com.android.messaging";

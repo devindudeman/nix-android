@@ -315,6 +315,12 @@
         default = [ ];
         description = "Packages exempted from battery optimization (`cmd deviceidle whitelist +pkg`). Ensure-present only. Android stores this as a global package/appId allowlist, so the effect is not confined to owner user 0 when the same package exists in another profile.";
       };
+
+      batteryOptimization.unexempt = lib.mkOption {
+        type = with lib.types; listOf str;
+        default = [ ];
+        description = "Packages removed from the battery-optimization allowlist (`cmd deviceidle whitelist -pkg`). Ensure-absent only: converge removes a listed package from the whitelist when present and reasserts removal if something re-adds it. A package cannot be both exempt and unexempt. The same global-allowlist caveat as `exempt` applies.";
+      };
     };
   };
 }

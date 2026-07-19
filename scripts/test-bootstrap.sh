@@ -74,7 +74,8 @@ jq -e '
     roles: {}, disabled: [], suspended: [], unsuspended: [],
     permissions: {}, appOps: {}, locales: {},
     inputMethod: {enabled: [], disabled: [], default: null},
-    dataSaver: {enabled: null}, appLinks: {}, deviceidleExempt: []
+    dataSaver: {enabled: null}, appLinks: {}, deviceidleExempt: [],
+    deviceidleUnexempt: []
   }
 ' "$tmp/captures/engine-2.json" >/dev/null
 grep -Fq "$tmp/manifest.json --serial fixture --watch" "$tmp/captures/assist.args"

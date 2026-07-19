@@ -404,11 +404,11 @@
                   grep -q 'invalid or unsupported manifest' error
 
                   jq -n '{
-                    manifestVersion: 3,
+                    manifestVersion: 4,
                     device: {name: "test", user: 0, abi: "x86_64"},
                     apps: {cleanup: "none", attended: [], play: [], managed: []},
                     android: {
-                      darkMode: null, disabled: [], deviceidleExempt: [], roles: {},
+                      darkMode: null, disabled: [], deviceidleExempt: [], deviceidleUnexempt: [], roles: {},
                       settings: {global: {}, secure: {}, system: {}},
                       permissions: {}, appOps: {}, suspended: [], unsuspended: [],
                       locales: {}, inputMethod: {enabled: [], disabled: [], default: null},
@@ -445,6 +445,9 @@
                     .android.unsuspended = ["org.example.app"]'
                   reject duplicate-disabled '.android.disabled = ["org.example.app", "org.example.app"]'
                   reject duplicate-deviceidle '.android.deviceidleExempt = ["org.example.app", "org.example.app"]'
+                  reject duplicate-unexempt '.android.deviceidleUnexempt = ["org.example.app", "org.example.app"]'
+                  reject deviceidle-conflict '.android.deviceidleExempt = ["org.example.app"] |
+                    .android.deviceidleUnexempt = ["org.example.app"]'
                   reject invalid-locale '.android.locales."org.example.app" = ["en_US"]'
                   reject invalid-ime '.android.inputMethod.default = "org.example.ime/.Service"'
                   reject app-link-conflict '.android.appLinks."org.example.app" = {
@@ -528,6 +531,12 @@
               assert rejects {
                 device.name = "wrong-abi";
                 device.abi = "arm64-v8a";
+              };
+              assert rejects {
+                device.name = "deviceidle-conflict";
+                device.abi = "x86_64";
+                android.batteryOptimization.exempt = [ "org.example.app" ];
+                android.batteryOptimization.unexempt = [ "org.example.app" ];
               };
               assert rejects {
                 device.name = "duplicate-app";

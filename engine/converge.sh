@@ -55,7 +55,7 @@ if ! jq -e --argjson writableFlags "$writable_permission_flags_json" '
   def packages: strings and all(.[]; package);
   def is_unique: length == (unique | length);
   (keys == ["android", "apps", "device", "manifestVersion"])
-  and .manifestVersion == 3
+  and (.manifestVersion == 3 or .manifestVersion == 4)
   and (.device | type == "object"
     and (keys == ["abi", "name", "user"])
     and (.name | type == "string" and test("^[A-Za-z0-9._-]+\\z"))
@@ -73,13 +73,16 @@ if ! jq -e --argjson writableFlags "$writable_permission_flags_json" '
       and (.versionCode | type == "number" and . >= 0 and floor == .)
       and (.apk | type == "string" and startswith("/")))))
   and (.android | type == "object"
-    and (keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"])
+    and (keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"]
+      or keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "deviceidleUnexempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"])
     and (.darkMode | . == null or type == "boolean")
     and (.disabled | packages and is_unique)
     and (.suspended | packages and is_unique)
     and (.unsuspended | packages and is_unique)
     and ((.suspended + .unsuspended) | is_unique)
     and (.deviceidleExempt | packages and is_unique)
+    and ((.deviceidleUnexempt // []) | packages and is_unique)
+    and ((.deviceidleExempt + (.deviceidleUnexempt // [])) | is_unique)
     and (.roles | type == "object" and all(to_entries[];
       (.key | IN("browser", "sms", "dialer", "home"))
       and (.value | package)))
@@ -295,7 +298,8 @@ todo_data_saver=()  # current US wanted
 todo_link_allowed=()    # pkg US current US wanted
 todo_link_selected=()   # pkg US domain
 todo_link_unselected=() # pkg US domain
-todo_idle=()      # pkg
+todo_idle=()
+todo_unidle=()      # pkg
 
 for ns in global secure system; do
   while IFS=$US read -r key want; do
@@ -532,6 +536,14 @@ while read -r pkg; do
   [ -z "$pkg" ] && continue
   grep -Fq ",$pkg," <<<"$idle_now" || todo_idle+=("$pkg")
 done < <(jq -r '.android.deviceidleExempt // [] | .[]' "$manifest")
+# Ensure-absent scopes to the USER whitelist class only: `-pkg` cannot touch
+# system/system-excidle entries, so matching them would demand an impossible
+# removal and drift forever. (Exempt's broad match is fine — system-exempt
+# satisfies "must be exempt".)
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  grep -Eq "^user,$(printf '%s' "$pkg" | sed 's/[.[\*^$]/\\&/g')," <<<"$idle_now" && todo_unidle+=("$pkg")
+done < <(jq -r '.android.deviceidleUnexempt // [] | .[]' "$manifest")
 
 plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
   + ${#todo_setting[@]} + ${#todo_dark[@]} + ${#todo_role[@]} + ${#todo_disable[@]} \
@@ -540,7 +552,7 @@ plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
   + ${#todo_locale[@]} + ${#todo_ime_enable[@]} + ${#todo_ime_disable[@]} \
   + ${#todo_ime_default[@]} + ${#todo_data_saver[@]} \
   + ${#todo_link_allowed[@]} + ${#todo_link_selected[@]} + ${#todo_link_unselected[@]} \
-  + ${#todo_idle[@]} ))
+  + ${#todo_idle[@]} + ${#todo_unidle[@]} ))
 for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
 for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
 # Signer preflight for pending upgrades. Exact when possible: the manifest APK
@@ -633,6 +645,7 @@ for t in "${todo_link_allowed[@]}"; do IFS=$US read -r p c w <<<"$t"; echo "link
 for t in "${todo_link_selected[@]}"; do IFS=$US read -r p d <<<"$t"; echo "link+    $p $d"; done
 for t in "${todo_link_unselected[@]}"; do IFS=$US read -r p d <<<"$t"; echo "link-    $p $d"; done
 for t in "${todo_idle[@]}";    do echo "idle-ok  $t (battery-optimization exempt)"; done
+for t in "${todo_unidle[@]}";  do echo "idle-no  $t (battery-optimization unexempt)"; done
 for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install from its declared human source"; done
 for p in "${missing_play[@]}"; do echo "PLAY     $p — run android-rebuild assist"; done
 
@@ -761,6 +774,9 @@ for t in "${todo_link_unselected[@]}"; do
 done
 for pkg in "${todo_idle[@]}"; do
   adb_shell cmd deviceidle whitelist "+$pkg" >/dev/null
+done
+for pkg in "${todo_unidle[@]}"; do
+  adb_shell cmd deviceidle whitelist "-$pkg" >/dev/null
 done
 for pkg in "${todo_remove[@]}"; do
   echo "uninstalling $pkg..."

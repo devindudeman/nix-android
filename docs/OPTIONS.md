@@ -197,6 +197,27 @@ list of string
 
 
 
+## android\.batteryOptimization\.unexempt
+
+
+
+Packages removed from the battery-optimization allowlist (` cmd deviceidle whitelist -pkg `)\. Ensure-absent only: converge removes a listed package from the whitelist when present and reasserts removal if something re-adds it\. A package cannot be both exempt and unexempt\. The same global-allowlist caveat as ` exempt ` applies\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
 ## android\.darkMode
 
 

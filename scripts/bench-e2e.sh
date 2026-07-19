@@ -146,6 +146,14 @@ verify_state() {
     packages=$(adb shell cmd deviceidle whitelist | tr -d '\r')
     grep -Fq ",$pkg," <<<"$packages"
   done < <(jq -r '.android.deviceidleExempt[]' "$manifest")
+  while read -r pkg; do
+    [ -z "$pkg" ] && continue
+    packages=$(adb shell cmd deviceidle whitelist | tr -d '\r')
+    if grep -Eq "^user,$pkg," <<<"$packages"; then
+      echo "unexempt package $pkg is still user-battery-whitelisted" >&2
+      return 1
+    fi
+  done < <(jq -r '.android.deviceidleUnexempt // [] | .[]' "$manifest")
   while IFS=$'\t' read -r role pkg; do
     got=$(adb shell cmd role get-role-holders --user 0 "$(role_id "$role")" | tr -d '\r')
     [ "$got" = "$pkg" ] || { echo "role $role: got '$got', want '$pkg'" >&2; return 1; }
@@ -291,6 +299,19 @@ for run in $(seq 1 "$runs"); do
   gens_after=$( [ -f "$gen_log" ] && wc -l <"$gen_log" || echo 0)
   [ "$((gens_after - gens_before))" -eq 1 ] \
     || { echo "bootstrap recorded $((gens_after - gens_before)) generations; only the final phase may record" >&2; exit 1; }
+  verify_state "$manifest"
+  [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
+
+  # Ensure-absent exercise: seed the (now installed) unexempt package into the
+  # USER whitelist; converge must plan and apply the removal, and the rest of
+  # the cycle (inverse, reboot, no-op) keeps it removed via verify_state.
+  while read -r pkg; do
+    [ -z "$pkg" ] && continue
+    adb shell cmd deviceidle whitelist "+$pkg" >/dev/null
+  done < <(jq -r '.android.deviceidleUnexempt // [] | .[]' "$manifest")
+  unexempt_out=$(bash engine/converge.sh "$manifest" --apply --serial "$serial")
+  grep -q 'idle-no  org.fdroid.fdroid' <<<"$unexempt_out" \
+    || { echo "seeded unexempt package did not plan an idle-no removal" >&2; exit 1; }
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
 

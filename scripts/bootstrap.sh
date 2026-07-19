@@ -46,7 +46,8 @@ jq '
     inputMethod: {enabled: [], disabled: [], default: null},
     dataSaver: {enabled: null},
     appLinks: {},
-    deviceidleExempt: []
+    deviceidleExempt: [],
+    deviceidleUnexempt: []
   }
 ' "$manifest" > "$phase"
 
