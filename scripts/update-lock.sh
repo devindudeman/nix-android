@@ -424,7 +424,7 @@ resolved=$({
       [[ $url == https://* ]] || { echo "release asset URL is not HTTPS: $url" >&2; rm -rf "$tmp"; exit 1; }
       [ "$tried" -lt 8 ] || { echo "gave up after $tried release assets for $p" >&2; break; }
       tried=$((tried + 1))
-      curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --max-filesize 500M "$url" -o "$tmp/asset" \
+      curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --max-filesize 1G "$url" -o "$tmp/asset" \
         || { echo "download failed or exceeded limits for $asset_name" >&2; continue; }
       # inspect_release_asset returns non-zero (not exit) on a package-id,
       # signature, or archive mismatch, so a wrong-flavor asset advances the loop.
@@ -462,7 +462,7 @@ resolved=$({
     local p=$1 url=$2 srctag=$3 rec=$4 tmp inspected
     [[ $url == https://* ]] || { echo "vendor APK URL is not HTTPS for $p: $url" >&2; exit 1; }
     tmp=$(mktemp -d)
-    curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --max-filesize 500M "$url" -o "$tmp/asset" \
+    curl --proto '=https' --tlsv1.2 -fsSL --max-time 300 --max-filesize 1G "$url" -o "$tmp/asset" \
       || { echo "download failed or exceeded limits for $p: $url" >&2; rm -rf "$tmp"; exit 1; }
     inspected=$(inspect_release_asset "$p" "$tmp/asset" "$url") || { rm -rf "$tmp"; exit 1; }
     rm -rf "$tmp"
