@@ -9,7 +9,7 @@ set -euo pipefail
 
 out=${1:?usage: atlas-probe.sh <output-dir> <adb-serial>}
 serial=${2:?usage: atlas-probe.sh <output-dir> <adb-serial>}
-adb=(adb -s "$serial")
+adb=("${NIX_ANDROID_ADB:-adb}" -s "$serial")
 
 mkdir -p "$out"
 

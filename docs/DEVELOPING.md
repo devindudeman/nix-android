@@ -99,7 +99,7 @@ For a clean CI-equivalent Linux run:
 
 ```console
 nix build \
-  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,engine-parsers,generations,template,options-doc,suggest-sources,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation} \
+  .#checks.x86_64-linux.{bench-manifest,formatting,shellcheck,adb-client,engine-parsers,generations,template,options-doc,suggest-sources,statix,deadnix,cli-safety,manifest-safety,import-snapshot,assist-safety,bootstrap-safety,update-lock-safety,validation} \
   --accept-flake-config --no-link
 nix build \
   .#packages.x86_64-linux.{android-rebuild,update-lock} \
@@ -111,6 +111,13 @@ macOS. `mkDevice.system` is required so a Darwin caller cannot silently build a
 Linux engine. Packaged entry points use the Nix Bash path; never reintroduce an
 ambient `bash`, because Apple's system Bash lacks `mapfile` and
 `inherit_errexit`.
+
+The `adb-client` check uses fake clients to prove `NIX_ANDROID_ADB` selection
+through packaged CLI and converge entry points, including a path with spaces.
+It checks raw engine, importer, assistant and Atlas dispatch, invalid-client
+failure without fallback, explicit serial forwarding and validation before
+device contact. The default remains the packaged ADB on PATH; the emulator
+harness deliberately continues to use its native emulator client.
 
 ## Emulator loop
 

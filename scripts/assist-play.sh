@@ -33,7 +33,7 @@ if ! jq -e --argjson writableFlags "$writable_permission_flags_json" \
   exit 2
 fi
 
-adb_base=(adb -s "$serial")
+adb_base=("${NIX_ANDROID_ADB:-adb}" -s "$serial")
 adb() { command "${adb_base[@]}" "$@" </dev/null; }
 adb_shell() {
   local arg quoted remote=""

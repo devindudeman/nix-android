@@ -56,7 +56,7 @@ if [ "$validate_only" -eq 1 ]; then
 fi
 
 [ -n "$serial" ] || { echo "converge requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
-adb_base=(adb -s "$serial")
+adb_base=("${NIX_ANDROID_ADB:-adb}" -s "$serial")
 # Wrapper: adb MUST read from /dev/null. `adb shell` otherwise drains the
 # enclosing `while read` loop's stdin, so only the first item iterates — the
 # silent bug behind partial plans. Every adb call goes through this.
