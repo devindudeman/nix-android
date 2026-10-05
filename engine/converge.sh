@@ -94,8 +94,23 @@ actual_abi=$(adb_shell getprop ro.product.cpu.abi | tr -d '\r')
 
 # Device reality. Presence assertions include preinstalled/system Play apps;
 # destructive cleanup remains limited to third-party owner-user packages.
-installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r')
-installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+installed=
+installed_third_party=
+# A raw-settings-only manifest needs neither package versions nor unrelated
+# modern services. Keep those API requirements tied to declared state.
+if jq -e '
+  .apps.cleanup != "none"
+  or ((.apps.managed + .apps.attended + .apps.play) | length > 0)
+  or ([.android.roles, .android.permissions, .android.appOps,
+       .android.locales, .android.appLinks] | any(length > 0))
+  or ((.android.disabled + .android.suspended + .android.unsuspended
+       + .android.deviceidleExempt + .android.deviceidleUnexempt
+       + .android.inputMethod.enabled + .android.inputMethod.disabled) | length > 0)
+  or .android.inputMethod.default != null
+' "$manifest" >/dev/null; then
+  installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r')
+  installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+fi
 current_code() { # -> versionCode or empty
   local wanted=$1 line package
   while IFS= read -r line; do
@@ -261,7 +276,10 @@ while IFS=$'\t' read -r role want; do
   [ "$cur" = "$want" ] || todo_role+=("${role}${US}${cur}${US}${want}")
 done < <(jq -r '.android.roles // {} | to_entries[] | [.key, .value] | @tsv' "$manifest")
 
-disabled_now=$(adb_shell pm list packages -d --user "$user" | tr -d '\r')
+disabled_now=
+if jq -e '.android.disabled | length > 0' "$manifest" >/dev/null; then
+  disabled_now=$(adb_shell pm list packages -d --user "$user" | tr -d '\r')
+fi
 while read -r pkg; do
   [ -z "$pkg" ] && continue
   if ! grep -Fqx "package:$pkg" <<<"$disabled_now"; then
@@ -427,7 +445,10 @@ while IFS=$US read -r pkg want; do
   [ "$cur" = "$want" ] || todo_locale+=("${pkg}${US}${cur}${US}${want}")
 done < <(jq -r '.android.locales | to_entries[] | [.key, (.value | join(","))] | join("\u001f")' "$manifest")
 
-enabled_imes=$(adb_shell ime list -s --user "$user" | tr -d '\r')
+enabled_imes=
+if jq -e '(.android.inputMethod.enabled + .android.inputMethod.disabled) | length > 0' "$manifest" >/dev/null; then
+  enabled_imes=$(adb_shell ime list -s --user "$user" | tr -d '\r')
+fi
 while read -r component; do
   [ -z "$component" ] && continue
   grep -Fqx "$component" <<<"$enabled_imes" || todo_ime_enable+=("$component")
@@ -479,7 +500,10 @@ while IFS=$US read -r pkg allowed; do
   done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].unselected[]' "$manifest")
 done < <(jq -r '.android.appLinks | to_entries[] | [.key, (.value.allowed | tostring)] | join("\u001f")' "$manifest")
 
-idle_now=$(adb_shell cmd deviceidle whitelist | tr -d '\r')
+idle_now=
+if jq -e '(.android.deviceidleExempt + .android.deviceidleUnexempt) | length > 0' "$manifest" >/dev/null; then
+  idle_now=$(adb_shell cmd deviceidle whitelist | tr -d '\r')
+fi
 while read -r pkg; do
   [ -z "$pkg" ] && continue
   grep -Fq ",$pkg," <<<"$idle_now" || todo_idle+=("$pkg")

@@ -36,6 +36,13 @@ Windows clients also need Windows paths for install/pull operations; a shell-onl
 bridge is insufficient evidence that APK transfers work. This variable selects
 a controller transport, not Android API compatibility or an emulator endpoint.
 
+The engine only queries package inventories, disabled-package state, input
+methods and DeviceIdle when the manifest declares state that needs them.
+A raw-settings-only declaration therefore requires the target ABI and scoped
+`settings get/put` interfaces rather than unrelated modern Android services.
+Other declarations retain their own API prerequisites; this does not establish
+full provisioning support for older OEM phones.
+
 ## Create a device configuration
 
 The fastest start is the template, which scaffolds a working flake plus a

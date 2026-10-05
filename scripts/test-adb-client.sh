@@ -29,7 +29,12 @@ printf '%s\n' "$*" >> "$TEST_ADB_LOG"
 [ "${TEST_STOP_FIRST:-0}" = 0 ] || exit 77
 case $* in
 *ro.product.cpu.abi*) printf 'x86_64\n' ;;
-*) ;;
+*"'settings' 'get' '--user' '0' 'system' 'screen_off_timeout'"*) cat "$TEST_SETTING_STATE" ;;
+*"'settings' 'put' '--user' '0' 'system' 'screen_off_timeout' '60000'"*)
+  printf '60000\n' > "$TEST_SETTING_STATE"
+  printf 'write\n' >> "$TEST_SETTING_WRITES"
+  ;;
+*) [ "${TEST_SETTINGS_ONLY:-0}" = 0 ] || exit 99 ;;
 esac
 EOF
 chmod +x "$selected" "$tmp/defaultbin/adb"
@@ -57,6 +62,21 @@ TEST_STOP_FIRST=1 "$cli" import --serial fixture > /dev/null 2>&1 || status=$?
 [ "$status" = 77 ] || { echo "packaged import ignored selected client: $status" >&2; exit 1; }
 test -s "$TEST_ADB_LOG"
 test ! -e "$TEST_DEFAULT_LOG"
+
+# Simulate a legacy device whose unused pm/ime/cmd APIs fail. A declaration
+# of one raw setting must plan without writes, change it once, then converge.
+export TEST_SETTINGS_ONLY=1 TEST_SETTING_STATE=$tmp/setting TEST_SETTING_WRITES=$tmp/writes
+printf '30000\n' > "$TEST_SETTING_STATE"
+jq '.android.settings.system.screen_off_timeout = "60000"' "$tmp/manifest.json" > "$tmp/settings.json"
+"$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture > "$tmp/plan"
+grep -Fq 'system/screen_off_timeout (30000 → 60000)' "$tmp/plan"
+test ! -e "$TEST_SETTING_WRITES"
+"$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture --apply > /dev/null
+[ "$(cat "$TEST_SETTING_STATE")" = 60000 ]
+"$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture --apply > "$tmp/second"
+grep -Fq 'device matches manifest' "$tmp/second"
+[ "$(wc -l < "$TEST_SETTING_WRITES")" -eq 1 ]
+export TEST_SETTINGS_ONLY=0
 
 # A bad override must fail, never fall back to a different server/client.
 status=0
