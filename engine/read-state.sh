@@ -12,6 +12,29 @@
 # app's targetSdk), so adb shell cannot own it.
 writable_permission_flags=(revoke-when-requested revoked-compat user-fixed user-set)
 
+# Exact version from one named package section. Legacy pm has no
+# --show-versioncode; never turn an error/help dump into an installed version.
+package_version_from_dump() {
+  local package=$1
+  gawk -v package="$package" '
+    /^[[:space:]]*Package \[/ {
+      name=$0; sub(/^.*Package \[/,"",name); sub(/\].*$/,"",name)
+      headers++; active=(name==package)
+      match($0,/[^[:space:]]/); indent=RSTART-1; next
+    }
+    active && /[^[:space:]]/ {
+      match($0,/[^[:space:]]/)
+      if (RSTART-1<=indent) { active=0; next }
+      if ($0 ~ /^[[:space:]]*versionCode=/) {
+        value=$0; sub(/^[[:space:]]*versionCode=/,"",value)
+        if (value !~ /^[0-9]+([[:space:]].*)?$/) { bad=1; next }
+        sub(/[[:space:]].*$/,"",value); versions++; version=value
+      }
+    }
+    END { if (headers!=1 || versions!=1 || bad) exit 1; print version }
+  '
+}
+
 # Print only the "User <N>:" blocks of a `dumpsys package <pkg>` dump.
 # Fails when the block is missing so callers fail loudly instead of reading
 # another profile's state. A block ends only at the next "    User N:" header

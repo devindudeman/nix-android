@@ -96,6 +96,7 @@ actual_abi=$(adb_shell getprop ro.product.cpu.abi | tr -d '\r')
 # destructive cleanup remains limited to third-party owner-user packages.
 installed=
 installed_third_party=
+legacy_package_inventory=0
 # A raw-settings-only manifest needs neither package versions nor unrelated
 # modern services. Keep those API requirements tied to declared state.
 if jq -e '
@@ -108,8 +109,32 @@ if jq -e '
        + .android.inputMethod.enabled + .android.inputMethod.disabled) | length > 0)
   or .android.inputMethod.default != null
 ' "$manifest" >/dev/null; then
-  installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r')
-  installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+  if installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r'); then
+    inventory_status=0
+  else
+    inventory_status=$?
+  fi
+  if [ "$installed" = 'Error: Unknown option: --show-versioncode' ]; then
+    legacy_package_inventory=1
+    installed=$(adb_shell pm list packages --user "$user" | tr -d '\r')
+    installed_third_party=$(adb_shell pm list packages -3 --user "$user" | tr -d '\r')
+  elif [ "$inventory_status" -ne 0 ]; then
+    echo 'package inventory command failed' >&2
+    exit 2
+  else
+    installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+  fi
+  if [ "$legacy_package_inventory" -eq 1 ]; then
+    inventory_pattern='^package:[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$'
+  else
+    inventory_pattern='^package:[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)* versionCode:[0-9]+$'
+  fi
+  for inventory in "$installed" "$installed_third_party"; do
+    if grep -qEv "$inventory_pattern|^$" <<<"$inventory"; then
+      echo 'unrecognized package inventory output' >&2
+      exit 2
+    fi
+  done
 fi
 current_code() { # -> versionCode or empty
   local wanted=$1 line package
@@ -117,7 +142,11 @@ current_code() { # -> versionCode or empty
     package=${line#package:}
     package=${package%% *}
     if [ "$package" = "$wanted" ]; then
-      printf '%s\n' "${line##* versionCode:}"
+      if [ "$legacy_package_inventory" -eq 1 ]; then
+        adb_shell dumpsys package "$wanted" | tr -d '\r' | package_version_from_dump "$wanted"
+      else
+        printf '%s\n' "${line##* versionCode:}"
+      fi
       return
     fi
   done <<<"$installed"
@@ -220,7 +249,7 @@ if [ "$cleanup_mode" = "uninstall" ] || [ "$cleanup_mode" = "report" ]; then
     else
       report_undeclared+=("$pkg")
     fi
-  done < <(sed -n 's/^package:\([^ ]*\) .*/\1/p' <<<"$installed_third_party")
+  done < <(sed -n 's/^package:\([^ ]*\)\( .*\)\{0,1\}$/\1/p' <<<"$installed_third_party")
 fi
 
 # ---- Phase-2 categories: managed keys only, read → diff → plan → apply ----

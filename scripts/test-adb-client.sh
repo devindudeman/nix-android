@@ -29,6 +29,19 @@ printf '%s\n' "$*" >> "$TEST_ADB_LOG"
 [ "${TEST_STOP_FIRST:-0}" = 0 ] || exit 77
 case $* in
 *ro.product.cpu.abi*) printf 'x86_64\n' ;;
+*"'pm' 'list' 'packages'"*)
+  if [ "${TEST_LEGACY_PACKAGES:-0}" = 1 ]; then
+    if [[ $* = *--show-versioncode* ]]; then
+      printf 'Error: Unknown option: --show-versioncode\n'; exit 1
+    fi
+    printf 'package:android\npackage:org.example.app\n'
+  else
+    [ "${TEST_SETTINGS_ONLY:-0}" = 0 ] || exit 99
+  fi
+  ;;
+*"'dumpsys' 'package' 'org.example.app'"*)
+  printf 'Packages:\n  Package [org.example.app] (abc):\n    versionCode=%s minSdk=23 targetSdk=23\n    User 0: installed=true\n' "${TEST_LEGACY_VERSION:-42}"
+  ;;
 *"'settings' 'get' '--user' '0' 'system' 'screen_off_timeout'"*) cat "$TEST_SETTING_STATE" ;;
 *"'settings' 'put' '--user' '0' 'system' 'screen_off_timeout' '60000'"*)
   printf '60000\n' > "$TEST_SETTING_STATE"
@@ -77,6 +90,15 @@ test ! -e "$TEST_SETTING_WRITES"
 grep -Fq 'device matches manifest' "$tmp/second"
 [ "$(wc -l < "$TEST_SETTING_WRITES")" -eq 1 ]
 export TEST_SETTINGS_ONLY=0
+
+export TEST_LEGACY_PACKAGES=1
+jq '.apps.attended = ["org.example.app"]' "$tmp/manifest.json" > "$tmp/legacy.json"
+"$bash_bin" "$src/engine/converge.sh" "$tmp/legacy.json" --serial fixture > "$tmp/legacy-plan"
+grep -Fq 'device matches manifest' "$tmp/legacy-plan"
+status=0
+TEST_LEGACY_VERSION=oops "$bash_bin" "$src/engine/converge.sh" "$tmp/legacy.json" --serial fixture > /dev/null 2>&1 || status=$?
+[ "$status" -ne 0 ] || { echo 'invalid legacy version accepted' >&2; exit 1; }
+export TEST_LEGACY_PACKAGES=0
 
 # A bad override must fail, never fall back to a different server/client.
 status=0
