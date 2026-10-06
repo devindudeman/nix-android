@@ -49,7 +49,9 @@ jq '
     appLinks: {},
     deviceidleExempt: [],
     deviceidleUnexempt: []
-  }
+  } |
+  # Version-6 manifests carry doNotDisturb; older ones must not gain the key.
+  if .manifestVersion >= 6 then .android.doNotDisturb = {mode: null} else . end
 ' "$manifest" > "$phase"
 
 echo "== phase 1/3: reproducible APKs =="

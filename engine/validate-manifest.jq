@@ -13,12 +13,14 @@
   def domain: type == "string" and length <= 253 and test("^(\\*\\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\\z");
   def packages: strings and all(.[]; package);
   def is_unique: length == (unique | length);
-  # v5 adds apps.reown and a per-item managed installer; older versions must
-  # not carry them, so a v5 manifest never reaches an engine that would ignore
-  # them (old engines reject the extra keys) and v3/v4 keep their meaning.
-  (.manifestVersion == 5) as $v5
+  # v5 adds apps.reown and a per-item managed installer; v6 adds
+  # android.doNotDisturb. Older versions must not carry newer keys, so a newer
+  # manifest never reaches an engine that would ignore them (old engines reject
+  # the extra keys) and v3/v4 keep their meaning.
+  .manifestVersion as $version
+  | (.manifestVersion >= 5) as $v5
   | (keys == ["android", "apps", "device", "manifestVersion"])
-  and (.manifestVersion == 3 or .manifestVersion == 4 or $v5)
+  and (.manifestVersion == 3 or .manifestVersion == 4 or .manifestVersion == 5 or .manifestVersion == 6)
   and (.device | type == "object"
     and (keys == ["abi", "name", "user"])
     and (.name | type == "string" and test("^[A-Za-z0-9._-]+\\z"))
@@ -38,8 +40,10 @@
       and (.versionCode | type == "number" and . >= 0 and floor == .)
       and (.apk | type == "string" and startswith("/")))))
   and (.android | type == "object"
-    and (keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"]
-      or keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "deviceidleUnexempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"])
+    and (if $version == 6
+      then keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "deviceidleUnexempt", "disabled", "doNotDisturb", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"]
+      else (keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"]
+        or keys == ["appLinks", "appOps", "darkMode", "dataSaver", "deviceidleExempt", "deviceidleUnexempt", "disabled", "inputMethod", "locales", "permissions", "roles", "settings", "suspended", "unsuspended"]) end)
     and (.darkMode | . == null or type == "boolean")
     and (.disabled | packages and is_unique)
     and (.suspended | packages and is_unique)
@@ -90,6 +94,11 @@
     and (.dataSaver | type == "object"
       and (keys == ["enabled"])
       and (.enabled | . == null or type == "boolean"))
+    and (if $version == 6
+      then (.doNotDisturb | type == "object"
+        and (keys == ["mode"])
+        and (.mode | . == null or IN("off", "priority", "alarms", "total")))
+      else true end)
     and (.appLinks | type == "object" and all(to_entries[];
       (.key | package)
       and (.value | type == "object"

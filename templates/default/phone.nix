@@ -129,6 +129,7 @@
     # };
 
     # dataSaver.enabled = true; # global Data Saver; null = unmanaged
+    # doNotDisturb.mode = "priority"; # off | priority | alarms | total; null = unmanaged
 
     # User-owned app-link handling and domain selection.
     # appLinks."org.fdroid.fdroid" = {

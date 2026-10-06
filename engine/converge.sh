@@ -336,6 +336,7 @@ todo_ime_enable=()  # component
 todo_ime_disable=() # component
 todo_ime_default=() # current US wanted
 todo_data_saver=()  # current US wanted
+todo_dnd=()         # current US wanted (off|priority|alarms|total)
 todo_link_allowed=()    # pkg US current US wanted
 todo_link_selected=()   # pkg US domain
 todo_link_unselected=() # pkg US domain
@@ -570,6 +571,17 @@ if [ "$want_data_saver" != null ]; then
   [ "$cur_data_saver" = "$want_data_saver" ] \
     || todo_data_saver+=("${cur_data_saver}${US}${want_data_saver}")
 fi
+want_dnd=$(jq -r '.android.doNotDisturb.mode // "null"' "$manifest")
+if [ "$want_dnd" != null ]; then
+  # Android silently ignores a shell write to zen_mode, so a device without the
+  # command must fail the plan rather than report a change it cannot make.
+  dnd_help=$(adb_shell cmd notification help 2>&1 | tr -d '\r' || true)
+  grep -Fq set_dnd <<<"$dnd_help" \
+    || { echo "Do Not Disturb needs 'cmd notification set_dnd', which this device does not provide" >&2; exit 1; }
+  cur_dnd=$(adb_shell settings get --user "$user" global zen_mode | tr -d '\r' | zen_mode_name) \
+    || { echo "unable to read Do Not Disturb state" >&2; exit 1; }
+  [ "$cur_dnd" = "$want_dnd" ] || todo_dnd+=("${cur_dnd}${US}${want_dnd}")
+fi
 while IFS=$US read -r pkg allowed; do
   if [ -n "$(current_code "$pkg")" ]; then
     links=$(adb_shell pm get-app-links --user "$user" "$pkg" | tr -d '\r')
@@ -623,7 +635,7 @@ todo_arrays=(
   todo_install todo_upgrade todo_reown todo_remove todo_setting todo_dark todo_role
   todo_disable todo_grant todo_revoke todo_permflag todo_appop todo_suspend
   todo_unsuspend todo_locale todo_ime_enable todo_ime_disable todo_ime_default
-  todo_data_saver todo_link_allowed todo_link_selected todo_link_unselected
+  todo_data_saver todo_dnd todo_link_allowed todo_link_selected todo_link_unselected
   todo_idle todo_unidle
 )
 declared_todo=$(compgen -A arrayvar todo_ | grep -vx todo_arrays | sort)
@@ -728,6 +740,7 @@ for c in "${todo_ime_enable[@]}"; do echo "ime-on   $c"; done
 for c in "${todo_ime_disable[@]}"; do echo "ime-off  $c"; done
 for t in "${todo_ime_default[@]}"; do IFS=$US read -r c w <<<"$t"; echo "ime      default (${c:-none} → $w)"; done
 for t in "${todo_data_saver[@]}"; do IFS=$US read -r c w <<<"$t"; echo "datasaver ($c → $w)"; done
+for t in "${todo_dnd[@]}"; do IFS=$US read -r c w <<<"$t"; echo "dnd      ($c → $w)"; done
 for t in "${todo_link_allowed[@]}"; do IFS=$US read -r p c w <<<"$t"; echo "link-ok  $p ($c → $w)"; done
 for t in "${todo_link_selected[@]}"; do IFS=$US read -r p d <<<"$t"; echo "link+    $p $d"; done
 for t in "${todo_link_unselected[@]}"; do IFS=$US read -r p d <<<"$t"; echo "link-    $p $d"; done
@@ -892,6 +905,10 @@ for t in "${todo_data_saver[@]}"; do
   IFS=$US read -r _ w <<<"$t"
   [ "$w" = enabled ] && enabled=true || enabled=false
   adb_shell cmd netpolicy set restrict-background "$enabled"
+done
+for t in "${todo_dnd[@]}"; do
+  IFS=$US read -r _ w <<<"$t"
+  adb_shell cmd notification set_dnd "$(dnd_command_argument "$w")"
 done
 for t in "${todo_link_allowed[@]}"; do
   IFS=$US read -r p _ w <<<"$t"
