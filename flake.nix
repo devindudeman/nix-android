@@ -425,6 +425,7 @@
               #!${pkgs.bash}/bin/bash
               echo "\$*" >> $PWD/nix.log
               case "\$*" in
+              *androidConfigurations\ --apply*) echo '["bench"]' ;;
               *fetchPlan*) echo '[{"path":"/nix/store/absent.apk","size":2500000},{"path":"/","size":7},{"path":"/nix/store/absent2.apk"}]' ;;
               *) echo /nix/store/fake-manifest ;;
               esac
