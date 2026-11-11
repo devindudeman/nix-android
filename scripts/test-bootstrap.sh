@@ -79,6 +79,14 @@ jq -e '
   }
 ' "$tmp/captures/engine-2.json" >/dev/null
 grep -Fq "$tmp/manifest.json --serial fixture --watch" "$tmp/captures/assist.args"
+jq -e '.android | has("doNotDisturb") | not' "$tmp/captures/engine-2.json" >/dev/null
+
+# A version-6 manifest carries doNotDisturb; phase one must neutralize it like every other android field.
+rm -f "$TEST_COUNT" "$tmp/captures"/*
+jq '.manifestVersion = 6 | .apps.reown = false | .android.doNotDisturb = {mode: "priority"}' "$tmp/manifest.json" > "$tmp/manifest-v6.json"
+"$bash_bin" "$bootstrap" "$tmp/manifest-v6.json" --serial fixture >/dev/null
+jq -e '.android.doNotDisturb == {mode: null}' "$tmp/captures/engine-2.json" >/dev/null
+jq -e '.android.doNotDisturb == {mode: "priority"}' "$tmp/captures/engine-3.json" >/dev/null
 
 rm -f "$TEST_COUNT" "$tmp/captures"/*
 export TEST_ASSIST_FAIL=1

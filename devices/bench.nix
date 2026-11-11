@@ -67,6 +67,9 @@
     dataSaver = {
       enabled = true;
     };
+    doNotDisturb = {
+      mode = "priority";
+    };
     packages.suspended = [ "dev.imranr.obtainium.fdroid" ];
     appLinks."org.fdroid.fdroid" = {
       allowed = false;

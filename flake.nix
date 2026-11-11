@@ -310,6 +310,22 @@
                   bash ${inputs.self}/scripts/test-converge-todo.sh ${inputs.self}/engine/converge.sh
                   touch $out
                 '';
+            dnd =
+              pkgs.runCommand "nix-android-dnd"
+                {
+                  nativeBuildInputs = [
+                    pkgs.bash
+                    pkgs.coreutils
+                    pkgs.gawk
+                    pkgs.gnugrep
+                    pkgs.gnused
+                    pkgs.jq
+                  ];
+                }
+                ''
+                  bash ${inputs.self}/scripts/test-dnd.sh ${inputs.self} ${pkgs.bash}/bin/bash
+                  touch $out
+                '';
             generations =
               pkgs.runCommand "nix-android-generations"
                 {
@@ -515,15 +531,16 @@
                   grep -q 'invalid or unsupported manifest' error
 
                   jq -n '{
-                    manifestVersion: 4,
+                    manifestVersion: 6,
                     device: {name: "test", user: 0, abi: "x86_64"},
-                    apps: {cleanup: "none", attended: [], play: [], managed: []},
+                    apps: {cleanup: "none", attended: [], play: [], managed: [], reown: false},
                     android: {
                       darkMode: null, disabled: [], deviceidleExempt: [], deviceidleUnexempt: [], roles: {},
                       settings: {global: {}, secure: {}, system: {}},
                       permissions: {}, appOps: {}, suspended: [], unsuspended: [],
                       locales: {}, inputMethod: {enabled: [], disabled: [], default: null},
-                      dataSaver: {enabled: null}, appLinks: {}
+                      dataSaver: {enabled: null}, appLinks: {},
+                      doNotDisturb: {mode: null}
                     }
                   }' > valid.json
                   mkdir fakebin
@@ -542,20 +559,27 @@
                   reject duplicate-play '.apps.attended = ["org.example.app"] |
                     .apps.play = ["org.example.app"]'
                   reject legacy-manifest '.manifestVersion = 1'
+                  reject dnd-unknown-mode '.android.doNotDisturb.mode = "none"'
+                  reject dnd-wrong-type '.android.doNotDisturb.mode = 1'
+                  reject dnd-extra-key '.android.doNotDisturb.future = true'
+                  reject dnd-missing 'del(.android.doNotDisturb)'
+                  reject dnd-in-v5-manifest '.manifestVersion = 5'
+                  jq 'del(.android.doNotDisturb) | .manifestVersion = 5' valid.json > valid5.json
+                  ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh valid5.json --validate-only
                   reject unknown-root '.future = {}'
                   reject unknown-app-source '.apps.privateSource = ["org.example.app"]'
                   reject unknown-android-state '.android.future = {}'
                   reject unknown-managed-field '.apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk",future:true}]'
-                  reject v4-installer '.apps.managed = [
+                  reject v4-installer '.manifestVersion = 4 | del(.android.doNotDisturb) | del(.apps.reown) | .apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk",installer:null}]'
-                  reject v5-missing-reown '.manifestVersion = 5'
-                  reject v5-bad-installer '.manifestVersion = 5 | .apps.reown = false | .apps.managed = [
+                  reject v6-missing-reown 'del(.apps.reown)'
+                  reject v6-bad-installer '.apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk",installer:"not a package"}]'
-                  jq '.manifestVersion = 5 | .apps.reown = true | .apps.managed = [
+                  jq '.apps.reown = true | .apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk",installer:"org.example.updater"}]' \
-                    valid.json > valid5.json
-                  ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh valid5.json --validate-only
+                    valid.json > valid6.json
+                  ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh valid6.json --validate-only
                   reject unknown-permission-field '.android.permissions."org.example.app" = {
                     grant:[], revoke:[], flags:{}, future:[]}'
                   reject missing-setting-namespace 'del(.android.settings.system)'

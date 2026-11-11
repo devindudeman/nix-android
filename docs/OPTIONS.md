@@ -404,6 +404,33 @@ null
 
 
 
+## android\.doNotDisturb\.mode
+
+
+
+Global Do Not Disturb mode, set with ` cmd notification set_dnd ` and read back from
+` settings get global zen_mode `\. ` off ` allows every interruption, ` priority ` allows the
+priority exceptions configured in Settings, ` alarms ` allows alarms only, and ` total `
+is total silence (` set_dnd none `)\. null = unmanaged\. The raw ` android.settings.global.zen_mode `
+key cannot manage this: Android silently ignores shell writes to it\. Needs a device that
+has ` cmd notification set_dnd `; on an older one the plan fails instead of doing nothing\.
+Schedules (automatic rules) and the priority exceptions are not managed\.
+
+
+
+*Type:*
+null or one of “off”, “priority”, “alarms”, “total”
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
 ## android\.inputMethod\.enabled
 
 

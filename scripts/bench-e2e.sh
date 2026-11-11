@@ -216,6 +216,11 @@ verify_state() {
       | sed -n 's/^Restrict background status: //p')
     [ "$got" = "$want" ] || { echo "Data Saver: got '$got', want '$want'" >&2; return 1; }
   fi
+  want=$(jq -r '.android.doNotDisturb.mode // "null"' "$manifest")
+  if [ "$want" != null ]; then
+    got=$(adb shell settings get --user 0 global zen_mode | tr -d '\r' | zen_mode_name) || got=unreadable
+    [ "$got" = "$want" ] || { echo "Do Not Disturb: got '$got', want '$want'" >&2; return 1; }
+  fi
   while IFS=$'\t' read -r pkg want; do
     links=$(adb shell pm get-app-links --user 0 "$pkg" | tr -d '\r')
     if [ "$want" != null ]; then
@@ -370,6 +375,7 @@ for run in $(seq 1 "$runs"); do
       default: "com.android.inputmethod.latin/.LatinIME"
     } |
     .android.dataSaver.enabled = false |
+    .android.doNotDisturb.mode = "off" |
     .android.appLinks."org.fdroid.fdroid" = {
       allowed: true, selected: [], unselected: ["f-droid.org"]
     }

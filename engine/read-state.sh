@@ -35,7 +35,35 @@ package_version_from_dump() {
   '
 }
 
-# Print only the "User <N>:" blocks of a `dumpsys package <pkg>` dump.
+# Do Not Disturb. Android keeps the mode in Settings.Global.zen_mode (the framework's
+# ZEN_MODE_* constants) and treats an unset key as off. Verified on the AOSP bench:
+# `cmd notification set_dnd priority|alarms|none|off` and this key agree after every
+# change, while a shell `settings put global zen_mode N` is silently ignored.
+# stdin: `settings get global zen_mode` output; stdout: off|priority|total|alarms.
+# Anything else (including empty output, which means the read itself failed) is an error.
+zen_mode_name() {
+  local value
+  value=$(tr -d '[:space:]')
+  case $value in
+  0 | null) echo off ;;
+  1) echo priority ;;
+  2) echo total ;;
+  3) echo alarms ;;
+  *) return 1 ;;
+  esac
+}
+# The `cmd notification set_dnd` argument for a declared mode.
+dnd_command_argument() {
+  case $1 in
+  off) echo off ;;
+  priority) echo priority ;;
+  alarms) echo alarms ;;
+  total) echo none ;;
+  *) return 1 ;;
+  esac
+}
+
+# Print only the "User <N>:" block of a `dumpsys package <pkg>` dump.
 # Fails when the block is missing so callers fail loudly instead of reading
 # another profile's state. A block ends only at the next "    User N:" header
 # or a line indented fewer than four spaces: AOSP Settings.dumpPackageLPr

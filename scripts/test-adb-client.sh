@@ -120,8 +120,8 @@ declare -A gated=(
   [android.inputMethod.default]=".android.inputMethod.enabled = [\"$ime\"] | .android.inputMethod.default = \"$ime\""
 )
 fields=$(jq -r '
-  (.apps | keys[] | "apps." + .),
-  (.android | del(.settings, .darkMode, .dataSaver, .inputMethod) | keys[] | "android." + .),
+  (.apps | del(.reown) | keys[] | "apps." + .),
+  (.android | del(.settings, .darkMode, .dataSaver, .inputMethod, .doNotDisturb) | keys[] | "android." + .),
   (.android.inputMethod | keys[] | "android.inputMethod." + .)
 ' "$tmp/manifest.json")
 for field in $fields; do

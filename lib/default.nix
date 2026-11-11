@@ -491,7 +491,7 @@
         assert validated;
         pkgs.writeText "nix-android-${cfg.device.name}-manifest-base.json" (
           builtins.toJSON {
-            manifestVersion = 5;
+            manifestVersion = 6;
             device = {
               inherit (cfg.device) name user abi;
             };
@@ -504,6 +504,7 @@
                 appOps
                 darkMode
                 dataSaver
+                doNotDisturb
                 locales
                 permissions
                 ;

@@ -275,7 +275,12 @@ component form at build time, because `ime list -s` reports only the short
 form and an unnormalized spelling could never converge. Because
 `android.inputMethod` owns the same Android state as the raw
 `default_input_method`/`enabled_input_methods` secure keys, declaring both is
-rejected at evaluation. `dataSaver.enabled`
+rejected at evaluation. `doNotDisturb.mode` manages only the global Do Not Disturb
+mode (`off`, `priority`, `alarms`, or `total` for total silence); it is set with
+`cmd notification set_dnd` because Android silently ignores a shell write to the
+`zen_mode` setting, so `android.settings.global.zen_mode` cannot do it. A device without
+`set_dnd` fails the plan with a clear message (Android 6 has no `cmd` at all; the oldest Android that
+has `set_dnd` has not been established, and the AOSP Android 15 bench is the only version proven). Automatic schedules and the priority exceptions are left alone. `dataSaver.enabled`
 manages only the global Data Saver switch. Per-app UID allow/deny lists are
 captured by import but are not declarable because they were removed across a
 graceful reboot for user-installed apps on the mandatory AOSP bench.

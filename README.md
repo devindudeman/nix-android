@@ -50,6 +50,7 @@ filled-in `phone.nix`:
     play = [ "com.spotify.music" ];
   };
   android.darkMode = true;
+  android.doNotDisturb.mode = "priority";
   android.privateDns = "opportunistic";
   android.defaultApps.browser = "org.mozilla.fennec_fdroid";
   android.permissions."com.termux".grant = [ "android.permission.POST_NOTIFICATIONS" ];
