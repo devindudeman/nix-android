@@ -804,6 +804,11 @@ without whitespace, `github` must be `owner/repo`, `gitea` must be
 config value can never turn into a resolver flag such as
 `--allow-signer-rotation`.
 
+Every network fetch the resolver and `suggest-sources --discover` make is
+HTTPS-only (`curl --proto =https`, so no plain-HTTP downgrade or cross-scheme
+redirect), requires TLS 1.2 or newer, and is time- and size-capped. The
+F-Droid index is requested with `--compressed`.
+
 Refreshes short-circuit versioned release sources: when a github/gitea/
 updateJson/html source resolves to the same URL already locked (same ABI,
 complete entry), the previous entry is reused without re-downloading the APK,

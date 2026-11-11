@@ -279,7 +279,9 @@ fetch_index() { # $1=repo-url $2=expected-cert-sha256 → verified index path
   entry_jar="$cache/entry-$slug.jar"
   index="$cache/index-$slug.json"
   tmp="$entry_jar.tmp.$$"
-  if ! curl -fsS "$r/entry.jar" -o "$tmp"; then
+  # HTTPS-only (no downgrade, no redirect to another scheme), TLS >= 1.2, and
+  # time/size caps so a hostile or broken mirror cannot hang or fill the disk.
+  if ! curl --proto '=https' --tlsv1.2 -fsS --max-time 60 --max-filesize 10M "$r/entry.jar" -o "$tmp"; then
     rm -f "$tmp"
     echo "failed to fetch signed entry.jar from $r" >&2
     return 1
@@ -312,7 +314,10 @@ fetch_index() { # $1=repo-url $2=expected-cert-sha256 → verified index path
   if [ ! -f "$index" ] || [ "$(sha256sum "$index" | cut -d' ' -f1)" != "$want" ]; then
     echo "fetching $r$name..." >&2
     index_tmp="$index.tmp.$$"
-    if ! curl -fsS "$r$name" -o "$index_tmp"; then
+    # --compressed: f-droid.org serves index-v2.json gzip-encoded (~23 MB vs
+    # ~73 MB raw). The cap leaves headroom over the largest known index.
+    if ! curl --proto '=https' --tlsv1.2 -fsS --compressed --max-time 600 --max-filesize 512M \
+      "$r$name" -o "$index_tmp"; then
       rm -f "$index_tmp"
       echo "failed to fetch $r$name" >&2
       return 1

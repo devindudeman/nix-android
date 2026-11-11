@@ -250,6 +250,21 @@ grep -q 'org.example.universal *f-droid.org' <<<"$appended" \
 #     tolerated, unanchored junk rejected ---------------------------------------
 catalog="$tmp/catalog"
 mkdir -p "$catalog/simple" "$catalog/complex"
+# The catalog is served over a fake HTTPS curl that refuses unhardened
+# fetches; a missing entry fails like curl -f (exit 22).
+catalog_url=https://catalog.fake.example/apps
+catbin="$tmp/catbin"; mkdir -p "$catbin"
+cat > "$catbin/curl" <<EOF
+#!$(command -v bash)
+set -euo pipefail
+case " \$* " in *" --proto =https "*" --max-time "*" --max-filesize "*) ;; *) echo "fake curl: unhardened fetch" >&2; exit 1 ;; esac
+url="\${*: -1}"
+f="$catalog/\${url#"$catalog_url"/}"
+[ -f "\$f" ] || exit 22
+cat "\$f"
+EOF
+chmod +x "$catbin/curl"
+export PATH="$catbin:$PATH"
 # complex schema uses .configs[].url; simple schema uses .config.url.
 printf '{"configs":[{"url":"https://github.com/owner/repo"}]}' > "$catalog/complex/com.google.play.only.json"
 printf '{"config":{"url":"https://codeberg.org/someone/coolapp"}}' > "$catalog/simple/not.on.fdroid.json"
@@ -262,7 +277,7 @@ printf '{"configs":[{"url":"https://cdn.vendor.example/x"},{"url":"https://githu
   > "$catalog/complex/later.source.json"
 disc=$(printf 'com.google.play.only\nnot.on.fdroid\nvendor.only\nbroken.entry\nlater.source\n' | \
   bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a --discover \
-  --catalog-base "file://$catalog" \
+  --catalog-base "$catalog_url" \
   --repo "https://main.fdroid.example/repo" "$official_fp" f-droid.org 2>"$tmp/disc.err")
 grep -q 'com.google.play.only *owner/repo' <<<"$disc" || { echo "github (complex schema) candidate missing" >&2; exit 1; }
 grep -q 'not.on.fdroid *codeberg.org/someone/coolapp' <<<"$disc" || { echo "codeberg (simple schema) candidate missing" >&2; exit 1; }
@@ -280,7 +295,7 @@ grep -q 'queried the Obtainium catalog' "$tmp/disc.err" || { echo "no privacy no
 # (fake resolver treats a "good" repo as a package-id match).
 printf '{"configs":[{"url":"https://github.com/owner/good"}]}' > "$catalog/complex/verify.me.json"
 ver=$(printf 'verify.me\n' | bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a --discover --verify \
-  --catalog-base "file://$catalog" \
+  --catalog-base "$catalog_url" \
   --repo "https://main.fdroid.example/repo" "$official_fp" f-droid.org 2>"$tmp/ver.err")
 grep -q 'apps.release."verify.me".github = "owner/good";' <<<"$ver" \
   || { echo "--verify did not promote a discovered candidate" >&2; exit 1; }
@@ -292,7 +307,7 @@ bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a --verify </dev/null 2
 
 # discovery is opt-in: without --discover, no catalog query
 nodisc=$(printf 'com.google.play.only\n' | bash "$suggest" --resolver "$tmp/resolver" --abi arm64-v8a \
-  --catalog-base "file://$catalog" \
+  --catalog-base "$catalog_url" \
   --repo "https://main.fdroid.example/repo" "$official_fp" f-droid.org 2>"$tmp/nd.err")
 grep -q 'Obtainium catalog' <<<"$nodisc$(cat "$tmp/nd.err")" && { echo "catalog queried without --discover" >&2; exit 1; }
 

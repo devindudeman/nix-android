@@ -215,6 +215,9 @@ hash-addressed APK store path.
   characters) and keep `android-rebuild update` passing them NUL-delimited;
   the `validation` and `cli-safety` checks pin both walls.
 - Authenticate repository metadata before trusting hashes.
+- Fetch with `curl --proto '=https' --tlsv1.2 --max-time ... --max-filesize ...`;
+  the offline fake curls in `test-update-lock.sh` and
+  `test-suggest-sources.sh` refuse any fetch without those flags.
 - Bind the lock entry to the configured source and trust anchor.
 - Fail atomically; an unsuccessful refresh must not replace the lock.
 - Validate release package ID with aapt2.
