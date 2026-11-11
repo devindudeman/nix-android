@@ -146,7 +146,7 @@ for expr in '.android.doNotDisturb.mode = "none"' '.android.doNotDisturb.mode = 
 done
 
 # 8. older manifests (no doNotDisturb, version 4) still plan, and never touch the new primitive
-jq 'del(.android.doNotDisturb) | .manifestVersion = 4' "$tmp/base.json" > "$tmp/v4.json"
+jq 'del(.android.doNotDisturb) | del(.apps.reown) | .manifestVersion = 4' "$tmp/base.json" > "$tmp/v4.json"
 reset 1
 converge "$tmp/v4.json" > "$tmp/v4plan"
 grep -Fq 'device matches manifest' "$tmp/v4plan" || fail 'a version-4 manifest no longer plans'
