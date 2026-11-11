@@ -196,6 +196,24 @@ EOF
     | type == "array" and length >= 1
     and all(.[]; test("^[0-9a-f]{64}$"))' "$tmp/flavor.lock.json" >/dev/null \
     || { echo "release lock is missing valid signerSha256 digests" >&2; exit 1; }
+
+  # GitHub signer continuity: a compromised release re-signed under another key
+  # must not re-lock. Simulate by recording a different signer for an older
+  # asset URL, so the refresh downloads the fixture and sees a disjoint set.
+  jq '.packages["org.fdroid.fdroid"] += {url: "https://fake.example/old.apk",
+        signerSha256: ["2222222222222222222222222222222222222222222222222222222222222222"]}' \
+    "$tmp/flavor.lock.json" > "$tmp/gh-rotated.lock.json"
+  cp "$tmp/gh-rotated.lock.json" "$tmp/gh-rotated.before"
+  if PATH="$fakebin:$PATH" bash "$raw_script" --lock "$tmp/gh-rotated.lock.json" >/dev/null 2>&1; then
+    echo "github signer rotation unexpectedly accepted without --allow-signer-rotation" >&2
+    exit 1
+  fi
+  cmp "$tmp/gh-rotated.before" "$tmp/gh-rotated.lock.json"
+  PATH="$fakebin:$PATH" bash "$raw_script" --lock "$tmp/gh-rotated.lock.json" \
+    --abi x86_64 --replace --allow-signer-rotation org.fdroid.fdroid \
+    --github "org.fdroid.fdroid=owner/repo" >/dev/null
+  cmp <(jq -S '.packages["org.fdroid.fdroid"].signerSha256' "$tmp/flavor.lock.json") \
+    <(jq -S '.packages["org.fdroid.fdroid"].signerSha256' "$tmp/gh-rotated.lock.json")
 fi
 
 # Direct vendor URL (--url) and update-manifest (--urljson) lanes, fully

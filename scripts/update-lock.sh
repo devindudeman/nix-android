@@ -34,10 +34,11 @@
 # aapt2 package-id and apksigner checks. --urljson fetches a small vendor
 # update-manifest JSON first and follows its .url (the schema Signal publishes
 # at updates.signal.org/android/latest.json); a sha256sum field, when present,
-# is cross-checked against the downloaded APK. Both lanes have only TLS-to-
-# vendor plus the recorded signer as trust anchors, so a refresh REFUSES a
-# signer change unless the package is listed via --allow-signer-rotation —
-# verify the vendor actually announced a key rotation before passing it.
+# is cross-checked against the downloaded APK. Every release lane (these and
+# github/gitea/html) has only TLS plus the recorded signer as trust anchors, so
+# a refresh REFUSES a signer change unless the package is listed via
+# --allow-signer-rotation — verify the vendor actually announced a key
+# rotation before passing it.
 #
 # Refresh short-circuit: github/gitea/urljson/html resolve to VERSIONED urls;
 # when the freshly-resolved url equals the locked one (same ABI, complete
@@ -57,6 +58,11 @@ shopt -s inherit_errexit
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=fdroid-eligibility.sh
 source "$(dirname "${BASH_SOURCE[0]}")/fdroid-eligibility.sh"
+# apk_signer_digests: the one apksigner-output parser, shared with the engine's
+# plan-time preflight and the build-time lock binding in lib/default.nix.
+# shellcheck source-path=SCRIPTDIR/../engine
+# shellcheck source=../engine/read-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../engine/read-state.sh"
 
 repo=https://f-droid.org/repo
 # F-Droid's published repository-signing certificate (SHA-256, no separators).
@@ -117,12 +123,8 @@ inspect_release_asset() { # $1=package $2=downloaded asset $3=display name
     echo "APK signature did not verify for $p" >&2; [ -z "${tmp:-}" ] || rm -rf "$tmp"; return 1
   fi
   [ -z "${tmp:-}" ] || rm -rf "$tmp"
-  # apksigner prints either "Signer #N certificate SHA-256 digest: <hex>" or,
-  # for v3.1 key rotation, "Signer (minSdkVersion=.., maxSdkVersion=..)
-  # certificate SHA-256 digest: <hex>". Match both by anchoring on the digest
-  # line, not the signer prefix; the {64} length excludes SHA-1/MD5 lines.
-  signers_json=$(sed -n 's/.*certificate SHA-256 digest:[[:space:]]*\([0-9A-Fa-f]\{64\}\).*/\1/p' <<<"$certs" \
-    | tr 'A-F' 'a-f' | sort -u | jq -R . | jq -sc .)
+  # Shared parser: both signer spellings, never the Play Source Stamp line.
+  signers_json=$(apk_signer_digests <<<"$certs" | jq -R . | jq -sc .)
   [ "$(jq -r 'length' <<<"$signers_json")" -gt 0 ] \
     || { echo "no APK signer certificate for $p" >&2; return 1; }
   jq -n --arg sha "$sha" --arg apkpath "$apkpath" --argjson signers "$signers_json" \
@@ -540,21 +542,23 @@ expected=$(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#
 actual=$(jq -r 'length' <<<"$resolved")
 [ "$actual" -eq "$expected" ] || { echo "resolved $actual unique packages, expected $expected — duplicate or missing declaration" >&2; exit 1; }
 
-# url/urljson lanes have only TLS + the recorded signer as trust anchors:
-# refuse to re-lock a package whose signer set no longer overlaps the previous
-# lock's, unless explicitly allowed (a verified vendor key rotation).
+# Release lanes (github/gitea/url/urljson/html) have only TLS + the recorded
+# signer as trust anchors — a GitHub release is just an upload by whoever holds
+# the repo's credentials. Refuse to re-lock a package whose signer set no longer
+# overlaps the previous lock's, unless explicitly allowed (a verified key
+# rotation). The first lock of a package is trust-on-first-use.
 allow_json=$(printf '%s\n' ${allow_rotation[@]+"${allow_rotation[@]}"} | jq -R . | jq -sc 'map(select(length > 0))')
 rotated=$(jq -nc --argjson old "$old_packages" --argjson new "$resolved" --argjson allow "$allow_json" '
   [$new | to_entries[]
-    | select(.value.source // "" | test("^(url(json)?|html):"))
+    | select(.value.source // "" | test("^(github|gitea|url(json)?|html):"))
     | select(.key as $k | ($allow | index($k)) == null)
     | select(($old[.key] // null) != null)
-    | select(($old[.key].source // "" | test("^(url(json)?|html):")))
+    | select(($old[.key].source // "" | test("^(github|gitea|url(json)?|html):")))
     | select((($old[.key].signerSha256 // []) | length) > 0)
     | select((.value.signerSha256 - ($old[.key].signerSha256 // [])) == .value.signerSha256)
     | "\(.key): locked \($old[.key].signerSha256 | join(",")) -> now \(.value.signerSha256 | join(","))"]')
 if [ "$(jq -r 'length' <<<"$rotated")" -gt 0 ]; then
-  echo "signer changed for direct-URL package(s) — refusing to re-lock:" >&2
+  echo "signer changed for release package(s) — refusing to re-lock:" >&2
   jq -r '.[]' <<<"$rotated" >&2
   echo "if the vendor really rotated its signing key, re-run with --allow-signer-rotation PACKAGE" >&2
   exit 1
