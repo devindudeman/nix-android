@@ -1,6 +1,13 @@
 # Core option surface. Every device-state option here must map to a verified
 # primitive in docs/PRIMITIVES.md — no options for unproven capabilities.
 { lib, ... }:
+let
+  # Release/repo specs reach `update` as CLI arguments; a control character
+  # (newline, CR) must never smuggle an extra flag such as
+  # --allow-signer-rotation. URLs must be HTTPS and whitespace-free.
+  httpsUrl = lib.types.strMatching "https://[^[:space:]]+";
+  singleLine = lib.types.strMatching "[^[:cntrl:]]+";
+in
 {
   options = {
     device = {
@@ -41,7 +48,7 @@
           attrsOf (submodule {
             options = {
               url = lib.mkOption {
-                type = strMatching "https?://[^[:space:]]+";
+                type = httpsUrl;
                 description = "Base repo URL (serves signed entry.jar and index-v2.json).";
                 example = "https://app.futo.org/fdroid/repo";
               };
@@ -67,25 +74,25 @@
           attrsOf (submodule {
             options = {
               github = lib.mkOption {
-                type = nullOr str;
+                type = nullOr (strMatching "[A-Za-z0-9._-]+/[A-Za-z0-9._-]+");
                 default = null;
                 description = "owner/repo whose GitHub releases ship this package's APK. Signer continuity is enforced across refreshes for this source.";
                 example = "ImranR98/Obtainium";
               };
               gitea = lib.mkOption {
-                type = nullOr str;
+                type = nullOr (strMatching "[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+");
                 default = null;
                 description = "host/owner/repo on a Gitea instance whose releases ship this package's APK (anonymous read). Signer continuity is enforced across refreshes for this source.";
                 example = "git.example.com/owner/repo";
               };
               url = lib.mkOption {
-                type = nullOr str;
+                type = nullOr httpsUrl;
                 default = null;
                 description = "HTTPS URL of the vendor's direct-download APK (a stable 'latest' link). Locked like a release: `update` downloads it, validates the package id with aapt2, and records sha256 + signer. Because the URL's content changes in place on vendor updates, a stale lock can fail the store fetch with a hash mismatch until the next `update` (the copy fetched at lock time keeps working from the local store or a binary cache). Signer continuity is enforced across refreshes for this source.";
                 example = "https://zoom.us/client/latest/zoom.apk";
               };
               updateJson = lib.mkOption {
-                type = nullOr str;
+                type = nullOr httpsUrl;
                 default = null;
                 description = "HTTPS URL of a vendor update-manifest JSON with a `url` field pointing at the APK (the schema Signal publishes at updates.signal.org/android/latest.json; an optional `sha256sum` field is cross-checked). Preferred over `url` when offered — the manifest points at versioned, immutable APK URLs, so a stale lock still fetches. Signer continuity is enforced across refreshes for this source.";
                 example = "https://updates.signal.org/android/latest.json";
@@ -94,12 +101,12 @@
                 type = nullOr (submodule {
                   options = {
                     url = lib.mkOption {
-                      type = str;
+                      type = httpsUrl;
                       description = "HTTPS page whose links include the vendor's APK download.";
                       example = "https://store.steampowered.com/mobile";
                     };
                     linkFilter = lib.mkOption {
-                      type = str;
+                      type = singleLine;
                       description = "Extended regex the APK link must match. `update` requires EXACTLY ONE page link to match — zero or several fail loudly (tighten the regex rather than trusting a sort heuristic).";
                       example = "steam-android/steam-[0-9.]+\\.apk$";
                     };

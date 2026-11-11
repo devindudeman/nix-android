@@ -882,7 +882,7 @@ Base repo URL (serves signed entry\.jar and index-v2\.json)\.
 
 
 *Type:*
-string matching the pattern https?://\[^\[:space:]]+
+string matching the pattern https://\[^\[:space:]]+
 
 
 
@@ -989,7 +989,7 @@ host/owner/repo on a Gitea instance whose releases ship this package’s APK (an
 
 
 *Type:*
-null or string
+null or string matching the pattern \[A-Za-z0-9\.-]+(:\[0-9]+)?/\[A-Za-z0-9\.*-]+/\[A-Za-z0-9\.*-]+
 
 
 
@@ -1018,7 +1018,7 @@ owner/repo whose GitHub releases ship this package’s APK\. Signer continuity i
 
 
 *Type:*
-null or string
+null or string matching the pattern \[A-Za-z0-9\.*-]+/\[A-Za-z0-9\.*-]+
 
 
 
@@ -1068,7 +1068,7 @@ Extended regex the APK link must match\. ` update ` requires EXACTLY ONE page li
 
 
 *Type:*
-string
+string matching the pattern \[^\[:cntrl:]]+
 
 
 
@@ -1089,7 +1089,7 @@ HTTPS page whose links include the vendor’s APK download\.
 
 
 *Type:*
-string
+string matching the pattern https://\[^\[:space:]]+
 
 
 
@@ -1141,7 +1141,7 @@ HTTPS URL of a vendor update-manifest JSON with a ` url ` field pointing at the 
 
 
 *Type:*
-null or string
+null or string matching the pattern https://\[^\[:space:]]+
 
 
 
@@ -1170,7 +1170,7 @@ HTTPS URL of the vendor’s direct-download APK (a stable ‘latest’ link)\. L
 
 
 *Type:*
-null or string
+null or string matching the pattern https://\[^\[:space:]]+
 
 
 

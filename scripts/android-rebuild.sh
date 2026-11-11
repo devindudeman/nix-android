@@ -318,19 +318,24 @@ update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \
     --apply 'c: { inherit (c.device) abi; inherit (c.apps) fdroid release; }' --json)
   abi=$(jq -er '.abi' <<<"$config")
-  mapfile -t fdroid < <(jq -r '.fdroid.packages[]' <<<"$config")
-  mapfile -t fspecs < <(jq -r '.fdroid.repos |
-    to_entries[] | .value as $r | $r.packages[] | "--fdroid\n\(.)\n\($r.url)\n\($r.fingerprint)"' <<<"$config")
-  mapfile -t relspecs < <(jq -r '.release |
-    to_entries[] | if .value.github != null
-      then "--github\n\(.key)=\(.value.github)"
+  # NUL-delimited argv: config strings are data, so a value containing a
+  # newline can never become an extra update-lock flag (the option types
+  # already reject control characters; this is the second wall).
+  mapfile -d '' -t fdroid < <(jq -j '.fdroid.packages[] | "\(.)\u0000"' <<<"$config")
+  mapfile -d '' -t fspecs < <(jq -j '.fdroid.repos |
+    to_entries[] | .value as $r | $r.packages[]
+    | ["--fdroid", ., $r.url, $r.fingerprint][] | "\(.)\u0000"' <<<"$config")
+  mapfile -d '' -t relspecs < <(jq -j '.release |
+    to_entries[] | (if .value.github != null
+      then ["--github", "\(.key)=\(.value.github)"]
       elif .value.gitea != null
-      then "--gitea\n\(.key)=\(.value.gitea)"
+      then ["--gitea", "\(.key)=\(.value.gitea)"]
       elif .value.url != null
-      then "--url\n\(.key)=\(.value.url)"
+      then ["--url", "\(.key)=\(.value.url)"]
       elif .value.updateJson != null
-      then "--urljson\n\(.key)=\(.value.updateJson)"
-      else "--html\n\(.key)=\(.value.html.url)\n\(.value.html.linkFilter)" end' <<<"$config")
+      then ["--urljson", "\(.key)=\(.value.updateJson)"]
+      else ["--html", "\(.key)=\(.value.html.url)", .value.html.linkFilter] end)[]
+    | "\(.)\u0000"' <<<"$config")
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)
   # The config is the authoritative full set of locked packages, so a removed
   # declaration drops out of the lock: rewrite it rather than merge into it.

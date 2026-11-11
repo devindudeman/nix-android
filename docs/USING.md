@@ -796,6 +796,14 @@ partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
 is checked before the lock is written. Release resolution uses anonymous public
 APIs and is therefore subject to the host's unauthenticated rate limits.
 
+Source strings are typed before anything is fetched: F-Droid repository,
+release `url`, `updateJson`, and `html.url` values must be `https://` URLs
+without whitespace, `github` must be `owner/repo`, `gitea` must be
+`host[:port]/owner/repo`, and `linkFilter` may not contain control characters.
+`update` hands these values to the resolver as NUL-delimited arguments, so a
+config value can never turn into a resolver flag such as
+`--allow-signer-rotation`.
+
 Refreshes short-circuit versioned release sources: when a github/gitea/
 updateJson/html source resolves to the same URL already locked (same ABI,
 complete entry), the previous entry is reused without re-downloading the APK,
