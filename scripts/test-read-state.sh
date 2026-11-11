@@ -15,6 +15,12 @@ fail() {
   exit 1
 }
 
+version_dump=$'Packages:\n  Package [org.example.app] (abc):\n    versionCode=42 minSdk=23 targetSdk=23\n    User 0: installed=true\nShared users:\n  SharedUser [other] (def):\n    versionCode=99\n'
+[ "$(package_version_from_dump org.example.app <<<"$version_dump")" = 42 ] || fail 'legacy version misread'
+package_version_from_dump org.example.other <<<"$version_dump" >/dev/null 2>&1 && fail 'wrong package accepted'
+package_version_from_dump org.example.app <<<"${version_dump/versionCode=42/versionCode=oops}" >/dev/null 2>&1 && fail 'invalid version accepted'
+package_version_from_dump org.example.app <<<"$version_dump"$'\n  Package [org.example.app] (def):\n    versionCode=42' >/dev/null 2>&1 && fail 'duplicate package accepted'
+
 # --- permission_user_block: exact user scoping, no cross-profile bleed -------
 multi_user_dump=$(cat <<'EOF'
     install permissions:

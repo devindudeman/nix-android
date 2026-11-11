@@ -12,6 +12,37 @@ The controller platform is a required `mkDevice` argument because it determines
 which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 `"aarch64-darwin"`.
 
+## Selecting an ADB client
+
+`NIX_ANDROID_ADB` selects a single executable for device operations in the
+converge engine, importer, Play assistant and Atlas probe. It overrides the
+packaged tool's ADB even when Nix prepends its runtime inputs to PATH. Use an
+absolute executable or wrapper path; arguments belong in the wrapper rather
+than the variable. An unavailable override fails without falling back to another
+client. Explicit serial selection and manifest validation still apply, and the
+override is inherited by bootstrap's engine/assistant subprocesses.
+
+For example, a WSL controller can select a local wrapper that invokes the
+Windows ADB client already authorized by the phone:
+
+```console
+NIX_ANDROID_ADB=/absolute/path/to/windows-adb-wrapper \
+  nix run .#android-rebuild -- plan --flake .#phone --serial SERIAL
+```
+
+The wrapper and Windows server's trust/device inventory are controller-local
+inputs. Their implementation must preserve argv and any caller's device guards.
+Windows clients also need Windows paths for install/pull operations; a shell-only
+bridge is insufficient evidence that APK transfers work. This variable selects
+a controller transport, not Android API compatibility or an emulator endpoint.
+
+The engine only queries package inventories, disabled-package state, input
+methods and DeviceIdle when the manifest declares state that needs them.
+A raw-settings-only declaration therefore requires the target ABI and scoped
+`settings get/put` interfaces rather than unrelated modern Android services.
+Other declarations retain their own API prerequisites; this does not establish
+full provisioning support for older OEM phones.
+
 ## Create a device configuration
 
 The fastest start is the template, which scaffolds a working flake plus a

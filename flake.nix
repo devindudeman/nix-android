@@ -235,6 +235,41 @@
           };
 
           checks = {
+            adb-client =
+              let
+                device = inputs.self.lib.mkDevice {
+                  inherit system;
+                  modules = [
+                    {
+                      device.name = "client-test";
+                      device.abi = "x86_64";
+                    }
+                  ];
+                  lockFile = builtins.toFile "client-test-lock.json" (
+                    builtins.toJSON {
+                      abi = "x86_64";
+                      lockedAt = 0;
+                      packages = { };
+                    }
+                  );
+                };
+              in
+              pkgs.runCommand "nix-android-adb-client"
+                {
+                  nativeBuildInputs = [
+                    pkgs.jq
+                    pkgs.gawk
+                    pkgs.gnugrep
+                    pkgs.gnused
+                  ];
+                }
+                ''
+                  ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-adb-client.sh \
+                    ${inputs.self} ${pkgs.bash}/bin/bash \
+                    ${inputs.self.packages.${system}.android-rebuild}/bin/android-rebuild \
+                    ${device.converge}/bin/nix-android-converge-client-test
+                  touch $out
+                '';
             formatting = pkgs.runCommand "nix-android-formatting" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
               find ${inputs.self} -name '*.nix' -print0 | xargs -0 nixfmt --check
               touch $out

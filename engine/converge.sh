@@ -56,7 +56,7 @@ if [ "$validate_only" -eq 1 ]; then
 fi
 
 [ -n "$serial" ] || { echo "converge requires --serial SERIAL (or ANDROID_SERIAL)" >&2; exit 2; }
-adb_base=(adb -s "$serial")
+adb_base=("${NIX_ANDROID_ADB:-adb}" -s "$serial")
 # Wrapper: adb MUST read from /dev/null. `adb shell` otherwise drains the
 # enclosing `while read` loop's stdin, so only the first item iterates — the
 # silent bug behind partial plans. Every adb call goes through this.
@@ -94,15 +94,61 @@ actual_abi=$(adb_shell getprop ro.product.cpu.abi | tr -d '\r')
 
 # Device reality. Presence assertions include preinstalled/system Play apps;
 # destructive cleanup remains limited to third-party owner-user packages.
-installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r')
-installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+installed=
+installed_third_party=
+legacy_package_inventory=0
+# A raw-settings-only manifest needs neither package versions nor unrelated
+# modern services. Fail closed: skip the inventory only when every declared
+# field is on this explicit inventory-free allowlist. Any other non-empty field,
+# including one added after this gate, queries the inventory, so a new
+# current_code consumer can never silently read every package as absent.
+if jq -e '
+  any(
+    (.android | del(.settings, .darkMode, .dataSaver, .inputMethod) | .[]),
+    .android.inputMethod[],
+    (.apps | del(.cleanup) | .[]),
+    (.apps.cleanup | select(. != "none")),
+    (del(.manifestVersion, .device, .android, .apps) | .[]);
+    . != null and . != [] and . != {})
+' "$manifest" >/dev/null; then
+  if installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r'); then
+    inventory_status=0
+  else
+    inventory_status=$?
+  fi
+  if [ "$installed" = 'Error: Unknown option: --show-versioncode' ]; then
+    legacy_package_inventory=1
+    installed=$(adb_shell pm list packages --user "$user" | tr -d '\r')
+    installed_third_party=$(adb_shell pm list packages -3 --user "$user" | tr -d '\r')
+  elif [ "$inventory_status" -ne 0 ]; then
+    echo 'package inventory command failed' >&2
+    exit 2
+  else
+    installed_third_party=$(adb_shell pm list packages -3 --show-versioncode --user "$user" | tr -d '\r')
+  fi
+  if [ "$legacy_package_inventory" -eq 1 ]; then
+    inventory_pattern='^package:[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$'
+  else
+    inventory_pattern='^package:[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)* versionCode:[0-9]+$'
+  fi
+  for inventory in "$installed" "$installed_third_party"; do
+    if grep -qEv "$inventory_pattern|^$" <<<"$inventory"; then
+      echo 'unrecognized package inventory output' >&2
+      exit 2
+    fi
+  done
+fi
 current_code() { # -> versionCode or empty
   local wanted=$1 line package
   while IFS= read -r line; do
     package=${line#package:}
     package=${package%% *}
     if [ "$package" = "$wanted" ]; then
-      printf '%s\n' "${line##* versionCode:}"
+      if [ "$legacy_package_inventory" -eq 1 ]; then
+        adb_shell dumpsys package "$wanted" | tr -d '\r' | package_version_from_dump "$wanted"
+      else
+        printf '%s\n' "${line##* versionCode:}"
+      fi
       return
     fi
   done <<<"$installed"
@@ -205,7 +251,7 @@ if [ "$cleanup_mode" = "uninstall" ] || [ "$cleanup_mode" = "report" ]; then
     else
       report_undeclared+=("$pkg")
     fi
-  done < <(sed -n 's/^package:\([^ ]*\) .*/\1/p' <<<"$installed_third_party")
+  done < <(sed -n 's/^package:\([^ ]*\)\( .*\)\{0,1\}$/\1/p' <<<"$installed_third_party")
 fi
 
 # ---- Phase-2 categories: managed keys only, read → diff → plan → apply ----
@@ -261,7 +307,10 @@ while IFS=$'\t' read -r role want; do
   [ "$cur" = "$want" ] || todo_role+=("${role}${US}${cur}${US}${want}")
 done < <(jq -r '.android.roles // {} | to_entries[] | [.key, .value] | @tsv' "$manifest")
 
-disabled_now=$(adb_shell pm list packages -d --user "$user" | tr -d '\r')
+disabled_now=
+if jq -e '.android.disabled | length > 0' "$manifest" >/dev/null; then
+  disabled_now=$(adb_shell pm list packages -d --user "$user" | tr -d '\r')
+fi
 while read -r pkg; do
   [ -z "$pkg" ] && continue
   if ! grep -Fqx "package:$pkg" <<<"$disabled_now"; then
@@ -427,7 +476,10 @@ while IFS=$US read -r pkg want; do
   [ "$cur" = "$want" ] || todo_locale+=("${pkg}${US}${cur}${US}${want}")
 done < <(jq -r '.android.locales | to_entries[] | [.key, (.value | join(","))] | join("\u001f")' "$manifest")
 
-enabled_imes=$(adb_shell ime list -s --user "$user" | tr -d '\r')
+enabled_imes=
+if jq -e '(.android.inputMethod.enabled + .android.inputMethod.disabled) | length > 0' "$manifest" >/dev/null; then
+  enabled_imes=$(adb_shell ime list -s --user "$user" | tr -d '\r')
+fi
 while read -r component; do
   [ -z "$component" ] && continue
   grep -Fqx "$component" <<<"$enabled_imes" || todo_ime_enable+=("$component")
@@ -479,7 +531,10 @@ while IFS=$US read -r pkg allowed; do
   done < <(jq -r --arg p "$pkg" '.android.appLinks[$p].unselected[]' "$manifest")
 done < <(jq -r '.android.appLinks | to_entries[] | [.key, (.value.allowed | tostring)] | join("\u001f")' "$manifest")
 
-idle_now=$(adb_shell cmd deviceidle whitelist | tr -d '\r')
+idle_now=
+if jq -e '(.android.deviceidleExempt + .android.deviceidleUnexempt) | length > 0' "$manifest" >/dev/null; then
+  idle_now=$(adb_shell cmd deviceidle whitelist | tr -d '\r')
+fi
 while read -r pkg; do
   [ -z "$pkg" ] && continue
   grep -Fq ",$pkg," <<<"$idle_now" || todo_idle+=("$pkg")

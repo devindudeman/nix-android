@@ -44,7 +44,7 @@ done
   echo "cannot read App Manager export: $app_manager_export" >&2
   exit 2
 }
-adb=(adb -s "$serial")
+adb=("${NIX_ANDROID_ADB:-adb}" -s "$serial")
 
 umask 077
 work=$(mktemp -d "${TMPDIR:-/tmp}/nix-android-import.XXXXXX")
