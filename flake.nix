@@ -442,9 +442,10 @@
               # fake nix serves the config and a fake resolver records argv.
               mkdir -p fakebin fakeresolver/bin
               printf '%s\n' '#!${pkgs.runtimeShell}' \
-                'case "$1" in' \
-                '  eval) cat "$NIX_ANDROID_TEST_CONFIG" ;;' \
-                '  build) echo "$NIX_ANDROID_TEST_RESOLVER" ;;' \
+                'case "$*" in' \
+                '  *androidConfigurations\ --apply*) echo "[\"dev\"]" ;;' \
+                '  eval*) cat "$NIX_ANDROID_TEST_CONFIG" ;;' \
+                '  build*) echo "$NIX_ANDROID_TEST_RESOLVER" ;;' \
                 '  *) exit 1 ;;' \
                 'esac' > fakebin/nix
               printf '%s\n' '#!${pkgs.runtimeShell}' \
