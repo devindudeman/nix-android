@@ -3,25 +3,70 @@
 **nix-darwin, but for your phone.** Declare Android apps and reachable device
 state in Nix, inspect a read-only plan, then converge over adb.
 
+No root, no bootloader unlock, no custom OS, and nothing installed on the
+phone: everything runs on your computer at adb-shell privilege.
+
+**Status: alpha; `plan` never writes; read it before every `switch`.**
+
+## Requirements
+
+- a Google Pixel on stock Android or GrapheneOS, with USB debugging enabled
+  and this computer authorized
+- Nix with flakes enabled, on x86_64 Linux or Apple Silicon macOS
+
+## Try it without committing to anything
+
+`import` reads the phone and prints a draft config. It writes nothing to the
+device and needs no config repo:
+
 ```console
-android-rebuild plan   --flake .#pixel --serial DEVICE_SERIAL
-android-rebuild switch --flake .#pixel --serial DEVICE_SERIAL
-android-rebuild status --flake .#pixel --serial DEVICE_SERIAL # drift since last switch
-android-rebuild assist --watch --flake .#pixel --serial DEVICE_SERIAL
-android-rebuild bootstrap --flake .#pixel --serial DEVICE_SERIAL # wiped-device rebuild
+nix run github:devindudeman/nix-android -- import --serial $(adb get-serialno)
 ```
 
-nix-android works at adb-shell privilege on a stock, locked-bootloader device.
-It requires neither root nor replacing the OS, weakening verified boot, or
-installing Nix on the phone. GrapheneOS is the first-class target; an AOSP emulator is the
-mutation test bench.
+## Set up a config
 
-> **Status: alpha-ready.** The app and settings converge loop works end to end
-> on the AOSP bench, has completed an additive install plus a reversible setting
-> round trip on a locked GrapheneOS device, and passes the release packages and
-> device-free checks on a physical Apple Silicon Mac. The pinned `macos-15` job
-> repeats that gate after publication. See [docs/PLAN.md](docs/PLAN.md), and do
-> not aim an unreviewed `switch` or `bootstrap` at a daily phone.
+```console
+mkdir my-phone && cd my-phone
+nix flake init -t github:devindudeman/nix-android
+git init && git add -A          # Nix only sees git-tracked files
+```
+
+The template's `phone.nix` documents the main option groups inline. A
+filled-in `phone.nix`:
+
+```nix
+{
+  device.name = "phone";
+  apps = {
+    fdroid.packages = [ "org.mozilla.fennec_fdroid" "com.termux" ];
+    fdroid.repos.futo = {
+      url = "https://app.futo.org/fdroid/repo";
+      fingerprint = "39d47869d29cbfce4691d9f7e6946a7b6d7e6ff4883497e6e675744ecdfa6d6d";
+      packages = [ "org.futo.inputmethod.latin" ];
+    };
+    release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
+    release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
+    play = [ "com.spotify.music" ];
+  };
+  android.darkMode = true;
+  android.privateDns = "opportunistic";
+  android.defaultApps.browser = "org.mozilla.fennec_fdroid";
+  android.permissions."com.termux".grant = [ "android.permission.POST_NOTIFICATIONS" ];
+  android.batteryOptimization.exempt = [ "com.termux" ];
+}
+```
+
+Then lock the app sources, preview, and apply:
+
+```console
+nix run .#android-rebuild -- update --flake .#phone && git add apps.lock.json
+nix run .#android-rebuild -- plan   --flake .#phone --serial SERIAL
+nix run .#android-rebuild -- switch --flake .#phone --serial SERIAL
+```
+
+`status` reports drift since the last switch, `assist --watch` walks you
+through the Play installs, and `bootstrap` rebuilds a wiped phone. See
+[docs/USING.md](docs/USING.md).
 
 ## What is declarative today?
 
@@ -36,7 +81,7 @@ mutation test bench.
 - default browser, SMS, dialer, and home roles
 - runtime permission grants/revocations, writable permission flags, and package app-ops
 - per-app locales, input-method selection, global Data Saver, and user app-link choices
-- package disablement/suspension and battery-optimization exemptions
+- package disablement/suspension and battery-optimization exemptions/removals
 - optional cleanup of undeclared user-installed apps
 - resumable wiped-device bootstrap across reproducible and consent-bound apps
 
@@ -45,38 +90,6 @@ requires an explicit adb serial, the declared ABI must match the target, and
 `plan` never writes to the device (it may evaluate, fetch, and build locally).
 See [docs/LIMITS.md](docs/LIMITS.md) for the exact boundary between reconciled,
 ensure-only, attended, and unreachable state.
-
-## A taste
-
-```nix
-{
-  device = {
-    name = "pixel";
-    abi = "arm64-v8a";
-    user = 0;
-  };
-
-  apps.fdroid.packages = [
-    "org.fdroid.fdroid"
-    "com.termux"
-  ];
-  apps.play = [ "com.spotify.music" ];
-  apps.cleanup = "none";
-
-  android = {
-    darkMode = true;
-    privateDns = "opportunistic";
-    permissions."com.termux".grant = [
-      "android.permission.POST_NOTIFICATIONS"
-    ];
-    permissions."com.termux".flags."android.permission.POST_NOTIFICATIONS" = [ "user-set" ];
-    appOps."com.termux".RUN_IN_BACKGROUND = "allow";
-    locales."com.termux" = [ "en-US" ];
-    dataSaver.enabled = true;
-    batteryOptimization.exempt = [ "com.termux" ];
-  };
-}
-```
 
 F-Droid locks are resolved through a certificate-authenticated `entry.jar`,
 the signed `entry.json` index hash, and the per-APK hash. GitHub/Gitea assets
@@ -105,6 +118,16 @@ nix-android can be its own configuration flake or an input to an existing
 flake. The latter adds `androidConfigurations.<device>` beside existing
 `nixosConfigurations` and `darwinConfigurations`; see the existing-flake and
 multi-controller examples in [docs/USING.md](docs/USING.md).
+
+## What it will never do
+
+- unlock a bootloader, root the phone, or replace GrapheneOS
+- bypass Android's permission model or its install-consent prompts
+- fetch Play-only apps silently
+- migrate app data, Keystore keys, or eSIMs
+- pretend mutable Android state has NixOS-style atomic rollback
+
+See [docs/LIMITS.md](docs/LIMITS.md) for the exact boundary.
 
 ## Development
 
