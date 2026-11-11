@@ -89,6 +89,45 @@ test ! -e "$TEST_SETTING_WRITES"
 "$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture --apply > "$tmp/second"
 grep -Fq 'device matches manifest' "$tmp/second"
 [ "$(wc -l < "$TEST_SETTING_WRITES")" -eq 1 ]
+
+# The skip must never hide package state. Every manifest field outside the
+# inventory-free allowlist gets a minimal valid declaration, and each one must
+# reach the (failing) inventory read. The coverage check fails when a field is
+# added to the fixture without a sample here.
+p=org.example.app ime=org.example.app/.Ime
+declare -A gated=(
+  [apps.cleanup]=".apps.cleanup = \"report\""
+  [apps.managed]=".apps.managed = [{package: \"$p\", versionCode: 1, apk: \"/x.apk\"}]"
+  [apps.attended]=".apps.attended = [\"$p\"]"
+  [apps.play]=".apps.play = [\"$p\"]"
+  [android.roles]=".android.roles = {browser: \"$p\"}"
+  [android.permissions]=".android.permissions = {\"$p\": {grant: [], revoke: [], flags: {}}}"
+  [android.appOps]=".android.appOps = {\"$p\": {CAMERA: \"deny\"}}"
+  [android.locales]=".android.locales = {\"$p\": []}"
+  [android.appLinks]=".android.appLinks = {\"$p\": {allowed: null, selected: [], unselected: []}}"
+  [android.disabled]=".android.disabled = [\"$p\"]"
+  [android.suspended]=".android.suspended = [\"$p\"]"
+  [android.unsuspended]=".android.unsuspended = [\"$p\"]"
+  [android.deviceidleExempt]=".android.deviceidleExempt = [\"$p\"]"
+  [android.deviceidleUnexempt]=".android.deviceidleUnexempt = [\"$p\"]"
+  [android.inputMethod.enabled]=".android.inputMethod.enabled = [\"$ime\"]"
+  [android.inputMethod.disabled]=".android.inputMethod.disabled = [\"$ime\"]"
+  [android.inputMethod.default]=".android.inputMethod.enabled = [\"$ime\"] | .android.inputMethod.default = \"$ime\""
+)
+fields=$(jq -r '
+  (.apps | keys[] | "apps." + .),
+  (.android | del(.settings, .darkMode, .dataSaver, .inputMethod) | keys[] | "android." + .),
+  (.android.inputMethod | keys[] | "android.inputMethod." + .)
+' "$tmp/manifest.json")
+for field in $fields; do
+  [ -n "${gated[$field]:-}" ] || { echo "no inventory-gate sample for $field" >&2; exit 1; }
+  jq "${gated[$field]}" "$tmp/manifest.json" > "$tmp/gated.json"
+  status=0
+  "$bash_bin" "$src/engine/converge.sh" "$tmp/gated.json" --serial fixture > /dev/null 2> "$tmp/gated.err" || status=$?
+  if [ "$status" -ne 2 ] || ! grep -Fqx 'package inventory command failed' "$tmp/gated.err"; then
+    echo "$field skipped the package inventory" >&2; cat "$tmp/gated.err" >&2; exit 1
+  fi
+done
 export TEST_SETTINGS_ONLY=0
 
 export TEST_LEGACY_PACKAGES=1

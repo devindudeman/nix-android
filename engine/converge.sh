@@ -98,16 +98,18 @@ installed=
 installed_third_party=
 legacy_package_inventory=0
 # A raw-settings-only manifest needs neither package versions nor unrelated
-# modern services. Keep those API requirements tied to declared state.
+# modern services. Fail closed: skip the inventory only when every declared
+# field is on this explicit inventory-free allowlist. Any other non-empty field,
+# including one added after this gate, queries the inventory, so a new
+# current_code consumer can never silently read every package as absent.
 if jq -e '
-  .apps.cleanup != "none"
-  or ((.apps.managed + .apps.attended + .apps.play) | length > 0)
-  or ([.android.roles, .android.permissions, .android.appOps,
-       .android.locales, .android.appLinks] | any(length > 0))
-  or ((.android.disabled + .android.suspended + .android.unsuspended
-       + .android.deviceidleExempt + .android.deviceidleUnexempt
-       + .android.inputMethod.enabled + .android.inputMethod.disabled) | length > 0)
-  or .android.inputMethod.default != null
+  any(
+    (.android | del(.settings, .darkMode, .dataSaver, .inputMethod) | .[]),
+    .android.inputMethod[],
+    (.apps | del(.cleanup) | .[]),
+    (.apps.cleanup | select(. != "none")),
+    (del(.manifestVersion, .device, .android, .apps) | .[]);
+    . != null and . != [] and . != {})
 ' "$manifest" >/dev/null; then
   if installed=$(adb_shell pm list packages --show-versioncode --user "$user" | tr -d '\r'); then
     inventory_status=0
