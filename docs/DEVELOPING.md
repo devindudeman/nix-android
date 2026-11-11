@@ -121,7 +121,8 @@ It checks raw engine, importer, assistant and Atlas dispatch, invalid-client
 failure without fallback, explicit serial forwarding and validation before
 device contact. It also pins the package-inventory gate: the engine skips
 `pm list packages` only when every declared field is on its inventory-free
-allowlist (`settings`, `darkMode`, `dataSaver`, `cleanup = "none"`), so a new
+allowlist (`settings`, `darkMode`, `dataSaver`, `doNotDisturb`, `cleanup = "none"`,
+`apps.reown`), so a new
 manifest field queries the inventory by default. Widen that allowlist only for
 a field proven never to reach `current_code` or cleanup, and give every other
 `android`/`apps` field a sample in the check, which fails on a missing one.

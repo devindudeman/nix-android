@@ -114,9 +114,9 @@ legacy_package_inventory=0
 # current_code consumer can never silently read every package as absent.
 if jq -e '
   any(
-    (.android | del(.settings, .darkMode, .dataSaver, .inputMethod) | .[]),
+    (.android | del(.settings, .darkMode, .dataSaver, .inputMethod, .doNotDisturb) | .[]),
     .android.inputMethod[],
-    (.apps | del(.cleanup) | .[]),
+    (.apps | del(.cleanup, .reown) | .[]),
     (.apps.cleanup | select(. != "none")),
     (del(.manifestVersion, .device, .android, .apps) | .[]);
     . != null and . != [] and . != {})
