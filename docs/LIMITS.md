@@ -211,13 +211,40 @@ reviewed.
 
 ## APK signatures
 
+nix-android authenticates F-Droid repository metadata, pins artifact hashes,
+and records each managed APK's signer digests (`signerSha256`) in the lock.
+Signer identity is enforced at three points:
+
+- **Lock time.** F-Droid entries take their signer from the signed index and
+  follow `preferredSigner`. Every release lane (`github`, `gitea`, `url`,
+  `updateJson`, `html`) refuses a refresh whose signer set is disjoint from the
+  previously locked one unless `update --allow-signer-rotation PKG` is passed.
+  The first lock of a release package is trust-on-first-use.
+- **Build time.** Each managed APK's derivation asserts that its package id and
+  versionCode equal the lock's and that every `apksigner` signer digest is in
+  the locked `signerSha256`; F-Droid lock URLs must sit under the configured
+  repository URL. An optional `apps.release.<pkg>.signerSha256` config pin must
+  also overlap the APK's signers. A lock edit that swaps `url`+`sha256` for a
+  differently-signed same-package APK therefore fails the build, which covers
+  fresh installs and `bootstrap` on a wiped phone, where Android has no
+  installed copy to compare against.
+- **Plan time.** For each pending upgrade, `plan` pulls the installed APK and
+  compares its signer set with the manifest APK's (definitive `WILL fail` on a
+  disjoint set; installer-provenance heuristic when `apksigner` or the pull is
+  unavailable).
+
 nix-android authenticates F-Droid repository metadata and pins artifact hashes.
 For every pending upgrade, `plan` compares the installed APK's signer digests
 with the manifest APK's and prints a definitive `WILL fail` note when they are
 disjoint, falling back to an installer-provenance heuristic when `apksigner` is
 unavailable or the pull fails (see [USING.md](./USING.md#plan-and-apply)).
-Android's package manager refuses an incompatible replacement during apply; switching signing identities therefore requires a human-controlled
-uninstall/reinstall and may lose app data.
+
+Not covered: a lock edit that changes `url`, `sha256`, and `signerSha256`
+together still builds unless the app carries a config pin, so review lock
+diffs that change a signer. `apps.local` APKs are their own pin, and
+`apps.play`/`apps.attended` have no signer check. Android's package manager
+refuses an incompatible replacement during apply; switching signing identities
+requires a human-controlled uninstall/reinstall and may lose app data.
 
 ## Host platforms
 

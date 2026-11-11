@@ -37,6 +37,7 @@ Usage:
   android-rebuild assist --flake REF#DEVICE --serial SERIAL [--watch]
   android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
+                         [--allow-signer-rotation PKG ...]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
                          [--obtainium-export PATH] [--app-manager-export PATH]
   android-rebuild suggest-sources --flake REF#DEVICE [--discover [--verify]]
@@ -73,6 +74,7 @@ watch=0
 flake_set=0
 lock_set=0
 release_hints=()
+allow_rotation=()
 discover=0
 verify=0
 repo_specs=()
@@ -85,6 +87,10 @@ while [ $# -gt 0 ]; do
   --release-hint)
     [ $# -ge 2 ] || { echo "--release-hint requires PKG=owner/repo" >&2; exit 2; }
     release_hints+=("$2"); shift 2
+    ;;
+  --allow-signer-rotation)
+    [ $# -ge 2 ] || { echo "--allow-signer-rotation requires PKG" >&2; exit 2; }
+    allow_rotation+=(--allow-signer-rotation "$2"); shift 2
     ;;
   --discover) discover=1; shift ;;
   --verify) verify=1; shift ;;
@@ -150,6 +156,10 @@ if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
 fi
 if [ "${#release_hints[@]}" -gt 0 ] && [ "$cmd" != suggest-sources ]; then
   echo "--release-hint is only valid with suggest-sources" >&2
+  exit 2
+fi
+if [ "${#allow_rotation[@]}" -gt 0 ] && [ "$cmd" != update ]; then
+  echo "--allow-signer-rotation is only valid with update" >&2
   exit 2
 fi
 if [ "$discover" -eq 1 ] && [ "$cmd" != suggest-sources ]; then
@@ -324,6 +334,7 @@ update)
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)
   # The config is the authoritative full set of locked packages, so a removed
   # declaration drops out of the lock: rewrite it rather than merge into it.
-  exec "$resolver/bin/nix-android-update-lock" --lock "$lock" --abi "$abi" --replace "${fdroid[@]}" "${fspecs[@]}" "${relspecs[@]}"
+  exec "$resolver/bin/nix-android-update-lock" --lock "$lock" --abi "$abi" --replace "${fdroid[@]}" "${fspecs[@]}" "${relspecs[@]}" \
+    "${allow_rotation[@]}"
   ;;
 esac

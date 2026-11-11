@@ -91,6 +91,20 @@
             }).androidsdk;
           androidSdkRoot = "${androidSdk}/libexec/android-sdk";
           importPython = pkgs.python3.withPackages (python: [ python.protobuf ]);
+          # apps.lock.json with one entry's fields overridden, for negative checks.
+          benchLock = builtins.fromJSON (builtins.readFile ./apps.lock.json);
+          alterLock =
+            package: attrs:
+            builtins.toFile "nix-android-invalid-lock.json" (
+              builtins.toJSON (
+                benchLock
+                // {
+                  packages = benchLock.packages // {
+                    "${package}" = benchLock.packages.${package} // attrs;
+                  };
+                }
+              )
+            );
         in
         {
           packages = rec {
@@ -533,6 +547,42 @@
                 fixtureApk = pkgs.fetchurl {
                   inherit (locked) url sha256;
                 };
+                # Build-time lock binding: a correctly hash-pinned APK whose
+                # signer/versionCode disagree with its lock entry (or with the
+                # config pin) must fail its own derivation.
+                mismatched =
+                  package: attrs: module:
+                  pkgs.testers.testBuildFailure
+                    (inputs.self.lib.mkDevice {
+                      inherit system;
+                      modules = [
+                        {
+                          device.name = "lock-binding";
+                          device.abi = "x86_64";
+                        }
+                        module
+                      ];
+                      lockFile = alterLock package attrs;
+                    }).apks.${package};
+                wrongSigner = [ "2222222222222222222222222222222222222222222222222222222222222222" ];
+                bindingFailures = {
+                  "not a locked signerSha256" = mismatched "org.fdroid.fdroid" { signerSha256 = wrongSigner; } {
+                    apps.fdroid.packages = [ "org.fdroid.fdroid" ];
+                  };
+                  "versionCode is 1023052, lock says 1" = mismatched "org.fdroid.fdroid" { versionCode = 1; } {
+                    apps.fdroid.packages = [ "org.fdroid.fdroid" ];
+                  };
+                  # Archive-wrapped release: extraction and the check share one derivation.
+                  "APK for com.edde746.plezy does not match" = mismatched "com.edde746.plezy" {
+                    signerSha256 = wrongSigner;
+                  } { apps.release."com.edde746.plezy".github = "edde746/plezy"; };
+                  "signerSha256 pin" = mismatched "dev.imranr.obtainium.fdroid" { } {
+                    apps.release."dev.imranr.obtainium.fdroid" = {
+                      github = "ImranR98/Obtainium";
+                      signerSha256 = wrongSigner;
+                    };
+                  };
+                };
               in
               pkgs.runCommand "nix-android-update-lock-safety"
                 {
@@ -554,6 +604,12 @@
                     ${inputs.self.packages.${system}.update-lock}/bin/nix-android-update-lock \
                     ${fixtureApk} \
                     ${inputs.self}/scripts/update-lock.sh
+                  ${pkgs.lib.concatStrings (
+                    pkgs.lib.mapAttrsToList (expect: drv: ''
+                      grep -Fq ${pkgs.lib.escapeShellArg expect} ${drv}/testBuildFailure.log \
+                        || { echo "lock-binding failure lacks: "${pkgs.lib.escapeShellArg expect} >&2; cat ${drv}/testBuildFailure.log >&2; exit 1; }
+                    '') bindingFailures
+                  )}
                   touch $out
                 '';
             validation =
@@ -568,19 +624,6 @@
                     }).manifest.outPath
                   ).success;
                 rejects = rejectsWithLock ./apps.lock.json;
-                lock = builtins.fromJSON (builtins.readFile ./apps.lock.json);
-                alterLock =
-                  package: attrs:
-                  builtins.toFile "nix-android-invalid-lock.json" (
-                    builtins.toJSON (
-                      lock
-                      // {
-                        packages = lock.packages // {
-                          "${package}" = lock.packages.${package} // attrs;
-                        };
-                      }
-                    )
-                  );
               in
               assert rejects {
                 device = {
@@ -729,6 +772,18 @@
                   device.abi = "x86_64";
                   apps.fdroid.packages = [ "org.fdroid.fdroid" ];
                 };
+              assert rejectsWithLock
+                (alterLock "org.fdroid.fdroid" { url = "https://evil.example/repo/org.fdroid.fdroid_1023052.apk"; })
+                {
+                  device.name = "fdroid-url-outside-repo";
+                  device.abi = "x86_64";
+                  apps.fdroid.packages = [ "org.fdroid.fdroid" ];
+                };
+              assert rejectsWithLock (alterLock "dev.imranr.obtainium.fdroid" { signerSha256 = [ ]; }) {
+                device.name = "release-without-signer";
+                device.abi = "x86_64";
+                apps.release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
+              };
               assert rejectsWithLock (alterLock "com.edde746.plezy" { apkPath = "../../escape.apk"; }) {
                 device.name = "unsafe-archive-member";
                 device.abi = "x86_64";

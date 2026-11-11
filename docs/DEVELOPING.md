@@ -26,9 +26,9 @@ pairs must fail closed instead of ignoring desired state.
 | Path | Responsibility |
 | --- | --- |
 | `modules/options.nix` | Public option surface; every device option needs a verified primitive |
-| `lib/default.nix` | `mkDevice`, assertions, lock/source binding, store APKs, manifest, packaged engine |
+| `lib/default.nix` | `mkDevice`, assertions, lock/source binding, store APKs bound to the lock's package id/versionCode/signers, manifest, packaged engine |
 | `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
-| `engine/read-state.sh` | Shared device-output parsers, sourced by the engine and the bench oracle |
+| `engine/read-state.sh` | Shared device-output parsers, sourced by the engine and the bench oracle; its `apk_signer_digests` is also the one apksigner parser for `update-lock.sh` and the build-time APK check in `lib/default.nix` |
 | `scripts/test-read-state.sh` | Raw-output golden fixtures pinning every shared parser (`engine-parsers` check) |
 | `scripts/suggest-sources.sh` | Read-only de-Play curation: F-Droid membership, `--discover` (Obtainium catalog proposals), and `--release-hint` GitHub/Gitea verification (reuses `update-lock --fetch-index` and the resolver) |
 | `scripts/fdroid-eligibility.sh` | Shared jq version/lineage selector, sourced by `update-lock.sh` (pins) and `suggest-sources.sh` (reports) so availability never diverges from lockability |
@@ -52,7 +52,7 @@ pairs must fail closed instead of ignoring desired state.
 | `docs/GRAPHENEOS.md` | GrapheneOS-only controls, reachability at uid 2000, bench gap, locked-phone adb, installers |
 | `docs/LIMITS.md` | Stock-Pixel/GrapheneOS support contract, evidence matrix, and reconciliation boundaries |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
-| `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, atomic-failure, and lock merge/replace resolver tests |
+| `scripts/test-update-lock.sh` | Offline signed-index, signer and signer-continuity (url and github lanes), archive, package-ID, atomic-failure, and lock merge/replace resolver tests; the `update-lock-safety` check also proves mismatched lock entries fail the APK build |
 | `devices/bench.nix` | x86_64 AOSP mutation-test configuration |
 | `.github/workflows/ci.yml` | x86_64 Linux checks and Apple Silicon package/CLI gate |
 
@@ -215,6 +215,9 @@ hash-addressed APK store path.
 - Bind the lock entry to the configured source and trust anchor.
 - Fail atomically; an unsuccessful refresh must not replace the lock.
 - Validate release package ID with aapt2.
+- Record `signerSha256` with the shared `apk_signer_digests` parser and add
+  the lane to the refresh-time signer-continuity filter; `fetchApk` then binds
+  the build to package id, versionCode, and signers automatically.
 - Treat archive member names as untrusted, require exactly one regular APK,
   stream it with `tar --`, and shell-escape it again at build time.
 - Test correct resolution, wrong trust anchor, wrong package ID, duplicate
