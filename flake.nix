@@ -307,6 +307,7 @@
                 }
                 ''
                   bash ${inputs.self}/scripts/test-read-state.sh
+                  bash ${inputs.self}/scripts/test-converge-todo.sh ${inputs.self}/engine/converge.sh
                   touch $out
                 '';
             generations =

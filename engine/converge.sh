@@ -554,14 +554,31 @@ while read -r pkg; do
   grep -Eq "^user,$(printf '%s' "$pkg" | sed 's/[.[\*^$]/\\&/g')," <<<"$idle_now" && todo_unidle+=("$pkg")
 done < <(jq -r '.android.deviceidleUnexempt // [] | .[]' "$manifest")
 
-plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
-  + ${#todo_setting[@]} + ${#todo_dark[@]} + ${#todo_role[@]} + ${#todo_disable[@]} \
-  + ${#todo_grant[@]} + ${#todo_revoke[@]} + ${#todo_permflag[@]} \
-  + ${#todo_appop[@]} + ${#todo_suspend[@]} + ${#todo_unsuspend[@]} \
-  + ${#todo_locale[@]} + ${#todo_ime_enable[@]} + ${#todo_ime_disable[@]} \
-  + ${#todo_ime_default[@]} + ${#todo_data_saver[@]} \
-  + ${#todo_link_allowed[@]} + ${#todo_link_selected[@]} + ${#todo_link_unselected[@]} \
-  + ${#todo_idle[@]} + ${#todo_unidle[@]} ))
+# Every planned-change category. The count iterates this one list, and the
+# guard fails closed if any todo_* array exists outside it: a category left out
+# of the count would print "device matches manifest" and silently skip its
+# apply. scripts/test-converge-todo.sh additionally requires each listed array
+# to have a plan line and an apply loop (engine-parsers check).
+todo_arrays=(
+  todo_install todo_upgrade todo_remove todo_setting todo_dark todo_role
+  todo_disable todo_grant todo_revoke todo_permflag todo_appop todo_suspend
+  todo_unsuspend todo_locale todo_ime_enable todo_ime_disable todo_ime_default
+  todo_data_saver todo_link_allowed todo_link_selected todo_link_unselected
+  todo_idle todo_unidle
+)
+declared_todo=$(compgen -A arrayvar todo_ | grep -vx todo_arrays | sort)
+listed_todo=$(printf '%s\n' "${todo_arrays[@]}" | sort)
+if [ "$declared_todo" != "$listed_todo" ]; then
+  echo "engine bug: todo_* arrays missing from (left) or extra in (right) todo_arrays:" >&2
+  comm -3 <(printf '%s\n' "$declared_todo") <(printf '%s\n' "$listed_todo") >&2
+  exit 1
+fi
+plan_lines=0
+for todo_name in "${todo_arrays[@]}"; do
+  declare -n todo_ref=$todo_name
+  plan_lines=$((plan_lines + ${#todo_ref[@]}))
+done
+unset -n todo_ref
 for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
 for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
 # Signer preflight for pending upgrades. Exact when possible: the manifest APK
