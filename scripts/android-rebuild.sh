@@ -19,6 +19,12 @@ set -euo pipefail
 src=${NIX_ANDROID_SRC:?NIX_ANDROID_SRC not set (use the packaged android-rebuild)}
 nix_android_bash=${NIX_ANDROID_BASH:?NIX_ANDROID_BASH not set (use the packaged android-rebuild)}
 nixargs=(--impure --accept-flake-config)
+# Device closures are dozens of independent APK fetchurl derivations; build
+# them concurrently whatever the controller's nix.conf says. max-jobs is part
+# of the client options the daemon applies even for untrusted users.
+max_jobs=${NIX_ANDROID_MAX_JOBS:-8}
+[[ $max_jobs =~ ^([1-9][0-9]*|auto)$ ]] || { echo "NIX_ANDROID_MAX_JOBS must be a positive integer or 'auto'" >&2; exit 2; }
+buildargs=("${nixargs[@]}" --max-jobs "$max_jobs")
 
 usage() {
   cat <<'EOF'
@@ -37,6 +43,8 @@ Usage:
     [--repo URL FINGERPRINT LABEL ...] [--release-hint PKG=owner/repo ...]
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
+APK fetches run in parallel: NIX_ANDROID_MAX_JOBS (default 8, or 'auto') is
+passed to nix build as --max-jobs.
 suggest-sources is read-only and device-free: it reports which apps.play /
 apps.attended entries are published on a hash-lockable F-Droid source. Add
 --repo to also check a third-party F-Droid repo (e.g. FUTO). --release-hint
@@ -188,24 +196,24 @@ engine_args=(--serial "$serial")
 
 case $cmd in
 build)
-  out=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  out=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   echo "manifest: $out"
   ;;
 plan | switch)
-  conv=$(nix build "${nixargs[@]}" "$attr.converge" --no-link --print-out-paths)
+  conv=$(nix build "${buildargs[@]}" "$attr.converge" --no-link --print-out-paths)
   apply=()
   # switch records a generation receipt; plan never mutates or records.
   [ "$cmd" = switch ] && apply=(--apply --record)
   exec "$conv"/bin/* "${engine_args[@]}" "${apply[@]}"
   ;;
 assist)
-  manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  manifest=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   assist_args=()
   [ "$watch" -eq 0 ] || assist_args+=(--watch)
   exec "$nix_android_bash" "$src/scripts/assist-play.sh" "$manifest" --serial "$serial" "${assist_args[@]}"
   ;;
 bootstrap)
-  manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  manifest=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   exec "$nix_android_bash" "$src/scripts/bootstrap.sh" "$manifest" --serial "$serial"
   ;;
 suggest-sources)

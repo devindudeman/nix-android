@@ -406,6 +406,21 @@ app-ops, and device-idle state use write-behind storage. Use a normal power-menu
 reboot. In an emulator-only persistence test, after allowing state to settle,
 use `adb -s emulator-5554 shell svc power reboot userrequested`.
 
+### Fetch performance
+
+Every managed APK is its own fixed-output `fetchurl` derivation, so a lock
+refresh that moves many apps means many downloads. `build`, `plan`, `switch`,
+`assist`, and `bootstrap` pass `--max-jobs 8` to `nix build`, so those fetches
+run concurrently even on a controller whose `nix.conf` says `max-jobs = 1`.
+Override it with `NIX_ANDROID_MAX_JOBS` (a positive integer or `auto`):
+
+```console
+NIX_ANDROID_MAX_JOBS=16 nix run .#android-rebuild -- plan --flake .#pixel --serial SERIAL
+```
+
+`max-jobs` is one of the client options the Nix daemon applies for every
+client, trusted or not, so no `trusted-users` entry is needed.
+
 ## Generations and drift
 
 After every successful `switch` (including a no-op switch on an
