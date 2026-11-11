@@ -57,7 +57,8 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 - single-APK `.tar.gz` release assets
 - local APKs with build-time package-ID/versionCode inspection
 - source-labeled Play and generic attended package presence assertions
-- additive cleanup default and explicit undeclared-user-app uninstall mode
+- additive cleanup default, report-only reverse-drift mode
+  (`cleanup = "report"`), and explicit undeclared-user-app uninstall mode
 - version floors: install or upgrade, never downgrade a newer installed app
 
 ### Android state
@@ -70,7 +71,8 @@ ended in a no-op plan without cleanup, permission, role, or Private DNS changes.
 - per-app locales, input-method enablement/selection, and global Data Saver
 - adb-shell package suspension and user-owned app-link handling/selection
 - ensure-disabled packages
-- ensure-present battery-optimization exemptions
+- ensure-present battery-optimization exemptions and ensure-absent removals
+  (`batteryOptimization.unexempt`)
 
 ### Tooling and safety
 

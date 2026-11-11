@@ -60,12 +60,15 @@ manage dark mode while the owner is active.
 ## Ensure-only state
 
 `android.packages.disabled` and
-`android.batteryOptimization.exempt` ensure their entries are present. Removing
-an entry from Nix does not invert the previous action. Re-enable a package or
-remove a battery exemption imperatively when desired. A disabled entry that is
-not installed for the owner user is skipped with a note rather than failing the
-plan, so a shared config may name system packages one model does not ship; a
-typo in a package name is therefore also only a note.
+`android.batteryOptimization.exempt` ensure their entries are present.
+`android.batteryOptimization.unexempt` is the ensure-absent counterpart: it
+removes a listed package from the allowlist and reasserts the removal if
+something re-adds it. Removing an entry from any of these lists does not invert
+the previous action. Re-enable a package or change a battery exemption
+imperatively when desired. A disabled entry that is not installed for the owner
+user is skipped with a note rather than failing the plan, so a shared config may
+name system packages one model does not ship; a typo in a package name is
+therefore also only a note.
 
 Battery exemption is the one v1 option whose underlying Android primitive is
 not owner-profile-scoped: DeviceIdle stores a global package/appId allowlist. If
@@ -78,7 +81,9 @@ different suspender, so `unsuspended` does not promise the package is globally
 unsuspended. App-link state likewise excludes verifier/force-approval state;
 only owner-user handling and selection are managed.
 
-`apps.cleanup = "none"` is additive. `"uninstall"` removes undeclared
+`apps.cleanup = "none"` is additive. `"report"` is also additive: plan and
+switch print a note per undeclared third-party app without counting it as drift
+or ever uninstalling it. `"uninstall"` removes undeclared
 third-party apps for owner user 0 and is intentionally destructive; always
 review its plan. System packages are not cleanup candidates. Cleanup starts only
 after every preceding install, setting, role, permission, disablement, and
@@ -163,9 +168,11 @@ reviewed.
 ## APK signatures
 
 nix-android authenticates F-Droid repository metadata and pins artifact hashes.
-It does not currently compare installed and desired signer certificates during
-planning. Android's package manager refuses an incompatible replacement during
-apply; switching signing identities therefore requires a human-controlled
+For every pending upgrade, `plan` compares the installed APK's signer digests
+with the manifest APK's and prints a definitive `WILL fail` note when they are
+disjoint, falling back to an installer-provenance heuristic when `apksigner` is
+unavailable or the pull fails (see [USING.md](./USING.md#plan-and-apply)).
+Android's package manager refuses an incompatible replacement during apply; switching signing identities therefore requires a human-controlled
 uninstall/reinstall and may lose app data.
 
 ## Host platforms

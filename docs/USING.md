@@ -858,5 +858,6 @@ source. Changing a repository URL, fingerprint, or release owner without
 refreshing the lock fails the manifest build. Unreferenced extra lock entries
 are ignored.
 
-Android itself rejects an update signed by an incompatible key. nix-android
-does not yet predict that mismatch during `plan`; see [LIMITS.md](./LIMITS.md).
+Android itself rejects an update signed by an incompatible key. `plan` flags
+that mismatch for each pending upgrade (see *Plan and apply* above and
+[LIMITS.md](./LIMITS.md#apk-signatures)).
