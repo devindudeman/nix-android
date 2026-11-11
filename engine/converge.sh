@@ -673,8 +673,10 @@ if [ "$plan_lines" -eq 0 ]; then
   exit 0
 fi
 
+changes_word=changes
+[ "$plan_lines" -ne 1 ] || changes_word=change
 if [ "$apply" -eq 0 ]; then
-  echo "-- plan only ($plan_lines changes); re-run with --apply"
+  echo "-- plan only ($plan_lines $changes_word); run \`android-rebuild switch\` to apply"
   exit 0
 fi
 
@@ -817,6 +819,6 @@ for pkg in "${todo_remove[@]}"; do
   echo "uninstalling $pkg..."
   adb uninstall --user "$user" "$pkg" >/dev/null
 done
-echo "✓ applied $plan_lines changes"
+echo "✓ applied $plan_lines $changes_word"
 [ "$record" -eq 1 ] && record_generation "$plan_lines"
 exit 0
