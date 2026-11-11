@@ -378,7 +378,8 @@
               deadnix --fail ${inputs.self}
               touch $out
             '';
-            cli-safety = pkgs.runCommand "nix-android-cli-safety" { } ''
+            cli-safety = pkgs.runCommand "nix-android-cli-safety" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-cli.sh ${inputs.self} ${pkgs.bash}/bin/bash
               cli=${inputs.self.packages.${system}.android-rebuild}/bin/android-rebuild
               "$cli" --help >/dev/null
               env -i PATH=/nope "$cli" --help >/dev/null
