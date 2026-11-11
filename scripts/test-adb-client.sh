@@ -23,6 +23,8 @@ selected="$tmp/selected adb"
 printf '#!%s\n' "$bash_bin" > "$selected"
 cat >> "$selected" <<'EOF'
 set -euo pipefail
+# android-rebuild's preflight lists devices through the selected client too.
+[ "$1" = devices ] && { printf 'List of devices attached\nfixture\tdevice\n'; exit 0; }
 [ "$1" = -s ] && [ "$2" = fixture ] || exit 92
 shift 2
 printf '%s\n' "$*" >> "$TEST_ADB_LOG"

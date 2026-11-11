@@ -18,7 +18,8 @@ which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 ## Selecting an ADB client
 
 `NIX_ANDROID_ADB` selects a single executable for device operations in the
-converge engine, importer, Play assistant and Atlas probe. It overrides the
+converge engine, importer, Play assistant and Atlas probe, and for
+`android-rebuild`'s own device preflight (`adb devices`) and `status`. It overrides the
 packaged tool's ADB even when Nix prepends its runtime inputs to PATH. Use an
 absolute executable or wrapper path; arguments belong in the wrapper rather
 than the variable. An unavailable override fails without falling back to another

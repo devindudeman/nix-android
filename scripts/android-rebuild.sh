@@ -71,7 +71,7 @@ EOF
 # closure build. `adb devices` is discovery only; it touches no device.
 require_device() { # $1=serial
   local listing state attached
-  listing=$(adb devices | awk -F'\t' 'NR > 1 && NF >= 2')
+  listing=$("${NIX_ANDROID_ADB:-adb}" devices | awk -F'\t' 'NR > 1 && NF >= 2')
   state=$(awk -F'\t' -v s="$1" '$1 == s { print $2; exit }' <<<"$listing")
   case $state in
   device) return 0 ;;
@@ -353,7 +353,7 @@ status)
   # shellcheck source-path=SCRIPTDIR/../engine
   # shellcheck source=generations.sh
   source "$src/engine/generations.sh"
-  current_fp=$(adb -s "$serial" shell getprop ro.build.fingerprint </dev/null | tr -d '\r') || current_fp=
+  current_fp=$("${NIX_ANDROID_ADB:-adb}" -s "$serial" shell getprop ro.build.fingerprint </dev/null | tr -d '\r') || current_fp=
   os_change_note "$last" "$current_fp"
   # Two devices are commonly attached; drift computed against the wrong one
   # looks authoritative. Warn loudly, but proceed: a serial can legitimately
