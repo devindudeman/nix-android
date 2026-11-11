@@ -131,7 +131,8 @@ TEST_NO_DND=1 converge "$tmp/base.json" > /dev/null || fail 'an unmanaged mode n
 # 6. a device that silently ignores the write is not reported as converged
 reset 0
 TEST_IGNORE_WRITES=1 converge "$tmp/priority.json" --apply > /dev/null
-converge "$tmp/priority.json" > "$tmp/after"
+status=0; converge "$tmp/priority.json" > "$tmp/after" || status=$?
+[ "$status" -eq 3 ] || fail "plan after an ignored write: expected exit 3, got $status"
 grep -Fxq 'dnd      (off → priority)' "$tmp/after" || fail 'an ignored write was reported as converged'
 
 # 7. validation: bad modes and a missing key are rejected before any device contact
