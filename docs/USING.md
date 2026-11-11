@@ -319,6 +319,12 @@ nix run .#android-rebuild -- \
 audit. Before any plan or mutation, the engine validates the complete manifest
 and compares `device.abi` with `ro.product.cpu.abi` on the selected target.
 
+Before building anything, device commands look the serial up in `adb devices`
+(discovery only) and stop with a one-line hint when it is missing,
+`unauthorized`, or `offline`. A flake with several `androidConfigurations`
+needs `--flake REF#NAME`; an unknown name prints the available ones, for
+example `android-rebuild: no device 'nope'; available: bench, darwin-smoke`.
+
 `plan` is device-read-only, although Nix may fetch or build missing store paths
 on the controller. `switch` computes the same plan and applies it. Review every
 line before switching a real device, then run `plan` again; a converged device

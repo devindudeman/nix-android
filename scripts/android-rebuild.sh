@@ -64,6 +64,31 @@ apps.release entries.
 EOF
 }
 
+# One-line, actionable failure for a serial adb cannot use, checked before any
+# closure build. `adb devices` is discovery only; it touches no device.
+require_device() { # $1=serial
+  local listing state attached
+  listing=$(adb devices | awk -F'\t' 'NR > 1 && NF >= 2')
+  state=$(awk -F'\t' -v s="$1" '$1 == s { print $2; exit }' <<<"$listing")
+  case $state in
+  device) return 0 ;;
+  "")
+    attached=$(cut -f1 <<<"$listing" | paste -sd, - | sed 's/,/, /g')
+    echo "android-rebuild: adb device '$1' not found (attached: ${attached:-none}); check the cable or 'adb connect', then 'adb devices'" >&2
+    ;;
+  unauthorized)
+    echo "android-rebuild: adb device '$1' is unauthorized; unlock it and accept the USB debugging prompt" >&2
+    ;;
+  offline)
+    echo "android-rebuild: adb device '$1' is offline; reconnect it (or run 'adb reconnect offline') and retry" >&2
+    ;;
+  *)
+    echo "android-rebuild: adb device '$1' is in state '$state', not 'device'" >&2
+    ;;
+  esac
+  exit 1
+}
+
 cmd=${1:-}
 case $cmd in
 help | -h | --help) usage; exit 0 ;;
@@ -197,6 +222,7 @@ import)
   [ -z "$report_out" ] || import_args+=(--report-out "$report_out")
   [ -z "$obtainium_export" ] || import_args+=(--obtainium-export "$obtainium_export")
   [ -z "$app_manager_export" ] || import_args+=(--app-manager-export "$app_manager_export")
+  require_device "$serial"
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
 build | plan | switch | assist | bootstrap | update | suggest-sources | status | generations) ;;
@@ -210,10 +236,24 @@ fi
 flake=${flakeref%%#*}
 flake=${flake:-.}
 dev=${flakeref#*#}
-if [ "$dev" = "$flakeref" ] || [ -z "$dev" ]; then
-  dev=$(nix eval "${nixargs[@]}" "$flake#androidConfigurations" --apply builtins.attrNames --json | jq -r 'if length == 1 then .[0] else error("multiple devices — pass --flake .#<name>: \(join(", "))") end')
+[ "$dev" != "$flakeref" ] || dev=
+# Resolve the device name here so a typo or an ambiguous flake gets one clear
+# line instead of a raw jq or Nix attribute error.
+devices_json=$(nix eval "${nixargs[@]}" "$flake#androidConfigurations" --apply builtins.attrNames --json) \
+  || { echo "android-rebuild: cannot list androidConfigurations in '$flake'" >&2; exit 1; }
+available=$(jq -r 'join(", ")' <<<"$devices_json")
+if [ -z "$dev" ]; then
+  case $(jq -r 'length' <<<"$devices_json") in
+  1) dev=$(jq -r '.[0]' <<<"$devices_json") ;;
+  0) echo "android-rebuild: '$flake' defines no androidConfigurations" >&2; exit 2 ;;
+  *) echo "android-rebuild: '$flake' defines several devices; pass --flake '$flake#NAME' (available: $available)" >&2; exit 2 ;;
+  esac
+elif ! jq -e --arg d "$dev" 'any(.[]; . == $d)' <<<"$devices_json" >/dev/null; then
+  echo "android-rebuild: no device '$dev'; available: ${available:-none}" >&2
+  exit 2
 fi
 attr="$flake#androidConfigurations.$dev"
+case $cmd in plan | switch | assist | bootstrap | status) require_device "$serial" ;; esac
 
 engine_args=(--serial "$serial")
 
