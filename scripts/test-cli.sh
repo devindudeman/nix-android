@@ -53,6 +53,7 @@ shift
 case "$*" in
 *getprop*) echo x86_64 ;;
 *"'settings' 'get'"*) echo null ;;
+*"'pm' 'list' 'packages' '-3'"*) printf '%b' "${FAKE_ADB_THIRD_PARTY:-}" ;;
 *"'settings' 'put'"* | *"'pm' 'list' 'packages'"* | *"'ime' 'list'"* | *deviceidle*) ;;
 *) echo "fake adb: unhandled shell $*" >&2; exit 99 ;;
 esac
@@ -156,6 +157,13 @@ expect 4 '0 attended and 1 Play app(s) missing' engine "$tmp/play.json" --serial
 expect 4 '1 attended and 0 Play app(s) missing' engine "$tmp/attended.json" --apply --serial bogus-0000
 ! grep -q "'settings' 'put'" "$tmp/adb.log" || fail "blocked apply wrote to the device"
 expect 0 '✓ applied 1 change' engine "$tmp/one.json" --apply --serial bogus-0000
+# Advisory notes print after the plan lines and before the verdict, even when
+# the run is blocked.
+jq '.apps.cleanup = "report"' "$tmp/play.json" >"$tmp/report.json"
+FAKE_ADB_THIRD_PARTY='package:org.example.extra versionCode:1\n' expect 4 \
+  'note: undeclared third-party package: org.example.extra' engine "$tmp/report.json" --serial bogus-0000
+[ "$(grep -oE '^(setting|PLAY|note|✗)' "$tmp/out" | paste -sd' ' -)" = "setting PLAY note ✗" ] \
+  || fail "notes out of plan order: $(cat "$tmp/out")"
 expect 2 'unknown arg' engine "$tmp/one.json" --serial bogus-0000 --bogus
 expect 2 'invalid or unsupported manifest' engine <(echo '{}') --serial bogus-0000
 

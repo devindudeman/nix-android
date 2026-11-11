@@ -168,6 +168,8 @@ todo_upgrade=()
 todo_remove=()
 missing_attended=()
 missing_play=()
+# Advisory lines, printed once after the plan lines they qualify (stderr).
+notes=()
 declare -A declared=()
 declare -A managed=()
 declare -A presence=()
@@ -330,7 +332,7 @@ while read -r pkg; do
       || [ -n "${managed[$pkg]:-}" ] || [ -n "${presence[$pkg]:-}" ]; then
       todo_disable+=("$pkg")
     else
-      echo "note: android.packages.disabled: $pkg not installed for user $user — skipping" >&2
+      notes+=("android.packages.disabled: $pkg not installed for user $user — skipping")
     fi
   fi
 done < <(jq -r '.android.disabled // [] | .[]' "$manifest")
@@ -625,13 +627,13 @@ for t in "${todo_upgrade[@]}"; do
   case $verdict in
   match) ;; # verified: same signing lineage, in-place upgrade will be accepted
   mismatch)
-    echo "note: $p upgrade WILL fail: the installed copy's verified signer differs from the declared source's — uninstall it first or reclassify its lane" >&2
+    notes+=("$p upgrade WILL fail: the installed copy's verified signer differs from the declared source's — uninstall it first or reclassify its lane")
     ;;
   unknown)
     installer=$(adb_shell dumpsys package "$p" | tr -d '\r' | installer_package_from_dump)
     case $installer in
     com.android.vending | com.aurora.store)
-      echo "note: $p upgrade will likely fail: the installed copy came from $installer (Play-signed) and the declared source is signed differently — uninstall it first or reclassify it to apps.play" >&2
+      notes+=("$p upgrade will likely fail: the installed copy came from $installer (Play-signed) and the declared source is signed differently — uninstall it first or reclassify it to apps.play")
       ;;
     esac
     ;;
@@ -678,15 +680,18 @@ for t in "${todo_idle[@]}";    do echo "idle-ok  $t (battery-optimization exempt
 for t in "${todo_unidle[@]}";  do echo "idle-no  $t (battery-optimization unexempt)"; done
 for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install from its declared human source"; done
 for p in "${missing_play[@]}"; do echo "PLAY     $p — run android-rebuild assist"; done
+for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
+  notes+=("undeclared third-party package: $pkg (apps.cleanup = \"report\")")
+done
+# Notes follow every plan line and precede the verdict, so they read in plan
+# order even when the run is blocked. stderr keeps stdout the comparable plan.
+for n in ${notes[@]+"${notes[@]}"}; do echo "note: $n" >&2; done
 
 if [ $(( ${#missing_attended[@]} + ${#missing_play[@]} )) -gt 0 ]; then
   echo "✗ ${#missing_attended[@]} attended and ${#missing_play[@]} Play app(s) missing; device does not match manifest" >&2
   exit 4 # blocked: only a human can install these (exit-code contract, USING.md)
 fi
 
-for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
-  echo "note: undeclared third-party package: $pkg (apps.cleanup = \"report\")" >&2
-done
 if [ "$plan_lines" -eq 0 ]; then
   echo "✓ device matches manifest"
   # A no-op switch still confirms convergence — record it as a generation.

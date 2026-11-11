@@ -346,6 +346,10 @@ Exit codes are a stable contract, so scripts can tell "needs a switch" from
 contract, pending changes and an in-sync device both exited 0, and a missing
 Play app exited 1 like an adb failure.
 
+Advisory `note:` lines (signer preflight, `apps.cleanup = "report"`) go to
+stderr after the last plan line and before the verdict, including when the
+run is blocked on Play apps. stdout carries only plan lines and the verdict.
+
 A fresh install starts a package from default permission state, and an upgrade
 can reset specific grants, flags, or app-ops depending on the version
 transition. So the engine reasserts your declared intent after an install or
