@@ -8,6 +8,9 @@
   been accepted
 - the adb serial from `adb devices`; device commands never select implicitly
 
+[QUICKSTART.md](./QUICKSTART.md) covers enabling USB or wireless debugging;
+[TROUBLESHOOTING.md](./TROUBLESHOOTING.md) covers common failures.
+
 The controller platform is a required `mkDevice` argument because it determines
 which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 `"aarch64-darwin"`.

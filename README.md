@@ -11,7 +11,8 @@ phone: everything runs on your computer at adb-shell privilege.
 ## Requirements
 
 - a Google Pixel on stock Android or GrapheneOS, with USB debugging enabled
-  and this computer authorized
+  and this computer authorized ([docs/QUICKSTART.md](docs/QUICKSTART.md)
+  walks through it)
 - Nix with flakes enabled, on x86_64 Linux or Apple Silicon macOS
 
 ## Try it without committing to anything
@@ -101,6 +102,10 @@ cache.
 
 ## Start here
 
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — USB/wireless debugging to a
+  first reviewed `switch`
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — adb states, lock and
+  signer errors, Play wedges, warning noise
 - [docs/USING.md](docs/USING.md) — setup, CLI, bootstrap, safety, and option
   semantics
 - [docs/OPTIONS.md](docs/OPTIONS.md) — every option, generated from the typed
