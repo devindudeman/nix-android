@@ -243,6 +243,11 @@ status)
   recorded_serial=$(jq -r '.serial' <<<"$last")
   saved="$state/generations/${gen}.json"
   echo "last converged: generation $gen at $when (serial $recorded_serial)"
+  # shellcheck source-path=SCRIPTDIR/../engine
+  # shellcheck source=generations.sh
+  source "$src/engine/generations.sh"
+  current_fp=$(adb -s "$serial" shell getprop ro.build.fingerprint </dev/null | tr -d '\r') || current_fp=
+  os_change_note "$last" "$current_fp"
   # Two devices are commonly attached; drift computed against the wrong one
   # looks authoritative. Warn loudly, but proceed: a serial can legitimately
   # change for the same device (USB vs wifi adb, re-provisioning).
@@ -264,7 +269,7 @@ generations)
     echo "no generations recorded for '$name'"
     exit 0
   fi
-  jq -r '"generation \(.generation)  \(.time)  \(.changes) change(s)  serial \(.serial)"' "$log"
+  jq -r '"generation \(.generation)  \(.time)  \(.changes) change(s)  serial \(.serial)  os \(.os.incremental // "unknown")"' "$log"
   ;;
 update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \
