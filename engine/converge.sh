@@ -150,7 +150,16 @@ while read -r pkg; do
   [ -n "$(current_code "$pkg")" ] || missing_play+=("$pkg")
 done < <(jq -r '.apps.play[]' "$manifest")
 
-# Packages referenced by a role/permission/disable/idle option are declarations
+# Disabled targets are declarations (cleanup must preserve them) but not
+# presence requirements: a shared config may disable a system package that one
+# model does not ship, so the disable loop below skips an absent one with a
+# note instead of failing the plan.
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  declared[$pkg]=1
+done < <(jq -r '.android.disabled[]' "$manifest")
+
+# Packages referenced by a role/permission/suspend/idle option are declarations
 # too: cleanup must preserve them. External targets must already exist unless
 # their installation is explicitly declared through attended or Play state;
 # managed targets may be installed by this run before later actions are applied.
@@ -164,7 +173,7 @@ while read -r pkg; do
   fi
 done < <(jq -r '
   [
-    .android.disabled[], .android.suspended[], .android.unsuspended[],
+    .android.suspended[], .android.unsuspended[],
     .android.deviceidleExempt[],
     (.android.roles | values[]),
     (.android.permissions | keys[]),
@@ -304,12 +313,30 @@ load_permission_package() {
     fi
   fi
 }
+# A package that is installed and not changing this run, yet lists $perm in
+# neither its runtime nor its install-permission block, does not request it.
+# `pm grant` then throws (SecurityException "has not requested permission", or
+# IllegalArgumentException for an unknown name) and `pm set-permission-flags`
+# silently no-ops, so the declaration can never converge. Fail the plan before
+# any write instead of aborting mid-apply or replanning forever. Packages being
+# installed/upgraded are classified after their install, in the apply loops.
+require_requested() {
+  local pkg=$1 perm=$2
+  if [ "${permission_present[$pkg]}" -eq 0 ] || [ -n "${changing[$pkg]:-}" ]; then
+    return 0
+  fi
+  grep -Fq "  $perm: granted=" <<<"${permission_dump[$pkg]}"$'\n'"${permission_install[$pkg]}" \
+    && return 0
+  echo "$pkg does not request $perm: android.permissions.\"$pkg\" cannot be satisfied" >&2
+  exit 1
+}
 while IFS=$'\t' read -r pkg perm action; do
   load_permission_package "$pkg"
   package_present=${permission_present[$pkg]}
   granted=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" | sed 's/.*granted=\([a-z]*\).*/\1/' || true)
   install_line=$(grep -F -m1 "  $perm: granted=" <<<"${permission_install[$pkg]}" || true)
   if [ "$action" = grant ]; then
+    require_requested "$pkg" "$perm"
     if [ -z "$granted" ] && [ -n "$install_line" ]; then
       # Install-time permission: pm grant cannot change it. granted=true is
       # already-satisfied intent (it survives upgrades); granted=false cannot
@@ -341,6 +368,7 @@ done < <(jq -r '.android.permissions // {} | to_entries[] | .key as $p | ((.valu
 
 while IFS=$US read -r pkg perm want_csv; do
   load_permission_package "$pkg"
+  require_requested "$pkg" "$perm"
   permission_line=$(grep -F -m1 "  $perm: granted=" <<<"${permission_dump[$pkg]}" || true)
   raw_flags=$(sed -n 's/.*flags=\[ *\([^]]*\) *\].*/\1/p' <<<"$permission_line")
   cur_csv=$(writable_flags_csv "$raw_flags")
@@ -617,20 +645,34 @@ for t in "${todo_grant[@]}"; do
     # block or the package install-permission block reports granted — never
     # another user's state.
     post_dump=$(adb_shell dumpsys package "$p" | tr -d '\r')
-    post_user=$(permission_user_block "$user" <<<"$post_dump") || post_user=
+    user_found=1
+    post_user=$(permission_user_block "$user" <<<"$post_dump") || { post_user=; user_found=0; }
     post_install=$(install_permission_block <<<"$post_dump")
-    grep -Fq "  $m: granted=true" <<<"$post_user"$'\n'"$post_install" \
-      || { echo "pm grant failed and $m is not granted for $p (user $user)" >&2; exit 1; }
+    post_state="$post_user"$'\n'"$post_install"
+    grep -Fq "  $m: granted=true" <<<"$post_state" && continue
+    if [ "$user_found" -eq 1 ] && ! grep -Fq "  $m: granted=" <<<"$post_state"; then
+      echo "pm grant failed: $p does not request $m after its install/upgrade (user $user)" >&2
+    else
+      echo "pm grant failed and $m is not granted for $p (user $user)" >&2
+    fi
+    exit 1
   fi
 done
 for t in "${todo_revoke[@]}"; do
   IFS=$US read -r p m <<<"$t"
   if ! adb_shell pm revoke --user "$user" "$p" "$m"; then
-    # Reached only for packages absent at plan time (installed this apply):
-    # an install-time permission cannot be revoked and the declared state is
-    # unreachable. Fail with the classification instead of a bare pm error.
+    # Reached for packages installed or upgraded this apply (plan read the
+    # device first). A permission the new APK does not request at all is
+    # already in the declared state; pm revoke throws "has not requested" for
+    # it. An install-time permission cannot be revoked: the declared state is
+    # unreachable, so fail with the classification instead of a bare pm error.
     post_dump=$(adb_shell dumpsys package "$p" | tr -d '\r')
     post_install=$(install_permission_block <<<"$post_dump")
+    if post_user=$(permission_user_block "$user" <<<"$post_dump") \
+      && ! grep -Fq "  $m: granted=" <<<"$post_user"$'\n'"$post_install"; then
+      echo "note: $p does not request $m; revoke already satisfied" >&2
+      continue
+    fi
     if grep -Fq "  $m: granted=" <<<"$post_install"; then
       echo "cannot revoke install-time permission $m for $p: not runtime-changeable" >&2
     else

@@ -42,6 +42,16 @@ its install: an impossible grant is accepted only when the install granted
 the permission for the managed user, and an impossible revoke stops the
 sequential apply at that step with a clear message.
 
+Grant and permission-flag declarations for a permission the installed package
+does not request fail during plan, before any write. Whether a permission is
+requested is read from `dumpsys package` (present in the owner user's runtime
+block or the install-permissions block), not from the APK manifest, so a
+requested permission whose definition is missing on this OS also reads as not
+requested. For a package installed or upgraded by the same apply this is known
+only after the install: an unrequested revoke is treated as satisfied, an
+unrequested grant stops the apply at that step, and an unrequested flag
+declaration is applied as a silent no-op and caught by the next plan.
+
 `android.darkMode` is the user-scope exception: Android's `cmd uimode night`
 interface has no `--user` argument. The v1 engine requires the declared user to
 be owner user 0 but does not verify which Android user is foreground. Only
@@ -52,7 +62,10 @@ manage dark mode while the owner is active.
 `android.packages.disabled` and
 `android.batteryOptimization.exempt` ensure their entries are present. Removing
 an entry from Nix does not invert the previous action. Re-enable a package or
-remove a battery exemption imperatively when desired.
+remove a battery exemption imperatively when desired. A disabled entry that is
+not installed for the owner user is skipped with a note rather than failing the
+plan, so a shared config may name system packages one model does not ship; a
+typo in a package name is therefore also only a note.
 
 Battery exemption is the one v1 option whose underlying Android primitive is
 not owner-profile-scoped: DeviceIdle stores a global package/appId allowlist. If

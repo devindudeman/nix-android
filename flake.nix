@@ -469,6 +469,8 @@
                   ! PATH="$PWD/fakebin:$PATH" ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh \
                     report.json --serial expected-contact >/dev/null 2>&1
                   test -e contacted
+                  ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-converge-plan.sh \
+                    ${inputs.self}/engine/converge.sh ${pkgs.bash}/bin/bash
                   touch $out
                 '';
             update-lock-safety =

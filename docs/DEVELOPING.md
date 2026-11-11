@@ -34,6 +34,7 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/fdroid-eligibility.sh` | Shared jq version/lineage selector, sourced by `update-lock.sh` (pins) and `suggest-sources.sh` (reports) so availability never diverges from lockability |
 | `scripts/smoke-suggest-sources.sh` | Manual live check of release-hint verification against a real public GitHub release (network; not in CI) |
 | `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `status`, `generations`, `assist`, `bootstrap`, `import`, and `suggest-sources` CLI |
+| `scripts/test-converge-plan.sh` | Fake-adb plan/apply fixtures for permission validity (non-requested grant/flags fail plan before writes; post-upgrade revoke/grant fallbacks) and the absent-disabled-package skip (run by `manifest-safety`) |
 | `engine/generations.sh` | Switch-receipt ledger (`record_generation`), sourced by the engine; backs `status`/`generations` (`generations` check) |
 | `scripts/test-generations.sh` | Device-free receipt-ledger tests: numbering, durable manifest path, occupied destination, and malformed-ledger failure (`generations` check) |
 | `scripts/render-options-doc.sh` | Renders `docs/OPTIONS.md` from `nixosOptionsDoc` output; shared by `just options-doc` and the `options-doc` check |
