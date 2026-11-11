@@ -101,12 +101,12 @@ cache.
 
 ## Start here
 
-- [docs/USING.md](docs/USING.md) — bootstrap, complete option surface, CLI,
-  safety, and semantics
+- [docs/USING.md](docs/USING.md) — setup, CLI, bootstrap, safety, and option
+  semantics
 - [docs/OPTIONS.md](docs/OPTIONS.md) — every option, generated from the typed
   module definitions
-- [docs/LIMITS.md](docs/LIMITS.md) — what adb-shell cannot or does not manage
-- [docs/SUPPORT.md](docs/SUPPORT.md) — supported stock-Pixel/GrapheneOS target contract
+- [docs/LIMITS.md](docs/LIMITS.md) — supported targets and what adb-shell
+  cannot or does not manage
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — auditable ADB read/write/import-to-Nix map
 - [docs/DEVELOPING.md](docs/DEVELOPING.md) — architecture, checks, and emulator
   workflow
