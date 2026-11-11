@@ -135,6 +135,15 @@ jq -e '.packages | keys == ["org.example.test"]' "$tmp/lock.json" >/dev/null
 XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/lock.json" >/dev/null
 jq -e '.abi == "x86_64" and (.packages | keys == ["org.example.test"])' "$tmp/lock.json" >/dev/null
 
+# Removing the last lockable app: android-rebuild update passes --replace with
+# no specs. That must write an empty lock, never re-resolve the old entries
+# (org.example.gone has left the index, so a refresh would fail).
+jq --arg r "$repo_url" --arg fp "$fingerprint" \
+  '.packages."org.example.gone" = (.packages."org.example.test" + {source: ("fdroid:" + $r), repoFingerprint: $fp})' \
+  "$tmp/lock.json" > "$tmp/emptied.json"
+XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/emptied.json" --abi x86_64 --replace >/dev/null
+jq -e '.abi == "x86_64" and .packages == {}' "$tmp/emptied.json" >/dev/null
+
 cp "$tmp/lock.json" "$tmp/atomic.json"
 cp "$tmp/atomic.json" "$tmp/atomic.before"
 zeros=$(printf '00%.0s' {1..32})

@@ -23,6 +23,8 @@ selected="$tmp/selected adb"
 printf '#!%s\n' "$bash_bin" > "$selected"
 cat >> "$selected" <<'EOF'
 set -euo pipefail
+# android-rebuild's preflight lists devices through the selected client too.
+[ "$1" = devices ] && { printf 'List of devices attached\nfixture\tdevice\n'; exit 0; }
 [ "$1" = -s ] && [ "$2" = fixture ] || exit 92
 shift 2
 printf '%s\n' "$*" >> "$TEST_ADB_LOG"
@@ -81,7 +83,10 @@ test ! -e "$TEST_DEFAULT_LOG"
 export TEST_SETTINGS_ONLY=1 TEST_SETTING_STATE=$tmp/setting TEST_SETTING_WRITES=$tmp/writes
 printf '30000\n' > "$TEST_SETTING_STATE"
 jq '.android.settings.system.screen_off_timeout = "60000"' "$tmp/manifest.json" > "$tmp/settings.json"
-"$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture > "$tmp/plan"
+# A plan with pending changes exits 3 (exit-code contract, USING.md).
+status=0
+"$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture > "$tmp/plan" || status=$?
+[ "$status" = 3 ] || { echo "pending plan should exit 3, got $status" >&2; exit 1; }
 grep -Fq 'system/screen_off_timeout (30000 → 60000)' "$tmp/plan"
 test ! -e "$TEST_SETTING_WRITES"
 "$bash_bin" "$src/engine/converge.sh" "$tmp/settings.json" --serial fixture --apply > /dev/null

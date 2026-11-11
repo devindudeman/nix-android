@@ -85,12 +85,11 @@ export TEST_AUTO_INSTALL=0
 
 rm -f "$TEST_CONTACTED" "$TEST_LAUNCH" "$TEST_INSTALLED" "$TEST_PENDING"
 manifest '["org.example.timeout"]'
-if NIX_ANDROID_ASSIST_TIMEOUT_SECONDS=1 NIX_ANDROID_ASSIST_POLL_SECONDS=1 \
+rc=0
+NIX_ANDROID_ASSIST_TIMEOUT_SECONDS=1 NIX_ANDROID_ASSIST_POLL_SECONDS=1 \
   PATH="$tmp/fakebin:$PATH" "$bash_bin" "$assist" "$tmp/manifest.json" --serial fixture --watch \
-  >"$tmp/timeout.out" 2>&1; then
-  echo "watch unexpectedly succeeded without an installation" >&2
-  exit 1
-fi
+  >"$tmp/timeout.out" 2>&1 || rc=$?
+[ "$rc" -eq 4 ] || { echo "watch timeout exited $rc, want 4 (blocked on Play)" >&2; exit 1; }
 grep -q 'timed out after 1s waiting for org.example.timeout' "$tmp/timeout.out"
 [ "$(wc -l < "$TEST_LAUNCH")" -eq 1 ]
 

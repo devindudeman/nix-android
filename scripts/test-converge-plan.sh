@@ -110,7 +110,7 @@ grep -Fq "$pkg does not request android.permission.CAMERA" "$tmp/err" \
 # Control: a requested-but-ungranted runtime permission still plans a grant.
 setup "$(perm '["android.permission.POST_NOTIFICATIONS"]' '[]' '{}')"
 run
-[ "$status" -eq 0 ] || fail "requested grant: expected exit 0, got $status"
+[ "$status" -eq 3 ] || fail "requested grant: pending plan should exit 3, got $status"
 grep -Fq "grant    $pkg android.permission.POST_NOTIFICATIONS" "$tmp/out" \
   || fail "requested grant: plan line missing"
 

@@ -10,8 +10,9 @@
 #   Plain pkg args resolve against f-droid.org; --fdroid pins a package to a
 #   third-party F-Droid repo and authenticates its signed entry.jar using the
 #   repository certificate's SHA-256 fingerprint (64 hex characters).
-#   With no packages given, refreshes every package already in the lock,
-#   keeping the lock's recorded ABI unless --abi overrides it.
+#   With no packages given (and no --replace), refreshes every package already
+#   in the lock, keeping the lock's recorded ABI unless --abi overrides it.
+#   --replace with no packages writes an empty lock for --abi.
 #   Resolved entries MERGE into an existing same-ABI lock; --replace rewrites
 #   the lock to exactly the given set (android-rebuild update passes it, since
 #   the config is the authoritative full set).
@@ -202,7 +203,9 @@ if [ "${#test_asset[@]}" -gt 0 ]; then
   inspect_release_asset "${test_asset[0]}" "${test_asset[1]}" "${test_asset[1]}"
   exit
 fi
-if [ "${#fetch_index_spec[@]}" -eq 0 ] \
+# --replace means "exactly this set", so an empty set is an empty lock, not a
+# refresh of whatever the old lock happened to contain.
+if [ "${#fetch_index_spec[@]}" -eq 0 ] && [ "$replace" -eq 0 ] \
   && [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} + ${#hspecs[@]} )) -eq 0 ] && [ -f "$lock" ]; then
   if ! jq -e '
     (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64"))
@@ -251,7 +254,7 @@ if [ "${#fetch_index_spec[@]}" -eq 0 ] \
   done < <(jq -r '.html[]' <<<"$refresh")
   [ "$abi_set" -eq 1 ] || abi=$(jq -r '.abi' "$lock")
 fi
-[ "${#fetch_index_spec[@]}" -gt 0 ] \
+[ "${#fetch_index_spec[@]}" -gt 0 ] || [ "$replace" -eq 1 ] \
   || [ $(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} + ${#hspecs[@]} )) -gt 0 ] \
   || { echo "no packages to lock" >&2; exit 1; }
 
@@ -574,7 +577,7 @@ resolved=$({
     entry=$(resolve_url_direct "$p" "$link" "html:$page" "$link")
     jq --arg p "$p" --arg lf "$lf" '.[$p] += {linkFilter: $lf}' <<<"$entry"
   done
-} | jq -s 'add')
+} | jq -s 'add // {}')
 
 expected=$(( ${#pkgs[@]} + ${#fspecs[@]} + ${#ghspecs[@]} + ${#gtspecs[@]} + ${#uspecs[@]} + ${#ujspecs[@]} + ${#hspecs[@]} ))
 actual=$(jq -r 'length' <<<"$resolved")

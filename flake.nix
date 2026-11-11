@@ -307,6 +307,7 @@
                 }
                 ''
                   bash ${inputs.self}/scripts/test-read-state.sh
+                  bash ${inputs.self}/scripts/test-converge-todo.sh ${inputs.self}/engine/converge.sh
                   touch $out
                 '';
             generations =
@@ -378,7 +379,8 @@
               deadnix --fail ${inputs.self}
               touch $out
             '';
-            cli-safety = pkgs.runCommand "nix-android-cli-safety" { } ''
+            cli-safety = pkgs.runCommand "nix-android-cli-safety" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              ${pkgs.bash}/bin/bash ${inputs.self}/scripts/test-cli.sh ${inputs.self} ${pkgs.bash}/bin/bash
               cli=${inputs.self.packages.${system}.android-rebuild}/bin/android-rebuild
               "$cli" --help >/dev/null
               env -i PATH=/nope "$cli" --help >/dev/null
@@ -423,6 +425,7 @@
               #!${pkgs.bash}/bin/bash
               echo "\$*" >> $PWD/nix.log
               case "\$*" in
+              *androidConfigurations\ --apply*) echo '["bench"]' ;;
               *fetchPlan*) echo '[{"path":"/nix/store/absent.apk","size":2500000},{"path":"/","size":7},{"path":"/nix/store/absent2.apk"}]' ;;
               *) echo /nix/store/fake-manifest ;;
               esac
@@ -440,9 +443,10 @@
               # fake nix serves the config and a fake resolver records argv.
               mkdir -p fakebin fakeresolver/bin
               printf '%s\n' '#!${pkgs.runtimeShell}' \
-                'case "$1" in' \
-                '  eval) cat "$NIX_ANDROID_TEST_CONFIG" ;;' \
-                '  build) echo "$NIX_ANDROID_TEST_RESOLVER" ;;' \
+                'case "$*" in' \
+                '  *androidConfigurations\ --apply*) echo "[\"dev\"]" ;;' \
+                '  eval*) cat "$NIX_ANDROID_TEST_CONFIG" ;;' \
+                '  build*) echo "$NIX_ANDROID_TEST_RESOLVER" ;;' \
                 '  *) exit 1 ;;' \
                 'esac' > fakebin/nix
               printf '%s\n' '#!${pkgs.runtimeShell}' \

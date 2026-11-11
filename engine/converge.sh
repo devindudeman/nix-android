@@ -8,6 +8,10 @@
 # Usage: converge.sh <manifest.json> [--apply] [--record] [--serial <adb-serial>]
 #        converge.sh <manifest.json> --validate-only
 #
+# Exit codes (the public contract, docs/USING.md): 0 in sync or applied,
+# 1 error, 2 usage or refused preflight, 3 plan has pending changes,
+# 4 blocked on attended/Play apps only a human can install.
+#
 # --record (only valid with --apply) writes a generation receipt. It is opt-in
 # so intermediate applies — notably bootstrap's reduced phase-one manifest —
 # never register as the latest converged state; only a full switch or bootstrap's
@@ -164,6 +168,8 @@ todo_upgrade=()
 todo_remove=()
 missing_attended=()
 missing_play=()
+# Advisory lines, printed once after the plan lines they qualify (stderr).
+notes=()
 declare -A declared=()
 declare -A managed=()
 declare -A presence=()
@@ -326,7 +332,7 @@ while read -r pkg; do
       || [ -n "${managed[$pkg]:-}" ] || [ -n "${presence[$pkg]:-}" ]; then
       todo_disable+=("$pkg")
     else
-      echo "note: android.packages.disabled: $pkg not installed for user $user — skipping" >&2
+      notes+=("android.packages.disabled: $pkg not installed for user $user — skipping")
     fi
   fi
 done < <(jq -r '.android.disabled // [] | .[]' "$manifest")
@@ -554,14 +560,31 @@ while read -r pkg; do
   grep -Eq "^user,$(printf '%s' "$pkg" | sed 's/[.[\*^$]/\\&/g')," <<<"$idle_now" && todo_unidle+=("$pkg")
 done < <(jq -r '.android.deviceidleUnexempt // [] | .[]' "$manifest")
 
-plan_lines=$(( ${#todo_install[@]} + ${#todo_upgrade[@]} + ${#todo_remove[@]} \
-  + ${#todo_setting[@]} + ${#todo_dark[@]} + ${#todo_role[@]} + ${#todo_disable[@]} \
-  + ${#todo_grant[@]} + ${#todo_revoke[@]} + ${#todo_permflag[@]} \
-  + ${#todo_appop[@]} + ${#todo_suspend[@]} + ${#todo_unsuspend[@]} \
-  + ${#todo_locale[@]} + ${#todo_ime_enable[@]} + ${#todo_ime_disable[@]} \
-  + ${#todo_ime_default[@]} + ${#todo_data_saver[@]} \
-  + ${#todo_link_allowed[@]} + ${#todo_link_selected[@]} + ${#todo_link_unselected[@]} \
-  + ${#todo_idle[@]} + ${#todo_unidle[@]} ))
+# Every planned-change category. The count iterates this one list, and the
+# guard fails closed if any todo_* array exists outside it: a category left out
+# of the count would print "device matches manifest" and silently skip its
+# apply. scripts/test-converge-todo.sh additionally requires each listed array
+# to have a plan line and an apply loop (engine-parsers check).
+todo_arrays=(
+  todo_install todo_upgrade todo_remove todo_setting todo_dark todo_role
+  todo_disable todo_grant todo_revoke todo_permflag todo_appop todo_suspend
+  todo_unsuspend todo_locale todo_ime_enable todo_ime_disable todo_ime_default
+  todo_data_saver todo_link_allowed todo_link_selected todo_link_unselected
+  todo_idle todo_unidle
+)
+declared_todo=$(compgen -A arrayvar todo_ | grep -vx todo_arrays | sort)
+listed_todo=$(printf '%s\n' "${todo_arrays[@]}" | sort)
+if [ "$declared_todo" != "$listed_todo" ]; then
+  echo "engine bug: todo_* arrays missing from (left) or extra in (right) todo_arrays:" >&2
+  comm -3 <(printf '%s\n' "$declared_todo") <(printf '%s\n' "$listed_todo") >&2
+  exit 1
+fi
+plan_lines=0
+for todo_name in "${todo_arrays[@]}"; do
+  declare -n todo_ref=$todo_name
+  plan_lines=$((plan_lines + ${#todo_ref[@]}))
+done
+unset -n todo_ref
 for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
 for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
 # Signer preflight for pending upgrades. Exact when possible: the manifest APK
@@ -604,13 +627,13 @@ for t in "${todo_upgrade[@]}"; do
   case $verdict in
   match) ;; # verified: same signing lineage, in-place upgrade will be accepted
   mismatch)
-    echo "note: $p upgrade WILL fail: the installed copy's verified signer differs from the declared source's — uninstall it first or reclassify its lane" >&2
+    notes+=("$p upgrade WILL fail: the installed copy's verified signer differs from the declared source's — uninstall it first or reclassify its lane")
     ;;
   unknown)
     installer=$(adb_shell dumpsys package "$p" | tr -d '\r' | installer_package_from_dump)
     case $installer in
     com.android.vending | com.aurora.store)
-      echo "note: $p upgrade will likely fail: the installed copy came from $installer (Play-signed) and the declared source is signed differently — uninstall it first or reclassify it to apps.play" >&2
+      notes+=("$p upgrade will likely fail: the installed copy came from $installer (Play-signed) and the declared source is signed differently — uninstall it first or reclassify it to apps.play")
       ;;
     esac
     ;;
@@ -657,15 +680,18 @@ for t in "${todo_idle[@]}";    do echo "idle-ok  $t (battery-optimization exempt
 for t in "${todo_unidle[@]}";  do echo "idle-no  $t (battery-optimization unexempt)"; done
 for p in "${missing_attended[@]}"; do echo "ATTENDED $p — install from its declared human source"; done
 for p in "${missing_play[@]}"; do echo "PLAY     $p — run android-rebuild assist"; done
+for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
+  notes+=("undeclared third-party package: $pkg (apps.cleanup = \"report\")")
+done
+# Notes follow every plan line and precede the verdict, so they read in plan
+# order even when the run is blocked. stderr keeps stdout the comparable plan.
+for n in ${notes[@]+"${notes[@]}"}; do echo "note: $n" >&2; done
 
 if [ $(( ${#missing_attended[@]} + ${#missing_play[@]} )) -gt 0 ]; then
   echo "✗ ${#missing_attended[@]} attended and ${#missing_play[@]} Play app(s) missing; device does not match manifest" >&2
-  exit 1
+  exit 4 # blocked: only a human can install these (exit-code contract, USING.md)
 fi
 
-for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
-  echo "note: undeclared third-party package: $pkg (apps.cleanup = \"report\")" >&2
-done
 if [ "$plan_lines" -eq 0 ]; then
   echo "✓ device matches manifest"
   # A no-op switch still confirms convergence — record it as a generation.
@@ -673,9 +699,11 @@ if [ "$plan_lines" -eq 0 ]; then
   exit 0
 fi
 
+changes_word=changes
+[ "$plan_lines" -ne 1 ] || changes_word=change
 if [ "$apply" -eq 0 ]; then
-  echo "-- plan only ($plan_lines changes); re-run with --apply"
-  exit 0
+  echo "-- plan only ($plan_lines $changes_word); run \`android-rebuild switch\` to apply"
+  exit 3 # changes pending
 fi
 
 # Checked only now, with writes about to start, so a plan-only run makes no
@@ -817,6 +845,6 @@ for pkg in "${todo_remove[@]}"; do
   echo "uninstalling $pkg..."
   adb uninstall --user "$user" "$pkg" >/dev/null
 done
-echo "✓ applied $plan_lines changes"
+echo "✓ applied $plan_lines $changes_word"
 [ "$record" -eq 1 ] && record_generation "$plan_lines"
 exit 0

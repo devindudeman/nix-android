@@ -30,12 +30,14 @@ pairs must fail closed instead of ignoring desired state.
 | `engine/converge.sh` | Strict manifest preflight and plan/apply reconciliation |
 | `engine/read-state.sh` | Shared device-output parsers, sourced by the engine and the bench oracle; its `apk_signer_digests` is also the one apksigner parser for `update-lock.sh` and the build-time APK check in `lib/default.nix` |
 | `scripts/test-read-state.sh` | Raw-output golden fixtures pinning every shared parser (`engine-parsers` check) |
+| `scripts/test-converge-todo.sh` | Static guard: every `todo_*` plan category is in `todo_arrays` and has a plan line and an apply loop (`engine-parsers` check) |
 | `scripts/suggest-sources.sh` | Read-only de-Play curation: F-Droid membership, `--discover` (Obtainium catalog proposals), and `--release-hint` GitHub/Gitea verification (reuses `update-lock --fetch-index` and the resolver) |
 | `scripts/fdroid-eligibility.sh` | Shared jq version/lineage selector, sourced by `update-lock.sh` (pins) and `suggest-sources.sh` (reports) so availability never diverges from lockability |
 | `scripts/smoke-suggest-sources.sh` | Manual live check of release-hint verification against a real public GitHub release (network; not in CI) |
 | `scripts/android-rebuild.sh` | `build`, `update`, `plan`, `switch`, `status`, `generations`, `assist`, `bootstrap`, `import`, and `suggest-sources` CLI |
 | `scripts/test-converge-plan.sh` | Fake-adb plan/apply fixtures for permission validity (non-requested grant/flags fail plan before writes; post-upgrade revoke/grant fallbacks) and the absent-disabled-package skip (run by `manifest-safety`) |
 | `engine/generations.sh` | Switch-receipt ledger (`record_generation`), sourced by the engine; backs `status`/`generations` (`generations` check) |
+| `scripts/test-cli.sh` | Device-free `android-rebuild` contract tests against fake `nix`/`adb`: flag forwarding, device-selection errors, exit codes (`cli-safety` check) |
 | `scripts/test-generations.sh` | Device-free receipt-ledger tests: numbering, durable manifest path, OS-build recording and the `status` OS-change note (including legacy receipts), occupied destination, and malformed-ledger failure (`generations` check) |
 | `scripts/render-options-doc.sh` | Renders `docs/OPTIONS.md` from `nixosOptionsDoc` output; shared by `just options-doc` and the `options-doc` check |
 | `templates/default/` | `nix flake init -t` scaffold (consumer flake + self-documenting `phone.nix`); built by the `template` check |
@@ -259,7 +261,9 @@ Follow the whole flow in one change:
 2. a `PRIMITIVES.md` row;
 3. typed option and conflict assertions;
 4. manifest field;
-5. engine read, diff, plan line, and apply action;
+5. engine read, diff, plan line, and apply action; a new `todo_*` array goes
+   in `todo_arrays` (the engine refuses to run otherwise, and
+   `test-converge-todo.sh` fails the `engine-parsers` check);
 6. one small negative or idempotence check;
 7. user and developer documentation.
 

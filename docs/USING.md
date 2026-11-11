@@ -18,7 +18,8 @@ which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 ## Selecting an ADB client
 
 `NIX_ANDROID_ADB` selects a single executable for device operations in the
-converge engine, importer, Play assistant and Atlas probe. It overrides the
+converge engine, importer, Play assistant and Atlas probe, and for
+`android-rebuild`'s own device preflight (`adb devices`) and `status`. It overrides the
 packaged tool's ADB even when Nix prepends its runtime inputs to PATH. Use an
 absolute executable or wrapper path; arguments belong in the wrapper rather
 than the variable. An unavailable override fails without falling back to another
@@ -319,11 +320,36 @@ nix run .#android-rebuild -- \
 audit. Before any plan or mutation, the engine validates the complete manifest
 and compares `device.abi` with `ro.product.cpu.abi` on the selected target.
 
+Before building anything, device commands look the serial up in `adb devices`
+(discovery only) and stop with a one-line hint when it is missing,
+`unauthorized`, or `offline`. A flake with several `androidConfigurations`
+needs `--flake REF#NAME`; an unknown name prints the available ones, for
+example `android-rebuild: no device 'nope'; available: bench, darwin-smoke`.
+
 `plan` is device-read-only, although Nix may fetch or build missing store paths
 on the controller. `switch` computes the same plan and applies it. Review every
 line before switching a real device, then run `plan` again; a converged device
 prints `✓ device matches manifest`. Missing Play or other attended apps abort
 before any device writes.
+
+Exit codes are a stable contract, so scripts can tell "needs a switch" from
+"broken":
+
+| Code | Meaning |
+| --- | --- |
+| 0 | In sync (`plan`, `status`), or `switch`/`bootstrap` applied successfully |
+| 1 | Error: adb or device failure, unreachable serial, nothing recorded for `status`/`generations` |
+| 2 | Usage error or refused preflight (bad flags, unknown device name, invalid manifest, ABI mismatch) |
+| 3 | `plan` or `status` found pending changes (`-- plan only (N changes)`) |
+| 4 | Blocked on attended or Play apps only a person can install (`plan`, `switch`, `status`, `assist --watch` timeout) |
+
+`switch` returns 0 after applying changes; it never returns 3. Before this
+contract, pending changes and an in-sync device both exited 0, and a missing
+Play app exited 1 like an adb failure.
+
+Advisory `note:` lines (signer preflight, `apps.cleanup = "report"`) go to
+stderr after the last plan line and before the verdict, including when the
+run is blocked on Play apps. stdout carries only plan lines and the verdict.
 
 A fresh install starts a package from default permission state, and an upgrade
 can reset specific grants, flags, or app-ops depending on the version
@@ -427,13 +453,16 @@ nix run .#android-rebuild -- \
 `status` re-plans the *last-applied* generation against the device, so it
 reports divergence since the last switch — distinct from `plan`, which shows
 what the *current* config would change. It reads reachable state only; a clean
-result prints `✓ device matches manifest`. Each receipt also records the OS
+result prints `✓ device matches manifest` and exits 0; drift exits 3. If
+nothing has been recorded yet, `status` and `generations` say so on stderr and
+exit 1. Each receipt also records the OS
 build (`ro.build.fingerprint`, `ro.build.version.incremental`); when the device
 has since taken an OTA, `status` prints `OS changed since last switch: <old> →
 <new>` first, and `generations` lists each receipt's build (`unknown` for
 receipts recorded before this field). If the last generation's saved
 manifest is missing (deleted or never fully written), `status` says so rather
-than guessing.
+than guessing. `generations` and the other device-free verbs (`build`,
+`update`, `suggest-sources`) reject `--serial`.
 
 ## Install declared Play apps
 
@@ -800,7 +829,9 @@ For F-Droid repositories, update verifies the `entry.jar` signature, requires
 the trusted certificate fingerprint, verifies that `entry.json` is signed,
 checks the index-v2 hash, and records each APK hash plus up to four HTTPS
 mirror URLs from the same signed index (see Fetch performance). A failed update writes no
-partial lock.
+partial lock. `update` rewrites the lock to exactly the declared F-Droid and
+release set, so a removed declaration drops out; removing the last one leaves
+an empty `packages` set rather than re-resolving the old entries.
 
 A signature cannot tell a fresh index from a replayed old one, so `update`
 also records each repository's signed `entry.json` timestamp in the lock's

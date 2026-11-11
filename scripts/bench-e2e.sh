@@ -258,11 +258,10 @@ for run in $(seq 1 "$runs"); do
   grep -q 'target ABI mismatch' "$tmp/wrong-abi-$run.out"
 
   jq '.apps.attended += ["org.example.missing"]' "$manifest" > "$tmp/missing-attended-$run.json"
-  if bash engine/converge.sh "$tmp/missing-attended-$run.json" --apply --serial "$serial" \
-    >"$tmp/missing-attended-$run.out" 2>&1; then
-    echo "missing attended package unexpectedly applied" >&2
-    exit 1
-  fi
+  rc=0
+  bash engine/converge.sh "$tmp/missing-attended-$run.json" --apply --serial "$serial" \
+    >"$tmp/missing-attended-$run.out" 2>&1 || rc=$?
+  [ "$rc" -eq 4 ] || { echo "missing attended package: exit $rc, want 4 (blocked)" >&2; exit 1; }
   grep -q '1 attended and 0 Play app(s) missing' "$tmp/missing-attended-$run.out"
   while read -r pkg; do
     packages=$(adb shell pm list packages --user 0 "$pkg" | tr -d '\r')
@@ -282,11 +281,10 @@ for run in $(seq 1 "$runs"); do
       grant: ["android.permission.POST_NOTIFICATIONS"], revoke: [], flags: {}
     }
   ' "$manifest" > "$tmp/missing-play-$run.json"
-  if bash engine/converge.sh "$tmp/missing-play-$run.json" --apply --serial "$serial" \
-    > "$tmp/missing-play-$run.out" 2>&1; then
-    echo "missing Play package unexpectedly applied" >&2
-    exit 1
-  fi
+  rc=0
+  bash engine/converge.sh "$tmp/missing-play-$run.json" --apply --serial "$serial" \
+    > "$tmp/missing-play-$run.out" 2>&1 || rc=$?
+  [ "$rc" -eq 4 ] || { echo "missing Play package: exit $rc, want 4 (blocked)" >&2; exit 1; }
   grep -q 'PLAY     org.example.play' "$tmp/missing-play-$run.out"
   grep -q 'disable  org.example.play' "$tmp/missing-play-$run.out"
   grep -q 'grant    org.example.play android.permission.POST_NOTIFICATIONS' "$tmp/missing-play-$run.out"
@@ -299,7 +297,9 @@ for run in $(seq 1 "$runs"); do
   # the engine's internal tuple even though desired values correctly reject it.
   adb shell settings put --user 0 global nix_android_quote_test $'current\037value'
 
-  plan=$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")
+  rc=0
+  plan=$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial") || rc=$?
+  [ "$rc" -eq 3 ] || { echo "fresh-device plan exited $rc, want 3 (changes pending)" >&2; exit 1; }
   grep -q -- '-- plan only (' <<<"$plan" || { echo "fresh device unexpectedly had no plan" >&2; exit 1; }
   # On a wiped device every managed app is a fresh install, so its grants are
   # reasserted after that install — plan must annotate the induced effect.

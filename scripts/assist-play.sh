@@ -103,7 +103,7 @@ while true; do
     fi
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "timed out after ${timeout}s waiting for $package; rerun assist --watch to resume" >&2
-      exit 1
+      exit 4 # still blocked on a human Play install
     fi
     sleep "$poll"
   done

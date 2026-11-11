@@ -61,7 +61,35 @@ signer for you to confirm). --discover proposes candidate repos from the
 Obtainium catalog (a network query to a third-party host with your candidate
 package ids); add --verify to resolve those proposals into verified
 apps.release entries.
+
+Exit codes: 0 in sync (or switch applied), 1 error, 2 usage or refused
+preflight, 3 plan/status has pending changes, 4 blocked on attended/Play apps.
 EOF
+}
+
+# One-line, actionable failure for a serial adb cannot use, checked before any
+# closure build. `adb devices` is discovery only; it touches no device.
+require_device() { # $1=serial
+  local listing state attached
+  listing=$("${NIX_ANDROID_ADB:-adb}" devices | awk -F'\t' 'NR > 1 && NF >= 2')
+  state=$(awk -F'\t' -v s="$1" '$1 == s { print $2; exit }' <<<"$listing")
+  case $state in
+  device) return 0 ;;
+  "")
+    attached=$(cut -f1 <<<"$listing" | paste -sd, - | sed 's/,/, /g')
+    echo "android-rebuild: adb device '$1' not found (attached: ${attached:-none}); check the cable or 'adb connect', then 'adb devices'" >&2
+    ;;
+  unauthorized)
+    echo "android-rebuild: adb device '$1' is unauthorized; unlock it and accept the USB debugging prompt" >&2
+    ;;
+  offline)
+    echo "android-rebuild: adb device '$1' is offline; reconnect it (or run 'adb reconnect offline') and retry" >&2
+    ;;
+  *)
+    echo "android-rebuild: adb device '$1' is in state '$state', not 'device'" >&2
+    ;;
+  esac
+  exit 1
 }
 
 cmd=${1:-}
@@ -79,6 +107,7 @@ obtainium_export=
 app_manager_export=
 watch=0
 flake_set=0
+serial_set=0
 lock_set=0
 release_hints=()
 allow_rotation=()
@@ -108,7 +137,7 @@ while [ $# -gt 0 ]; do
     ;;
   --serial)
     [ $# -ge 2 ] || { echo "--serial requires a value" >&2; exit 2; }
-    serial=$2; shift 2
+    serial=$2; serial_set=1; shift 2
     ;;
   --lock)
     [ $# -ge 2 ] || { echo "--lock requires a value" >&2; exit 2; }
@@ -187,6 +216,13 @@ if [ "${#repo_specs[@]}" -gt 0 ] && [ "$cmd" != suggest-sources ]; then
   echo "--repo is only valid with suggest-sources" >&2
   exit 2
 fi
+# Device-free verbs never contact a device; a --serial there is a mistake
+# (often a mistyped verb), not something to ignore.
+case $cmd in
+build | update | generations | suggest-sources)
+  [ "$serial_set" -eq 0 ] || { echo "--serial is not valid with $cmd (it never contacts a device)" >&2; exit 2; }
+  ;;
+esac
 
 case $cmd in
 import)
@@ -197,6 +233,7 @@ import)
   [ -z "$report_out" ] || import_args+=(--report-out "$report_out")
   [ -z "$obtainium_export" ] || import_args+=(--obtainium-export "$obtainium_export")
   [ -z "$app_manager_export" ] || import_args+=(--app-manager-export "$app_manager_export")
+  require_device "$serial"
   exec "$nix_android_bash" "$src/scripts/import.sh" "${import_args[@]}"
   ;;
 build | plan | switch | assist | bootstrap | update | suggest-sources | status | generations) ;;
@@ -210,10 +247,24 @@ fi
 flake=${flakeref%%#*}
 flake=${flake:-.}
 dev=${flakeref#*#}
-if [ "$dev" = "$flakeref" ] || [ -z "$dev" ]; then
-  dev=$(nix eval "${nixargs[@]}" "$flake#androidConfigurations" --apply builtins.attrNames --json | jq -r 'if length == 1 then .[0] else error("multiple devices — pass --flake .#<name>: \(join(", "))") end')
+[ "$dev" != "$flakeref" ] || dev=
+# Resolve the device name here so a typo or an ambiguous flake gets one clear
+# line instead of a raw jq or Nix attribute error.
+devices_json=$(nix eval "${nixargs[@]}" "$flake#androidConfigurations" --apply builtins.attrNames --json) \
+  || { echo "android-rebuild: cannot list androidConfigurations in '$flake'" >&2; exit 1; }
+available=$(jq -r 'join(", ")' <<<"$devices_json")
+if [ -z "$dev" ]; then
+  case $(jq -r 'length' <<<"$devices_json") in
+  1) dev=$(jq -r '.[0]' <<<"$devices_json") ;;
+  0) echo "android-rebuild: '$flake' defines no androidConfigurations" >&2; exit 2 ;;
+  *) echo "android-rebuild: '$flake' defines several devices; pass --flake '$flake#NAME' (available: $available)" >&2; exit 2 ;;
+  esac
+elif ! jq -e --arg d "$dev" 'any(.[]; . == $d)' <<<"$devices_json" >/dev/null; then
+  echo "android-rebuild: no device '$dev'; available: ${available:-none}" >&2
+  exit 2
 fi
 attr="$flake#androidConfigurations.$dev"
+case $cmd in plan | switch | assist | bootstrap | status) require_device "$serial" ;; esac
 
 engine_args=(--serial "$serial")
 
@@ -290,8 +341,8 @@ status)
   state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
   log="$state/log.jsonl"
   if [ ! -s "$log" ]; then
-    echo "no recorded convergence for '$name' — run 'android-rebuild switch' first"
-    exit 0
+    echo "no recorded convergence for '$name' — run 'android-rebuild switch' first" >&2
+    exit 1
   fi
   last=$(tail -n1 "$log")
   gen=$(jq -r '.generation' <<<"$last")
@@ -302,7 +353,7 @@ status)
   # shellcheck source-path=SCRIPTDIR/../engine
   # shellcheck source=generations.sh
   source "$src/engine/generations.sh"
-  current_fp=$(adb -s "$serial" shell getprop ro.build.fingerprint </dev/null | tr -d '\r') || current_fp=
+  current_fp=$("${NIX_ANDROID_ADB:-adb}" -s "$serial" shell getprop ro.build.fingerprint </dev/null | tr -d '\r') || current_fp=
   os_change_note "$last" "$current_fp"
   # Two devices are commonly attached; drift computed against the wrong one
   # looks authoritative. Warn loudly, but proceed: a serial can legitimately
@@ -322,8 +373,8 @@ generations)
   state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
   log="$state/log.jsonl"
   if [ ! -s "$log" ]; then
-    echo "no generations recorded for '$name'"
-    exit 0
+    echo "no generations recorded for '$name'" >&2
+    exit 1
   fi
   jq -r '"generation \(.generation)  \(.time)  \(.changes) change(s)  serial \(.serial)  os \(.os.incremental // "unknown")"' "$log"
   ;;
