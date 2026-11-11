@@ -800,9 +800,7 @@ For F-Droid repositories, update verifies the `entry.jar` signature, requires
 the trusted certificate fingerprint, verifies that `entry.json` is signed,
 checks the index-v2 hash, and records each APK hash plus up to four HTTPS
 mirror URLs from the same signed index (see Fetch performance). A failed update writes no
-partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
-is checked before the lock is written. Release resolution uses anonymous public
-APIs and is therefore subject to the host's unauthenticated rate limits.
+partial lock.
 
 A signature cannot tell a fresh index from a replayed old one, so `update`
 also records each repository's signed `entry.json` timestamp in the lock's
