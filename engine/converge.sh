@@ -96,15 +96,6 @@ if [ "$record" -eq 1 ]; then
   os_fingerprint=$(adb_shell getprop ro.build.fingerprint | tr -d '\r') || os_fingerprint=
   os_incremental=$(adb_shell getprop ro.build.version.incremental | tr -d '\r') || os_incremental=
 fi
-# GrapheneOS defaults USB-C to charging-only while locked: a session opened
-# before locking survives, but a replug or the auto-reboot drops adb until
-# unlock. Warn only; a locked device is still a valid target.
-if [ "$apply" -eq 1 ]; then
-  keyguard=$(adb_shell dumpsys window policy 2>/dev/null | tr -d '\r') || keyguard=
-  if grep -Eq '^[[:space:]]*showing=true' <<<"$keyguard"; then
-    echo "warning: $serial is locked; a USB replug or auto-reboot while locked can drop adb mid-apply (docs/GRAPHENEOS.md)" >&2
-  fi
-fi
 
 # Device reality. Presence assertions include preinstalled/system Play apps;
 # destructive cleanup remains limited to third-party owner-user packages.
@@ -684,6 +675,15 @@ fi
 if [ "$apply" -eq 0 ]; then
   echo "-- plan only ($plan_lines changes); re-run with --apply"
   exit 0
+fi
+
+# Checked only now, with writes about to start, so a plan-only run makes no
+# extra device reads. GrapheneOS defaults USB-C to charging-only while locked:
+# a session opened before locking survives, but a replug or the auto-reboot
+# drops adb until unlock. Warn only; a locked device is still a valid target.
+keyguard=$(adb_shell dumpsys window policy 2>/dev/null | tr -d '\r') || keyguard=
+if grep -Eq '^[[:space:]]*showing=true' <<<"$keyguard"; then
+  echo "warning: $serial is locked; a USB replug or auto-reboot while locked can drop adb mid-apply (docs/GRAPHENEOS.md)" >&2
 fi
 
 for t in "${todo_install[@]}" "${todo_upgrade[@]}"; do
