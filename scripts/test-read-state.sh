@@ -240,6 +240,21 @@ EOF
 [ -z "$(installer_package_from_dump <<<"$adb_install_dump")" ] \
   || fail "null installer should read as empty"
 
+# --- installer_from_pm_list --------------------------------------------------
+# `pm list packages -i --user 0` shape, AOSP 35 bench, 2026-11-11.
+pm_installers=$(cat <<'EOF'
+package:com.termux  installer=org.fdroid.fdroid
+package:com.termux.api  installer=com.termux
+package:helium314.keyboard  installer=null
+EOF
+)
+[ "$(installer_from_pm_list com.termux <<<"$pm_installers")" = org.fdroid.fdroid ] \
+  || fail "pm list installer misread"
+[ -z "$(installer_from_pm_list helium314.keyboard <<<"$pm_installers")" ] \
+  || fail "pm list null installer should read as empty"
+[ -z "$(installer_from_pm_list com.term <<<"$pm_installers")" ] \
+  || fail "pm list installer matched a package-id prefix"
+
 
 # --- apk_signer_digests: signer lines only, stamp excluded, normalized ------
 whatsapp_installed=$(cat <<'DUMP'

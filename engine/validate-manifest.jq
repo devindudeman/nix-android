@@ -13,21 +13,27 @@
   def domain: type == "string" and length <= 253 and test("^(\\*\\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+\\z");
   def packages: strings and all(.[]; package);
   def is_unique: length == (unique | length);
-  (keys == ["android", "apps", "device", "manifestVersion"])
-  and (.manifestVersion == 3 or .manifestVersion == 4)
+  # v5 adds apps.reown and a per-item managed installer; older versions must
+  # not carry them, so a v5 manifest never reaches an engine that would ignore
+  # them (old engines reject the extra keys) and v3/v4 keep their meaning.
+  (.manifestVersion == 5) as $v5
+  | (keys == ["android", "apps", "device", "manifestVersion"])
+  and (.manifestVersion == 3 or .manifestVersion == 4 or $v5)
   and (.device | type == "object"
     and (keys == ["abi", "name", "user"])
     and (.name | type == "string" and test("^[A-Za-z0-9._-]+\\z"))
     and .user == 0
     and (.abi | IN("arm64-v8a", "armeabi-v7a", "x86_64")))
   and (.apps | type == "object"
-    and (keys == ["attended", "cleanup", "managed", "play"])
+    and (keys == (["attended", "cleanup", "managed", "play"] + (if $v5 then ["reown"] else [] end) | sort))
+    and (if $v5 then .reown | type == "boolean" else true end)
     and (.cleanup | IN("none", "report", "uninstall"))
     and (.attended | packages)
     and (.play | packages)
     and (.managed | type == "array" and all(.[];
       type == "object"
-      and (keys == ["apk", "package", "versionCode"])
+      and (keys == (["apk", "package", "versionCode"] + (if $v5 then ["installer"] else [] end) | sort))
+      and (if $v5 then .installer | . == null or package else true end)
       and (.package | package)
       and (.versionCode | type == "number" and . >= 0 and floor == .)
       and (.apk | type == "string" and startswith("/")))))

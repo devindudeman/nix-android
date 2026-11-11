@@ -165,6 +165,7 @@ current_code() { # -> versionCode or empty
 }
 todo_install=()
 todo_upgrade=()
+todo_reown=()
 todo_remove=()
 missing_attended=()
 missing_play=()
@@ -175,21 +176,74 @@ declare -A managed=()
 declare -A presence=()
 declare -A changing=()
 
-# F-Droid apps: install missing, upgrade below-floor.
-while IFS=$'\t' read -r pkg code apk; do
+# Installer of record (manifest v5): every install/upgrade of an item with an
+# installer passes `-i <installer>` so that on-device updater may later update
+# it unattended. Android silently records null when the named package is not
+# installed at install time, so updaters are queued ahead of their apps.
+declare -A updater=()
+while read -r pkg; do
+  [ -z "$pkg" ] && continue
+  updater[$pkg]=1
+  declared[$pkg]=1 # cleanup must not remove a configured updater
+done < <(jq -r '[.apps.managed[].installer // empty] | unique[]' "$manifest")
+installer_now=
+[ "${#updater[@]}" -eq 0 ] || installer_now=$(adb_shell pm list packages -i --user "$user" | tr -d '\r')
+
+# Managed apps: install missing, upgrade below-floor.
+declare -A installer_of=()
+declare -A locked_code=()
+declare -A locked_apk=()
+while IFS=$'\t' read -r pkg code apk inst; do
   declared[$pkg]=1
   managed[$pkg]=1
+  installer_of[$pkg]=$inst
+  locked_code[$pkg]=$code
+  locked_apk[$pkg]=$apk
   cur=$(current_code "$pkg")
   if [ -z "$cur" ]; then
     # Value doubles as the induced-effect verb for plan annotation; every other
     # reader tests it with `-n`, so a non-empty string keeps that behaviour.
     changing[$pkg]=install
-    todo_install+=("${pkg}${US}${code}${US}${apk}")
+    if [ -n "${updater[$pkg]:-}" ]; then
+      todo_install=("${pkg}${US}${code}${US}${apk}${US}${inst}" ${todo_install[@]+"${todo_install[@]}"})
+    else
+      todo_install+=("${pkg}${US}${code}${US}${apk}${US}${inst}")
+    fi
   elif [ "$cur" -lt "$code" ]; then
     changing[$pkg]=upgrade
-    todo_upgrade+=("${pkg}${US}${cur}→${code}${US}${apk}")
+    todo_upgrade+=("${pkg}${US}${cur}→${code}${US}${apk}${US}${inst}")
   fi
-done < <(jq -r '.apps.managed[] | [.package, .versionCode, .apk] | @tsv' "$manifest")
+done < <(jq -r '.apps.managed[] | [.package, .versionCode, .apk, (.installer // "")] | @tsv' "$manifest")
+
+# Installed apps whose installer of record is not their configured updater:
+# only a same-version `install -r -i` can change that over adb (`pm
+# set-installer` fails its certificate check from shell), so re-own them when
+# manifest apps.reown (apps.updaters.reown) opts in, otherwise say so. An
+# absent updater is one note, never a change: -i would record null and the
+# plan could never converge.
+reown=$(jq -r '.apps.reown // false' "$manifest")
+installer_notes=()
+while read -r inst; do
+  [ -z "$inst" ] || [ -n "$(current_code "$inst")" ] || [ "${changing[$inst]:-}" = install ] \
+    || installer_notes+=("note: updater $inst is not installed for user $user; installs record no installer of record")
+done < <(printf '%s\n' "${!updater[@]}" | sort)
+while read -r pkg; do
+  [ -n "$pkg" ] || continue
+  inst=${installer_of[$pkg]}
+  [ -n "$inst" ] && [ -z "${changing[$pkg]:-}" ] || continue
+  [ -n "$(current_code "$inst")" ] || [ "${changing[$inst]:-}" = install ] || continue
+  now=$(installer_from_pm_list "$pkg" <<<"$installer_now")
+  [ "$now" != "$inst" ] || continue
+  cur=$(current_code "$pkg")
+  if [ "$reown" = true ] && [ "$cur" = "${locked_code[$pkg]}" ]; then
+    changing[$pkg]=reown
+    todo_reown+=("${pkg}${US}${now:-none}→${inst}${US}${locked_apk[$pkg]}${US}${inst}")
+  elif [ "$reown" = true ]; then
+    installer_notes+=("note: $pkg installer of record is ${now:-none}, not $inst; cannot re-own: installed versionCode $cur differs from the lock (${locked_code[$pkg]}); run android-rebuild update")
+  else
+    installer_notes+=("note: $pkg installer of record is ${now:-none}, not $inst, so $inst cannot update it unattended (apps.updaters.reown = true re-owns it)")
+  fi
+done < <(printf '%s\n' "${!installer_of[@]}" | sort)
 
 # Attended apps: assert presence only.
 while read -r pkg; do
@@ -566,7 +620,7 @@ done < <(jq -r '.android.deviceidleUnexempt // [] | .[]' "$manifest")
 # apply. scripts/test-converge-todo.sh additionally requires each listed array
 # to have a plan line and an apply loop (engine-parsers check).
 todo_arrays=(
-  todo_install todo_upgrade todo_remove todo_setting todo_dark todo_role
+  todo_install todo_upgrade todo_reown todo_remove todo_setting todo_dark todo_role
   todo_disable todo_grant todo_revoke todo_permflag todo_appop todo_suspend
   todo_unsuspend todo_locale todo_ime_enable todo_ime_disable todo_ime_default
   todo_data_saver todo_link_allowed todo_link_selected todo_link_unselected
@@ -585,8 +639,9 @@ for todo_name in "${todo_arrays[@]}"; do
   plan_lines=$((plan_lines + ${#todo_ref[@]}))
 done
 unset -n todo_ref
-for t in "${todo_install[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "install  $p ($c)"; done
-for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "upgrade  $p ($c)"; done
+for t in "${todo_install[@]}"; do IFS=$US read -r p c _ i <<<"$t"; echo "install  $p ($c)${i:+ installer $i}"; done
+for t in "${todo_upgrade[@]}"; do IFS=$US read -r p c _ i <<<"$t"; echo "upgrade  $p ($c)${i:+ installer $i}"; done
+for t in "${todo_reown[@]}"; do IFS=$US read -r p c _ <<<"$t"; echo "reown    $p (installer $c)"; done
 # Signer preflight for pending upgrades. Exact when possible: the manifest APK
 # is a local store path and the installed copy is one `adb pull` away, so
 # comparing their apksigner digest sets turns "might fail" into a verdict —
@@ -610,8 +665,8 @@ installed_signer_digests() { # $1=package → digest lines, non-zero when unknow
   [ -n "$digests" ] || return 1
   printf '%s\n' "$digests"
 }
-for t in "${todo_upgrade[@]}"; do
-  IFS=$US read -r p _ apk <<<"$t"
+for t in "${todo_upgrade[@]}" "${todo_reown[@]}"; do
+  IFS=$US read -r p _ apk _ <<<"$t"
   verdict=unknown
   if command -v apksigner >/dev/null 2>&1; then
     new_signers=$(apksigner verify --print-certs "$apk" 2>/dev/null | apk_signer_digests || true)
@@ -685,6 +740,7 @@ for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
 done
 # Notes follow every plan line and precede the verdict, so they read in plan
 # order even when the run is blocked. stderr keeps stdout the comparable plan.
+for n in ${installer_notes[@]+"${installer_notes[@]}"}; do notes+=("${n#note: }"); done
 for n in ${notes[@]+"${notes[@]}"}; do echo "note: $n" >&2; done
 
 if [ $(( ${#missing_attended[@]} + ${#missing_play[@]} )) -gt 0 ]; then
@@ -715,11 +771,25 @@ if grep -Eq '^[[:space:]]*showing=true' <<<"$keyguard"; then
   echo "warning: $serial is locked; a USB replug or auto-reboot while locked can drop adb mid-apply (docs/GRAPHENEOS.md)" >&2
 fi
 
-for t in "${todo_install[@]}" "${todo_upgrade[@]}"; do
-  IFS=$US read -r pkg _ apk <<<"$t"
+for t in "${todo_install[@]}" "${todo_upgrade[@]}" "${todo_reown[@]}"; do
+  IFS=$US read -r pkg _ apk inst <<<"$t"
   echo "installing $pkg..."
-  adb install -r --user "$user" "$apk" >/dev/null
+  adb install -r ${inst:+-i "$inst"} --user "$user" "$apk" >/dev/null
 done
+# Read back the installer of record. An updater that is its own installer (or
+# whose installer was queued after it) did not exist at install time, so
+# Android recorded null; one same-version reinstall, now that every updater in
+# this run is present, re-owns it.
+if [ "${#updater[@]}" -gt 0 ]; then
+  installer_now=$(adb_shell pm list packages -i --user "$user" | tr -d '\r')
+  for t in "${todo_install[@]}" "${todo_upgrade[@]}" "${todo_reown[@]}"; do
+    IFS=$US read -r pkg _ apk inst <<<"$t"
+    [ -n "$inst" ] && [ "$(installer_from_pm_list "$pkg" <<<"$installer_now")" != "$inst" ] || continue
+    grep -Fq "package:$inst  installer=" <<<"$installer_now" || continue
+    echo "re-owning $pkg (installer $inst)..."
+    adb install -r -i "$inst" --user "$user" "$apk" >/dev/null
+  done
+fi
 for t in "${todo_setting[@]}"; do
   ns=$(setting_field "$t" 0) k=$(setting_field "$t" 1) w=$(setting_field "$t" 3)
   adb_shell settings put --user "$user" "$ns" "$k" "$w"

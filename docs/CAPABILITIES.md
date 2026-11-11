@@ -32,7 +32,7 @@ fact is declarable.
 
 | Android state | ADB read | ADB write or action | Nix semantics | Import behavior |
 | --- | --- | --- | --- | --- |
-| Managed APK | `pm list packages --show-versioncode --user 0` | `adb install -r --user 0`; explicit cleanup uses `adb uninstall --user 0` | reconciled presence and version floor; optional destructive cleanup | package identity/version/source evidence is retained; non-Play sources remain attended until curated into a hash-addressed source |
+| Managed APK | `pm list packages --show-versioncode --user 0`; installer of record via `pm list packages -i --user 0` | `adb install -r [-i <updater>] --user 0`; explicit cleanup uses `adb uninstall --user 0` | reconciled presence and version floor; optional destructive cleanup | package identity/version/source evidence is retained; non-Play sources remain attended until curated into a hash-addressed source |
 | Play app | package presence plus recorded installer evidence | opens the official listing in `com.android.vending`; user confirms installation | attended presence | recorded Play installer becomes `apps.play`; attribution is evidence, not enforced provenance |
 | Other attended app | package presence | external human-controlled installer | attended presence | every other owner-user third-party package becomes `apps.attended` |
 | Obtainium release provenance | explicit user-supplied schema-v2 export plus ADB installer observation | normal hash-locked GitHub/Gitea resolver after curation/update | reconciled managed release when both facts agree | canonical credential-free GitHub/Forgejo sources become `apps.release`; unsupported/conflicting entries stay attended |

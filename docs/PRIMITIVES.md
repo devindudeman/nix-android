@@ -21,6 +21,7 @@ writable or persistent interface.
 | Primitive | Device evidence | Public option |
 | --- | --- | --- |
 | `adb install -r --user 0`, `adb uninstall --user 0` | AOSP 35 install/reinstall/removal round trips; additive F-Droid install and version read-back on locked GrapheneOS | managed apps and explicit cleanup |
+| `adb install -r -i <updater> --user 0` plus `pm list packages -i --user 0` / `dumpsys package` read-back | AOSP 35 bench, 2026-11-11: `-i org.fdroid.fdroid` recorded `installerPackageName=org.fdroid.fdroid` (initiator stays `com.android.shell`); a plain `install -r` of the same APK reset it to `null`; a same-version `install -r -i` re-owned it; naming an absent package (or the APK's own not-yet-installed package) succeeded with `installerPackageName=null`; owned state survived a graceful reboot | `apps.updaters.*` |
 | `pm list packages --show-versioncode --user 0` | AOSP bench and GrapheneOS owner-user package presence; unlike `-3`, includes preinstalled/system packages | `apps.play`, `apps.attended`, and managed-app diffing |
 | `settings get/put --user 0 global/secure/system` | Private DNS and representative keys read/write; all three namespaces exercised on AOSP bench | `android.settings.*`, `android.privateDns` |
 | `cmd uimode night` | real-device off/on convergence with no-op read-back; bench idempotence and reboot persistence | `android.darkMode` |

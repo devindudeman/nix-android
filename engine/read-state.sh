@@ -168,3 +168,15 @@ apk_signer_digests() {
     | sed -n 's/.*certificate SHA-256 digest:[[:space:]]*\([0-9A-Fa-f]\{64\}\).*/\1/p' \
     | tr 'A-F' 'a-f' | sort -u
 }
+
+# Installer of record for one package from `pm list packages -i --user N`
+# output (`package:<pkg>  installer=<pkg|null>`). Prints nothing when null.
+installer_from_pm_list() {
+  local wanted=$1 line
+  while IFS= read -r line; do
+    [ "${line%%  installer=*}" = "package:$wanted" ] || continue
+    line=${line##*  installer=}
+    [ "$line" = null ] || printf '%s\n' "$line"
+    return
+  done
+}

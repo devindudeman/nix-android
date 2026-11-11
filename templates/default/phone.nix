@@ -11,7 +11,8 @@
 # Managed-key semantics throughout: converge only touches what you declare and
 # never reverts device state you left undeclared. App pins are FLOORS, not exact
 # versions — converge installs/upgrades to >= the locked version and never
-# downgrades, so on-device updaters (Droid-ify, Obtainium) coexist fine.
+# downgrades, so on-device updaters (Droid-ify, Obtainium) coexist fine. Set
+# apps.updaters so they are the installer of record and can update unattended.
 {
   device.name = "phone";
   device.abi = "arm64-v8a"; # real phones; the emulator bench is "x86_64"
@@ -77,6 +78,13 @@
     # covers the phone. "uninstall" removes undeclared third-party apps —
     # review every removal in `plan` before ever setting this.
     # cleanup = "report";
+
+    # Installer of record per lane (`adb install -i`), so that updater can
+    # update the app without a prompt. null = none recorded. reown = true
+    # reinstalls the same locked version to hand over already-installed apps.
+    # updaters.fdroid = "com.looker.droidify";
+    # updaters.release = "dev.imranr.obtainium.fdroid";
+    # updaters.reown = true;
   };
 
   # --- Android state ---------------------------------------------------------

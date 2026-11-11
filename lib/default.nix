@@ -412,6 +412,7 @@
           # sees it — including a fresh install, where Android has nothing to
           # compare against. Archive-wrapped releases (plezy ships a .tar.gz
           # containing plezy.apk) extract in this same derivation.
+          installer = cfg.apps.updaters.${if builtins.elem p releaseNames then "release" else "fdroid"};
           apk =
             if l ? apkPath && !safeApkPath then
               throw "nix-android: unsafe archive member for '${p}' in ${baseNameOf lockFile}"
@@ -490,7 +491,7 @@
         assert validated;
         pkgs.writeText "nix-android-${cfg.device.name}-manifest-base.json" (
           builtins.toJSON {
-            manifestVersion = 4;
+            manifestVersion = 5;
             device = {
               inherit (cfg.device) name user abi;
             };
@@ -517,6 +518,7 @@
               # where an APK came from, only that it's a hash-verified store path.
               managed = managedApps;
               inherit (cfg.apps) attended play cleanup;
+              inherit (cfg.apps.updaters) reown;
             };
           }
         );
@@ -530,7 +532,7 @@
           [ "$pkgid" = "${p}" ] || { echo "apps.local: declared ${p} but APK is $pkgid" >&2; exit 1; }
           code=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$badging")
           jq --arg p "${p}" --arg apk "${v.apk}" --argjson code "$code" \
-            '.apps.managed += [{package: $p, versionCode: $code, apk: $apk}]' \
+            '.apps.managed += [{package: $p, versionCode: $code, apk: $apk, installer: null}]' \
             m.json > m2.json && mv m2.json m.json
         '') cfg.apps.local
       );
