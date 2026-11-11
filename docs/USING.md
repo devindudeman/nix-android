@@ -421,6 +421,17 @@ NIX_ANDROID_MAX_JOBS=16 nix run .#android-rebuild -- plan --flake .#pixel --seri
 `max-jobs` is one of the client options the Nix daemon applies for every
 client, trusted or not, so no `trusted-users` entry is needed.
 
+F-Droid entries also carry up to four HTTPS mirrors, taken at `update` time
+from the repository's signed index (`repo.mirrors`; `http://` and `.onion`
+mirrors are dropped). The APK is fetched with `fetchurl { urls = [ primary ] ++
+mirrors; }` under the same locked sha256, so a mirror that serves different
+bytes fails the hash check exactly as a tampered primary would. Mirrors are
+tried in order only when the previous URL fails (an HTTP error, connection
+failure, or hash mismatch); a primary that is merely slow is not abandoned.
+Locks written before mirrors existed simply have no `mirrors` field and fetch
+from the primary only; run `update` to add them. Release-lane entries never
+have mirrors.
+
 ## Generations and drift
 
 After every successful `switch` (including a no-op switch on an
@@ -806,7 +817,8 @@ a personal setup.
 
 For F-Droid repositories, update verifies the `entry.jar` signature, requires
 the trusted certificate fingerprint, verifies that `entry.json` is signed,
-checks the index-v2 hash, and records each APK hash. A failed update writes no
+checks the index-v2 hash, and records each APK hash plus up to four HTTPS
+mirror URLs from the same signed index (see Fetch performance). A failed update writes no
 partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
 is checked before the lock is written. Release resolution uses anonymous public
 APIs and is therefore subject to the host's unauthenticated rate limits.

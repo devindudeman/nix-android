@@ -339,6 +339,12 @@ resolve_fdroid() { # $1=pkg $2=repo-url $3=fingerprint $4=source-tag-or-empty
   jq --arg p "$p" --arg abi "$abi" --arg repo "$r" --arg fp "$fp" --arg src "$srctag" \
     "$FDROID_ELIGIBILITY_JQ"'
     require_packages_object
+    # Mirrors come from the same signed index; fetchurl verifies the locked
+    # sha256 whichever URL serves the bytes. HTTPS only (no .onion/http),
+    # index order, capped at 4 so the lock stays small.
+    | ([(.repo.mirrors // [])[] | objects | .url | strings
+        | rtrimstr("/") | select(test("^https://[A-Za-z0-9._~:/%+-]+$"))
+        | select(. != ($repo | rtrimstr("/")))] | .[:4]) as $mirrors
     | .packages[$p] // error("package not in index \($repo): \($p)")
     | . as $pkg
     | (.metadata.preferredSigner // null) as $preferred
@@ -355,7 +361,8 @@ resolve_fdroid() { # $1=pkg $2=repo-url $3=fingerprint $4=source-tag-or-empty
         repoFingerprint: $fp,
         signerSha256: (.manifest.signer.sha256 // error("version has no signer metadata: \($p)")),
         preferredSigner: $preferred,
-      } + (if $src != "" then {source: $src} else {} end))}' "$index"
+      } + (if $src != "" then {source: $src} else {} end)
+        + (.file.name as $f | if $mirrors != [] then {mirrors: [$mirrors[] + $f]} else {} end))}' "$index"
 }
 
 resolved=$({

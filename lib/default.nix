@@ -370,8 +370,12 @@
               throw "nix-android: '${p}' link filter is stale — run android-rebuild update"
             else
               l0;
+          # Optional F-Droid mirrors from the signed index: fetchurl tries them
+          # in order when the primary fails, and the same sha256 verifies
+          # whichever one answers. The store path is named after the primary.
           src = pkgs.fetchurl {
-            inherit (l) url sha256;
+            inherit (l) sha256;
+            urls = [ l.url ] ++ (l.mirrors or [ ]);
           };
           safeApkPath =
             l ? apkPath

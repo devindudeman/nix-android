@@ -15,7 +15,17 @@ mkdir -p "$repo" "$tmp/jar"
 preferred=$(printf '11%.0s' {1..32})
 other=$(printf '22%.0s' {1..32})
 apk_sha=$(printf 'aa%.0s' {1..32})
-jq -n --arg preferred "$preferred" --arg other "$other" --arg sha "$apk_sha" '{
+jq -n --arg preferred "$preferred" --arg other "$other" --arg sha "$apk_sha" --arg self "file://$repo" '{
+  repo: {mirrors: [
+    {url: $self, isPrimary: true},
+    {url: "http://example.onion/fdroid/repo"},
+    {url: "https://m1.example/fdroid/repo/"},
+    {url: "https://m2.example/fdroid/repo"},
+    {url: "https://bad.example/a b"},
+    {url: "https://m3.example/repo"},
+    {url: "https://m4.example/repo"},
+    {url: "https://m5.example/repo"}
+  ]},
   packages: {
     "org.example.test": {
       metadata: {preferredSigner: $preferred},
@@ -64,6 +74,16 @@ jq -e --arg preferred "$preferred" '
   | .versionCode == 7
     and .preferredSigner == $preferred
     and .signerSha256 == [$preferred]
+' "$tmp/lock.json" >/dev/null
+# Mirrors: https only (http/.onion and malformed dropped), the primary itself
+# excluded, trailing slash normalized, index order kept, capped at 4.
+jq -e '
+  .packages."org.example.test".mirrors == [
+    "https://m1.example/fdroid/repo/org.example.test_7.apk",
+    "https://m2.example/fdroid/repo/org.example.test_7.apk",
+    "https://m3.example/repo/org.example.test_7.apk",
+    "https://m4.example/repo/org.example.test_7.apk"
+  ]
 ' "$tmp/lock.json" >/dev/null
 
 # Partial invocations merge into a same-ABI lock instead of wiping it;
