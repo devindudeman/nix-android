@@ -309,6 +309,22 @@ impossible install-time grant is accepted only if the install itself granted
 it, and an impossible install-time revoke fails during apply with that
 classification.
 
+Every grant and flag declaration must name a permission the package requests.
+When the package is installed and unchanged by the plan and its dump lists the
+permission in neither the user's runtime block nor the install-permissions
+block, plan fails with `<package> does not request <permission>` before any
+write (`pm grant` would throw and `pm set-permission-flags` would silently do
+nothing). A revoke of a permission the package does not request is already
+satisfied. For a managed app installed or upgraded by the same apply, the check
+runs after its install: a revoke the new APK does not request is noted and
+skipped, and an unrequested grant stops the apply with the same reason.
+
+`packages.disabled` does not require its entries to exist, so one shared config
+can disable a system package that only some models ship: an entry not installed
+for the owner user is skipped with a note. Every other package reference
+(roles, permissions, suspension, battery exemption, app-ops, locales, app
+links, input methods) must be installed or declared as an app.
+
 `android.locales` owns the exact locale list for each named package; `[]`
 returns that app to the system language. Input methods use Android component
 names (`package/.Service`): every selected default must also be listed in
