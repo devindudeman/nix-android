@@ -56,10 +56,11 @@ git init && git add -A   # Nix only sees git-tracked files
 nix flake lock && git add flake.lock
 ```
 
-Then edit `phone.nix` (set `device.abi`, uncomment the apps you want) and skip
-to *Resolve the declared app sources* below. Two faster ways to populate it:
-`android-rebuild import --serial SERIAL` reads a live device into a draft config,
-and `android-rebuild suggest-sources` finds F-Droid/GitHub sources for Play apps.
+Then edit `phone.nix` (uncomment the apps you want; `device.abi` already
+defaults to `arm64-v8a`) and skip to *Resolve the declared app sources* below.
+Two faster ways to populate it: `nix run .#android-rebuild -- import --serial
+SERIAL` reads a live device into a draft config, and `nix run .#android-rebuild
+-- suggest-sources` finds F-Droid/GitHub sources for Play apps.
 
 The rest of this section explains what the template writes, if you would rather
 assemble it by hand.
@@ -79,9 +80,9 @@ cat > flake.nix <<'EOF'
     };
 
     # Run the CLI version pinned by this flake, not whatever happens to be
-    # newest upstream.
-    packages.x86_64-linux.android-rebuild =
-      nix-android.packages.x86_64-linux.android-rebuild;
+    # newest upstream, on every supported controller system.
+    packages = builtins.mapAttrs (_: p: { inherit (p) android-rebuild; })
+      nix-android.packages;
   };
 }
 EOF
@@ -106,8 +107,7 @@ git add flake.lock
 ```
 
 `flake.lock` now pins nix-android and its inputs. On Apple Silicon, change the
-controller system and both package-system attributes from `x86_64-linux` to
-`aarch64-darwin`.
+controller `system` from `x86_64-linux` to `aarch64-darwin`.
 
 Resolve the declared app sources, then inspect the manifest without a device:
 

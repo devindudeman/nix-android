@@ -39,7 +39,7 @@
 
             Next steps:
             - `git init && git add -A` (Nix only sees git-tracked files)
-            - edit `phone.nix` (device.abi + the apps you want)
+            - edit `phone.nix` (the apps you want; Apple Silicon: set `system` in flake.nix)
             - `nix run .#android-rebuild -- update --flake .#phone`
             - `nix run .#android-rebuild -- plan --flake .#phone --serial <SERIAL>`
 

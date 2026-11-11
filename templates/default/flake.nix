@@ -10,7 +10,7 @@
       #   android-rebuild plan --flake .#phone --serial <SERIAL>
       androidConfigurations.phone = nix-android.lib.mkDevice {
         # The CONTROLLER's system (this computer), not the phone.
-        # Apple Silicon: "aarch64-darwin". Then change both package attrs below.
+        # Apple Silicon: "aarch64-darwin". This is the only line to change.
         system = "x86_64-linux";
         modules = [ ./phone.nix ];
         lockFile = ./apps.lock.json;
@@ -18,6 +18,7 @@
 
       # Run the CLI version pinned by THIS flake, not whatever is newest upstream:
       #   nix run .#android-rebuild -- plan --flake .#phone --serial <SERIAL>
-      packages.x86_64-linux.android-rebuild = nix-android.packages.x86_64-linux.android-rebuild;
+      # Exposed for every controller system nix-android supports.
+      packages = builtins.mapAttrs (_: p: { inherit (p) android-rebuild; }) nix-android.packages;
     };
 }
