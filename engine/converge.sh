@@ -8,6 +8,10 @@
 # Usage: converge.sh <manifest.json> [--apply] [--record] [--serial <adb-serial>]
 #        converge.sh <manifest.json> --validate-only
 #
+# Exit codes (the public contract, docs/USING.md): 0 in sync or applied,
+# 1 error, 2 usage or refused preflight, 3 plan has pending changes,
+# 4 blocked on attended/Play apps only a human can install.
+#
 # --record (only valid with --apply) writes a generation receipt. It is opt-in
 # so intermediate applies — notably bootstrap's reduced phase-one manifest —
 # never register as the latest converged state; only a full switch or bootstrap's
@@ -677,7 +681,7 @@ for p in "${missing_play[@]}"; do echo "PLAY     $p — run android-rebuild assi
 
 if [ $(( ${#missing_attended[@]} + ${#missing_play[@]} )) -gt 0 ]; then
   echo "✗ ${#missing_attended[@]} attended and ${#missing_play[@]} Play app(s) missing; device does not match manifest" >&2
-  exit 1
+  exit 4 # blocked: only a human can install these (exit-code contract, USING.md)
 fi
 
 for pkg in ${report_undeclared[@]+"${report_undeclared[@]}"}; do
@@ -694,7 +698,7 @@ changes_word=changes
 [ "$plan_lines" -ne 1 ] || changes_word=change
 if [ "$apply" -eq 0 ]; then
   echo "-- plan only ($plan_lines $changes_word); run \`android-rebuild switch\` to apply"
-  exit 0
+  exit 3 # changes pending
 fi
 
 # Checked only now, with writes about to start, so a plan-only run makes no

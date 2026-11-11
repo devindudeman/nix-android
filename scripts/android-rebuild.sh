@@ -61,6 +61,9 @@ signer for you to confirm). --discover proposes candidate repos from the
 Obtainium catalog (a network query to a third-party host with your candidate
 package ids); add --verify to resolve those proposals into verified
 apps.release entries.
+
+Exit codes: 0 in sync (or switch applied), 1 error, 2 usage or refused
+preflight, 3 plan/status has pending changes, 4 blocked on attended/Play apps.
 EOF
 }
 
@@ -104,6 +107,7 @@ obtainium_export=
 app_manager_export=
 watch=0
 flake_set=0
+serial_set=0
 lock_set=0
 release_hints=()
 allow_rotation=()
@@ -133,7 +137,7 @@ while [ $# -gt 0 ]; do
     ;;
   --serial)
     [ $# -ge 2 ] || { echo "--serial requires a value" >&2; exit 2; }
-    serial=$2; shift 2
+    serial=$2; serial_set=1; shift 2
     ;;
   --lock)
     [ $# -ge 2 ] || { echo "--lock requires a value" >&2; exit 2; }
@@ -212,6 +216,13 @@ if [ "${#repo_specs[@]}" -gt 0 ] && [ "$cmd" != suggest-sources ]; then
   echo "--repo is only valid with suggest-sources" >&2
   exit 2
 fi
+# Device-free verbs never contact a device; a --serial there is a mistake
+# (often a mistyped verb), not something to ignore.
+case $cmd in
+build | update | generations | suggest-sources)
+  [ "$serial_set" -eq 0 ] || { echo "--serial is not valid with $cmd (it never contacts a device)" >&2; exit 2; }
+  ;;
+esac
 
 case $cmd in
 import)
@@ -330,8 +341,8 @@ status)
   state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
   log="$state/log.jsonl"
   if [ ! -s "$log" ]; then
-    echo "no recorded convergence for '$name' — run 'android-rebuild switch' first"
-    exit 0
+    echo "no recorded convergence for '$name' — run 'android-rebuild switch' first" >&2
+    exit 1
   fi
   last=$(tail -n1 "$log")
   gen=$(jq -r '.generation' <<<"$last")
@@ -362,8 +373,8 @@ generations)
   state="${XDG_STATE_HOME:-$HOME/.local/state}/nix-android/${name}"
   log="$state/log.jsonl"
   if [ ! -s "$log" ]; then
-    echo "no generations recorded for '$name'"
-    exit 0
+    echo "no generations recorded for '$name'" >&2
+    exit 1
   fi
   jq -r '"generation \(.generation)  \(.time)  \(.changes) change(s)  serial \(.serial)  os \(.os.incremental // "unknown")"' "$log"
   ;;

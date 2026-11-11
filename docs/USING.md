@@ -331,6 +331,21 @@ line before switching a real device, then run `plan` again; a converged device
 prints `✓ device matches manifest`. Missing Play or other attended apps abort
 before any device writes.
 
+Exit codes are a stable contract, so scripts can tell "needs a switch" from
+"broken":
+
+| Code | Meaning |
+| --- | --- |
+| 0 | In sync (`plan`, `status`), or `switch`/`bootstrap` applied successfully |
+| 1 | Error: adb or device failure, unreachable serial, nothing recorded for `status`/`generations` |
+| 2 | Usage error or refused preflight (bad flags, unknown device name, invalid manifest, ABI mismatch) |
+| 3 | `plan` or `status` found pending changes (`-- plan only (N changes)`) |
+| 4 | Blocked on attended or Play apps only a person can install (`plan`, `switch`, `status`, `assist --watch` timeout) |
+
+`switch` returns 0 after applying changes; it never returns 3. Before this
+contract, pending changes and an in-sync device both exited 0, and a missing
+Play app exited 1 like an adb failure.
+
 A fresh install starts a package from default permission state, and an upgrade
 can reset specific grants, flags, or app-ops depending on the version
 transition. So the engine reasserts your declared intent after an install or
@@ -433,13 +448,16 @@ nix run .#android-rebuild -- \
 `status` re-plans the *last-applied* generation against the device, so it
 reports divergence since the last switch — distinct from `plan`, which shows
 what the *current* config would change. It reads reachable state only; a clean
-result prints `✓ device matches manifest`. Each receipt also records the OS
+result prints `✓ device matches manifest` and exits 0; drift exits 3. If
+nothing has been recorded yet, `status` and `generations` say so on stderr and
+exit 1. Each receipt also records the OS
 build (`ro.build.fingerprint`, `ro.build.version.incremental`); when the device
 has since taken an OTA, `status` prints `OS changed since last switch: <old> →
 <new>` first, and `generations` lists each receipt's build (`unknown` for
 receipts recorded before this field). If the last generation's saved
 manifest is missing (deleted or never fully written), `status` says so rather
-than guessing.
+than guessing. `generations` and the other device-free verbs (`build`,
+`update`, `suggest-sources`) reject `--serial`.
 
 ## Install declared Play apps
 
