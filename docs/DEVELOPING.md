@@ -180,6 +180,16 @@ cycles must pass before any real-phone mutation is proposed.
 - Keep shell-variable boundaries ASCII-obvious (`${name}` or ASCII punctuation).
   Darwin's Nix Bash treated a variable immediately followed by a Unicode
   ellipsis as a longer name under `set -u`; the physical-Mac gate caught it.
+- `dumpsys package <pkg>` is not one package's state. The resolver tables
+  print first and hold app-controlled intent-filter strings, and the
+  "Hidden system packages:" and "Shared users:" sections repeat package-entry
+  shapes. Never grep the whole dump: slice it with the `read-state.sh`
+  extractors. Inside a `User N:` block, AOSP prints `    Suspend params:` at
+  the header's own indent and a blank line after each suspender, so a block
+  ends only at the next `User N:` header or a shallower line. The `<0>` in
+  `suspendingPackage=<0>com.android.shell` is the suspender's user, not the
+  suspended one. sharedUserId apps keep their permissions only in the
+  "Shared users:" copy, so the permission extractors read it too.
 
 ## Adding a fetched app source
 
