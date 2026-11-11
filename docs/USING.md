@@ -796,6 +796,18 @@ partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
 is checked before the lock is written. Release resolution uses anonymous public
 APIs and is therefore subject to the host's unauthenticated rate limits.
 
+A signature cannot tell a fresh index from a replayed old one, so `update`
+also records each repository's signed `entry.json` timestamp in the lock's
+top-level `repoTimestamps` map (repository URL to milliseconds) and refuses an
+index older than the recorded one, or older than the last verified
+`entry.jar` in the local cache. That stops a mirror or network attacker from
+pinning older, validly signed app versions. A lock without the field accepts
+and records the current timestamp; floors are kept even when a repository is
+dropped from the config. If a repository genuinely reset its index, re-run
+`android-rebuild update ... --allow-index-rollback` once. GitHub/Gitea assets are hash-pinned and their Android package ID
+is checked before the lock is written. Release resolution uses anonymous public
+APIs and is therefore subject to the host's unauthenticated rate limits.
+
 Source strings are typed before anything is fetched: F-Droid repository,
 release `url`, `updateJson`, and `html.url` values must be `https://` URLs
 without whitespace, `github` must be `owner/repo`, `gitea` must be

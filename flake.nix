@@ -466,6 +466,14 @@
               # --lock lock.json --abi x86_64 --replace, one plain pkg, 4 fdroid
               # words, 3 html words: 13 arguments.
               [ "''${#argv[@]}" -eq 13 ] || { echo "update argv has ''${#argv[@]} words, expected 13" >&2; exit 1; }
+              NIX_ANDROID_TEST_CONFIG=$PWD/config.json \
+                NIX_ANDROID_TEST_RESOLVER=$PWD/fakeresolver \
+                NIX_ANDROID_TEST_ARGV=$PWD/argv \
+                PATH="$PWD/fakebin:$PATH" "$cli" update --flake x#dev --allow-index-rollback
+              mapfile -d "" -t argv < argv
+              [ "''${argv[5]}" = --allow-index-rollback ] || { echo "update did not pass --allow-index-rollback" >&2; exit 1; }
+              ! "$cli" build --flake x#bench --allow-index-rollback >/dev/null 2>rollback-err
+              grep -q 'only valid with update' rollback-err
               touch $out
             '';
             import-snapshot =

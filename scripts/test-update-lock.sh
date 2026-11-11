@@ -54,14 +54,19 @@ jq -n --arg preferred "$preferred" --arg other "$other" --arg sha "$apk_sha" --a
   }
 }' > "$repo/index-v2.json"
 index_sha=$(sha256sum "$repo/index-v2.json" | cut -d' ' -f1)
-jq -n --arg sha "$index_sha" '{index: {name: "/index-v2.json", sha256: $sha}}' > "$tmp/jar/entry.json"
-
 keytool -genkeypair -alias repo -keyalg RSA -keysize 2048 -validity 1 \
   -dname CN=nix-android-test -keystore "$tmp/repo.jks" \
   -storepass changeit -keypass changeit >/dev/null 2>&1
-jar --create --file "$repo/entry.jar" -C "$tmp/jar" entry.json
-jarsigner -keystore "$tmp/repo.jks" -storepass changeit -keypass changeit \
-  "$repo/entry.jar" repo >/dev/null 2>&1
+# Publish a validly signed entry.jar carrying entry.json timestamp $1 (ms).
+sign_entry() {
+  jq -n --arg sha "$index_sha" --argjson ts "$1" \
+    '{timestamp: $ts, index: {name: "/index-v2.json", sha256: $sha}}' > "$tmp/jar/entry.json"
+  rm -f "$repo/entry.jar"
+  jar --create --file "$repo/entry.jar" -C "$tmp/jar" entry.json
+  jarsigner -keystore "$tmp/repo.jks" -storepass changeit -keypass changeit \
+    "$repo/entry.jar" repo >/dev/null 2>&1
+}
+sign_entry 2000
 fingerprint=$(keytool -printcert -jarfile "$repo/entry.jar" 2>/dev/null \
   | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':[:space:]' \
   | tr '[:upper:]' '[:lower:]')
@@ -147,6 +152,33 @@ if XDG_CACHE_HOME="$tmp/cache-malformed" updater_fdroid --lock "$tmp/malformed.j
   exit 1
 fi
 cmp "$tmp/malformed.before" "$tmp/malformed.json"
+
+# Anti-rollback: the lock records the repo's entry.json timestamp; a replayed
+# older (still validly signed) entry.jar is refused atomically, by the lock's
+# floor and by the cached entry.jar alone, unless --allow-index-rollback.
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 2000' "$tmp/lock.json" >/dev/null \
+  || { echo "repo entry timestamp not recorded" >&2; exit 1; }
+cp "$tmp/lock.json" "$tmp/rollback.json"
+cp "$tmp/rollback.json" "$tmp/rollback.before"
+sign_entry 1000
+if XDG_CACHE_HOME="$tmp/cache-fresh" updater_fdroid --lock "$tmp/rollback.json" >/dev/null 2>&1; then
+  echo "index rollback below the lock floor unexpectedly succeeded" >&2
+  exit 1
+fi
+cmp "$tmp/rollback.before" "$tmp/rollback.json"
+jq 'del(.repoTimestamps)' "$tmp/rollback.json" > "$tmp/legacy.json"
+if XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/legacy.json" >/dev/null 2>&1; then
+  echo "index rollback below the cached entry.jar unexpectedly succeeded" >&2
+  exit 1
+fi
+# A lock without the field (fresh cache) accepts and records.
+XDG_CACHE_HOME="$tmp/cache-legacy" updater_fdroid --lock "$tmp/legacy.json" >/dev/null
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 1000' "$tmp/legacy.json" >/dev/null
+XDG_CACHE_HOME="$tmp/cache-fresh" updater_fdroid --lock "$tmp/rollback.json" --allow-index-rollback >/dev/null
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 1000' "$tmp/rollback.json" >/dev/null
+sign_entry 3000
+XDG_CACHE_HOME="$tmp/cache-fresh" updater_fdroid --lock "$tmp/rollback.json" >/dev/null
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 3000' "$tmp/rollback.json" >/dev/null
 
 jq '.index.sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
   "$tmp/jar/entry.json" > "$tmp/jar/tampered.json"

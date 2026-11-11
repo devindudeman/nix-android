@@ -6,7 +6,7 @@
 #          [pkg ...] [--fdroid pkg repo-url fingerprint ...] [--github pkg=owner/repo ...] \
 #          [--gitea pkg=host/owner/repo ...] [--url pkg=https://... ...] \
 #          [--urljson pkg=https://... ...] [--html pkg=page-url link-regex ...] \
-#          [--allow-signer-rotation pkg ...]
+#          [--allow-signer-rotation pkg ...] [--allow-index-rollback]
 #   Plain pkg args resolve against f-droid.org; --fdroid pins a package to a
 #   third-party F-Droid repo and authenticates its signed entry.jar using the
 #   repository certificate's SHA-256 fingerprint (64 hex characters).
@@ -19,6 +19,11 @@
 # Chain of trust: the repository certificate signs entry.jar; entry.json inside
 # carries index-v2.json's sha256; each APK's sha256 then lands in the lock for
 # Nix fetchurl. Every link is verified before its data is trusted.
+# Anti-rollback: a replayed older entry.jar is still validly signed, so each
+# repo's entry.json timestamp is recorded in the lock (repoTimestamps) and a
+# refresh refuses to go backwards (vs the lock or the cached verified
+# entry.jar) unless --allow-index-rollback. A lock without the field accepts
+# and records the current timestamp.
 # Stable-only: versions with a non-empty releaseChannels (e.g. Beta) are
 # skipped. ABI: versions are eligible if they have no native code or include
 # the requested ABI (arm64-v8a = real phones; x86_64 = the emulator bench).
@@ -80,6 +85,7 @@ uspecs=()
 ujspecs=()
 hspecs=()
 allow_rotation=()
+allow_index_rollback=0
 test_asset=()
 fetch_index_spec=()
 
@@ -175,6 +181,9 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || { echo "--allow-signer-rotation requires PACKAGE" >&2; exit 2; }
     allow_rotation+=("$2"); shift 2
     ;;
+  --allow-index-rollback)
+    allow_index_rollback=1; shift
+    ;;
   --inspect-release-asset)
     [ $# -ge 3 ] || { echo "--inspect-release-asset requires PACKAGE ASSET" >&2; exit 2; }
     test_asset=("$2" "$3"); shift 3
@@ -255,6 +264,12 @@ if [ -f "$lock" ]; then
   old_packages=$(jq '.packages // {}' "$lock" 2>/dev/null) || old_packages='{}'
   old_abi=$(jq -r '.abi // empty' "$lock" 2>/dev/null) || old_abi=""
 fi
+# Per-repo entry.json timestamp floors (ms); missing or malformed = no floor.
+old_repo_ts=$(jq -c '.repoTimestamps // {} | with_entries(select(.value | type == "number"))' "$lock" 2>/dev/null) \
+  || old_repo_ts='{}'
+# fetch_index runs in subshells; it appends each verified {repo: timestamp}.
+repo_ts_file=$(mktemp)
+trap 'rm -f "$repo_ts_file"' EXIT
 
 # Entries resolved for one ABI must never silently coexist with (or silently
 # drop) entries locked for another.
@@ -273,7 +288,7 @@ mkdir -p "$cache"
 
 # Fetch a repo's index-v2 through its signed entry.jar, cached per repo.
 fetch_index() { # $1=repo-url $2=expected-cert-sha256 → verified index path
-  local r=$1 expected=${2,,} slug entry_jar entry verify got want index index_tmp name tmp
+  local r=$1 expected=${2,,} slug entry_jar entry verify got want index index_tmp name tmp ts floor cached_ts
   [[ $expected =~ ^[0-9a-f]{64}$ ]] || { echo "invalid repository fingerprint for $r" >&2; return 1; }
   slug=$(printf '%s' "$r" | sha256sum | cut -c1-16)
   entry_jar="$cache/entry-$slug.jar"
@@ -307,6 +322,24 @@ fetch_index() { # $1=repo-url $2=expected-cert-sha256 → verified index path
     echo "repository fingerprint mismatch for $r: $got != $expected" >&2
     return 1
   fi
+  if ! ts=$(unzip -p "$tmp" entry.json | jq -er '.timestamp | select(type == "number" and . >= 0 and . == floor)'); then
+    rm -f "$tmp"
+    echo "entry.json has no valid timestamp for $r" >&2
+    return 1
+  fi
+  floor=$(jq -r --arg r "$r" '.[$r] // 0 | floor' <<<"$old_repo_ts")
+  if [ -f "$entry_jar" ]; then
+    cached_ts=$(unzip -p "$entry_jar" entry.json 2>/dev/null | jq -r '.timestamp // 0' 2>/dev/null) || cached_ts=0
+    [[ $cached_ts =~ ^[0-9]+$ ]] || cached_ts=0
+    [ "$cached_ts" -le "$floor" ] || floor=$cached_ts
+  fi
+  if [ "$ts" -lt "$floor" ] && [ "$allow_index_rollback" -eq 0 ]; then
+    rm -f "$tmp"
+    echo "index rollback for $r: signed entry.json timestamp $ts is older than recorded $floor (replayed or stale mirror?)" >&2
+    echo "if the repository really reset its index, re-run with --allow-index-rollback" >&2
+    return 1
+  fi
+  jq -nc --arg r "$r" --argjson ts "$ts" '{($r): $ts}' >> "$repo_ts_file"
   mv "$tmp" "$entry_jar"
   entry=$(unzip -p "$entry_jar" entry.json)
   want=$(jq -r '.index.sha256' <<<"$entry")
@@ -570,9 +603,14 @@ if [ "$(jq -r 'length' <<<"$rotated")" -gt 0 ]; then
 fi
 
 lock_tmp="$lock.tmp.$$"
-trap 'rm -f "$lock_tmp"' EXIT
+trap 'rm -f "$lock_tmp" "$repo_ts_file"' EXIT
+# Floors survive --replace: dropping a repo from the config must not reset it.
+repo_ts=$(jq -sc --argjson old "$old_repo_ts" \
+  '$old + reduce (.[] | to_entries[]) as $e ({}; .[$e.key] = ([.[$e.key] // 0, $e.value] | max))' "$repo_ts_file")
 jq -n --argjson existing "$existing" --argjson packages "$resolved" --arg abi "$abi" --arg ts "$(date +%s)" \
-  '{abi: $abi, lockedAt: ($ts | tonumber), packages: ($existing + $packages)}' > "$lock_tmp"
+  --argjson repoTs "$repo_ts" \
+  '{abi: $abi, lockedAt: ($ts | tonumber), packages: ($existing + $packages)}
+   + (if $repoTs == {} then {} else {repoTimestamps: $repoTs} end)' > "$lock_tmp"
 mv "$lock_tmp" "$lock"
 trap - EXIT
 echo "wrote $lock ($(jq -r '.packages | length' "$lock") packages, abi=$abi)"

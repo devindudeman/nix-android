@@ -8,7 +8,8 @@
 #   android-rebuild generations --flake .#pixel           list recorded convergences
 #   android-rebuild assist --flake .#pixel --serial S     open next missing Play app
 #   android-rebuild bootstrap --flake .#pixel --serial S  phased wiped-device rebuild
-#   android-rebuild update --flake .#pixel [--lock PATH]  refresh apps.lock.json
+#   android-rebuild update --flake .#pixel [--lock PATH] [--allow-index-rollback]
+#                                                       refresh apps.lock.json
 #   android-rebuild import --serial S [--snapshot-out PATH] [--report-out PATH]
 #     [--obtainium-export PATH] [--app-manager-export PATH]
 #
@@ -37,7 +38,7 @@ Usage:
   android-rebuild assist --flake REF#DEVICE --serial SERIAL [--watch]
   android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
-                         [--allow-signer-rotation PKG ...]
+                         [--allow-signer-rotation PKG ...] [--allow-index-rollback]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
                          [--obtainium-export PATH] [--app-manager-export PATH]
   android-rebuild suggest-sources --flake REF#DEVICE [--discover [--verify]]
@@ -78,6 +79,7 @@ allow_rotation=()
 discover=0
 verify=0
 repo_specs=()
+allow_index_rollback=0
 while [ $# -gt 0 ]; do
   case $1 in
   --flake)
@@ -123,6 +125,7 @@ while [ $# -gt 0 ]; do
     app_manager_export=$2; shift 2
     ;;
   --watch) watch=1; shift ;;
+  --allow-index-rollback) allow_index_rollback=1; shift ;;
   -h | --help) usage; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -148,6 +151,10 @@ if [ -n "$obtainium_export" ] && [ "$cmd" != import ]; then
 fi
 if [ -n "$app_manager_export" ] && [ "$cmd" != import ]; then
   echo "--app-manager-export is only valid with import" >&2
+  exit 2
+fi
+if [ "$allow_index_rollback" -eq 1 ] && [ "$cmd" != update ]; then
+  echo "--allow-index-rollback is only valid with update" >&2
   exit 2
 fi
 if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
@@ -339,7 +346,10 @@ update)
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)
   # The config is the authoritative full set of locked packages, so a removed
   # declaration drops out of the lock: rewrite it rather than merge into it.
-  exec "$resolver/bin/nix-android-update-lock" --lock "$lock" --abi "$abi" --replace "${fdroid[@]}" "${fspecs[@]}" "${relspecs[@]}" \
+  rollback=()
+  [ "$allow_index_rollback" -eq 0 ] || rollback=(--allow-index-rollback)
+  exec "$resolver/bin/nix-android-update-lock" --lock "$lock" --abi "$abi" --replace \
+    ${rollback[@]+"${rollback[@]}"} "${fdroid[@]}" "${fspecs[@]}" "${relspecs[@]}" \
     "${allow_rotation[@]}"
   ;;
 esac

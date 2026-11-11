@@ -52,7 +52,7 @@ pairs must fail closed instead of ignoring desired state.
 | `docs/GRAPHENEOS.md` | GrapheneOS-only controls, reachability at uid 2000, bench gap, locked-phone adb, installers |
 | `docs/LIMITS.md` | Stock-Pixel/GrapheneOS support contract, evidence matrix, and reconciliation boundaries |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
-| `scripts/test-update-lock.sh` | Offline signed-index, signer and signer-continuity (url and github lanes), archive, package-ID, atomic-failure, and lock merge/replace resolver tests; the `update-lock-safety` check also proves mismatched lock entries fail the APK build |
+| `scripts/test-update-lock.sh` | Offline signed-index, index anti-rollback, signer and signer-continuity (url and github lanes), archive, package-ID, atomic-failure, and lock merge/replace resolver tests; the `update-lock-safety` check also proves mismatched lock entries fail the APK build |
 | `devices/bench.nix` | x86_64 AOSP mutation-test configuration |
 | `.github/workflows/ci.yml` | x86_64 Linux checks and Apple Silicon package/CLI gate |
 
