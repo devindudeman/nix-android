@@ -3,6 +3,7 @@
 # advance after Android reports that the user installed the current package.
 # This never clicks, installs, or confirms anything; the user owns Play.
 set -euo pipefail
+shopt -s inherit_errexit
 
 manifest=${1:?usage: assist-play.sh MANIFEST --serial SERIAL [--watch]}
 shift

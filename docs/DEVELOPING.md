@@ -187,6 +187,10 @@ cycles must pass before any real-phone mutation is proposed.
 - Process substitutions do not make `set -e` notice producer failures. The
   strict manifest preflight runs before the first adb read, so malformed JSON
   can never turn into an empty destructive declaration set.
+- Command substitutions do not inherit `set -e` by default, so a failing
+  first command inside `$(...)` was silently ignored. The engine, bootstrap,
+  assist, and update-lock scripts all set `shopt -s inherit_errexit`; keep it
+  in any new packaged script.
 - Bash also suppresses `set -e` inside functions invoked from conditional
   lists. Receipt staging handles each failure explicitly and commits the saved
   manifest before atomically replacing its JSONL ledger.

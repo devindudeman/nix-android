@@ -13,6 +13,7 @@
 # never register as the latest converged state; only a full switch or bootstrap's
 # final phase records.
 set -euo pipefail
+shopt -s inherit_errexit
 
 manifest=${1:?usage: converge.sh <manifest.json> [--apply] [--serial S]}
 shift

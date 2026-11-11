@@ -3,6 +3,7 @@
 # installs, then the complete manifest. Every mutation still goes through the
 # convergence engine; phase one deliberately disables cleanup and Android state.
 set -euo pipefail
+shopt -s inherit_errexit
 
 manifest=${1:?usage: bootstrap.sh MANIFEST --serial SERIAL}
 shift
