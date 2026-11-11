@@ -421,6 +421,14 @@ NIX_ANDROID_MAX_JOBS=16 nix run .#android-rebuild -- plan --flake .#pixel --seri
 `max-jobs` is one of the client options the Nix daemon applies for every
 client, trusted or not, so no `trusted-users` entry is needed.
 
+Before building, those commands print `fetching N APKs (M MB) ...` on stderr
+when managed APKs are missing from the local store (nothing when all are
+present). The count comes from a sub-second evaluation of the device's
+`fetchPlan` output; it is skipped silently if that evaluation fails or takes
+longer than five seconds. Sizes come from the lock: F-Droid entries record
+the signed index's file size, release entries do not, so the figure reads
+`M+ MB` when some sizes are unknown and is omitted when none are known.
+
 F-Droid entries also carry up to four HTTPS mirrors, taken at `update` time
 from the repository's signed index (`repo.mirrors`; `http://` and `.onion`
 mirrors are dropped). The APK is fetched with `fetchurl { urls = [ primary ] ++

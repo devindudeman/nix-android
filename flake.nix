@@ -373,10 +373,14 @@
               cat > stub/nix <<EOF
               #!${pkgs.bash}/bin/bash
               echo "\$*" >> $PWD/nix.log
-              echo /nix/store/fake-manifest
+              case "\$*" in
+              *fetchPlan*) echo '[{"path":"/nix/store/absent.apk","size":2500000},{"path":"/","size":7},{"path":"/nix/store/absent2.apk"}]' ;;
+              *) echo /nix/store/fake-manifest ;;
+              esac
               EOF
               chmod +x stub/nix
-              PATH=$PWD/stub:$PATH "$cli" build --flake x#bench >/dev/null
+              PATH=$PWD/stub:$PATH "$cli" build --flake x#bench >/dev/null 2>progress-err
+              grep -qx 'fetching 2 APKs (2+ MB) ...' progress-err
               grep -q -- 'build .* --max-jobs 8 x#androidConfigurations.bench.manifest' nix.log
               PATH=$PWD/stub:$PATH NIX_ANDROID_MAX_JOBS=3 "$cli" build --flake x#bench >/dev/null
               grep -q -- '--max-jobs 3 x#androidConfigurations.bench.manifest' nix.log

@@ -362,6 +362,7 @@ resolve_fdroid() { # $1=pkg $2=repo-url $3=fingerprint $4=source-tag-or-empty
         signerSha256: (.manifest.signer.sha256 // error("version has no signer metadata: \($p)")),
         preferredSigner: $preferred,
       } + (if $src != "" then {source: $src} else {} end)
+        + (if (.file.size | type) == "number" then {size: .file.size} else {} end)
         + (.file.name as $f | if $mirrors != [] then {mirrors: [$mirrors[] + $f]} else {} end))}' "$index"
 }
 

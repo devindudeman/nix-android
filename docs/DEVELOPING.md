@@ -197,8 +197,9 @@ hash-addressed APK store path.
 
 Lock format notes: every entry has `url`, `sha256`, `versionCode`,
 `versionName`, `signerSha256`, and (except main f-droid.org) `source`.
-F-Droid entries add `repoFingerprint`, `preferredSigner`, and an optional
-`mirrors` list of full HTTPS APK URLs (repo `repo.mirrors` from the signed
+F-Droid entries add `repoFingerprint`, `preferredSigner`, an optional `size`
+(the index's `file.size`, used only for android-rebuild's progress line via
+the `fetchPlan` output), and an optional `mirrors` list of full HTTPS APK URLs (repo `repo.mirrors` from the signed
 index-v2, `http`/`.onion`/malformed URLs and the configured repo itself
 dropped, index order, at most four). `fetchApk` passes `[ url ] ++ mirrors` as
 fetchurl `urls`; the store path is named after `url`, so adding mirrors changes

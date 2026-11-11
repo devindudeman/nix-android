@@ -194,6 +194,31 @@ attr="$flake#androidConfigurations.$dev"
 
 engine_args=(--serial "$serial")
 
+# Nix prints only "copying path" lines while fetching, so say up front how
+# much is coming. Best-effort: any failure (or an eval slower than a few
+# seconds) prints nothing and the build reports the real error.
+# ponytail: `-e` on the store path assumes the controller's local /nix/store;
+# a remote --store would over-count. Size is unknown for release-lane
+# entries and pre-size locks: "M+ MB" when partial, no size when none known.
+fetch_progress() {
+  local plan path size missing=0 bytes=0 unknown=
+  plan=$(timeout 5 nix eval "${nixargs[@]}" "$attr.fetchPlan" --json 2>/dev/null) || return 0
+  while IFS=$'\t' read -r path size; do
+    [ -n "$path" ] && [ ! -e "$path" ] || continue
+    missing=$((missing + 1))
+    if [[ $size =~ ^[0-9]+$ ]]; then bytes=$((bytes + size)); else unknown=+; fi
+  done < <(jq -r '.[] | [.path, (.size // "")] | @tsv' <<<"$plan" 2>/dev/null)
+  [ "$missing" -gt 0 ] || return 0
+  if [ "$bytes" -eq 0 ]; then
+    echo "fetching $missing APKs ..." >&2
+  else
+    echo "fetching $missing APKs ($((bytes / 1000000))$unknown MB) ..." >&2
+  fi
+}
+case $cmd in
+build | plan | switch | assist | bootstrap) fetch_progress ;;
+esac
+
 case $cmd in
 build)
   out=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)

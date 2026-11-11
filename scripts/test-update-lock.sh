@@ -33,7 +33,7 @@ jq -n --arg preferred "$preferred" --arg other "$other" --arg sha "$apk_sha" --a
         preferred: {
           releaseChannels: [],
           manifest: {versionCode: 7, versionName: "7", nativecode: [], signer: {sha256: [$preferred]}},
-          file: {name: "/org.example.test_7.apk", sha256: $sha}
+          file: {name: "/org.example.test_7.apk", sha256: $sha, size: 1234}
         },
         newerWrongLineage: {
           releaseChannels: [],
@@ -74,6 +74,7 @@ jq -e --arg preferred "$preferred" '
   | .versionCode == 7
     and .preferredSigner == $preferred
     and .signerSha256 == [$preferred]
+    and .size == 1234
 ' "$tmp/lock.json" >/dev/null
 # Mirrors: https only (http/.onion and malformed dropped), the primary itself
 # excluded, trailing slash normalized, index order kept, capped at 4.
