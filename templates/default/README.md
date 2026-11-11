@@ -10,11 +10,11 @@ git init && git add -A          # Nix only sees git-tracked files
 nix flake lock                  # pin nix-android + its inputs
 git add flake.lock
 
-# Edit phone.nix — set device.abi, uncomment the apps you want — then:
+# Edit phone.nix — uncomment the apps you want — then:
 nix run .#android-rebuild -- update --flake .#phone     # lock app sources
 git add apps.lock.json
 
-adb devices                     # find your device serial
+nix shell nixpkgs#android-tools -c adb devices   # find your device serial
 nix run .#android-rebuild -- plan   --flake .#phone --serial <SERIAL>
 nix run .#android-rebuild -- switch --flake .#phone --serial <SERIAL>
 ```
@@ -22,16 +22,17 @@ nix run .#android-rebuild -- switch --flake .#phone --serial <SERIAL>
 `plan` is read-only; review every line before `switch`. After a switch,
 `status` reports drift and `generations` lists what you've converged.
 
-Apple Silicon: change `system` and the package attributes in `flake.nix` from
-`x86_64-linux` to `aarch64-darwin`.
+Apple Silicon: change `system` in `flake.nix` from `x86_64-linux` to
+`aarch64-darwin`. `device.abi` defaults to `arm64-v8a`, which fits real phones;
+change it only for the `x86_64` emulator.
 
 ## Two faster starts
 
-- **From a live device:** `android-rebuild import --serial <SERIAL>` reads the
-  owner profile into a draft config you paste into `phone.nix`.
+- **From a live device:** `nix run .#android-rebuild -- import --serial <SERIAL>`
+  reads the owner profile into a draft config you paste into `phone.nix`.
 - **De-Google:** list Play apps under `apps.play`, then
-  `android-rebuild suggest-sources --flake .#phone` finds F-Droid/GitHub
-  sources for them.
+  `nix run .#android-rebuild -- suggest-sources --flake .#phone` finds
+  F-Droid/GitHub sources for them.
 
 `phone.nix` documents the main option groups inline. See the full generated
 [option reference](https://github.com/devindudeman/nix-android/blob/main/docs/OPTIONS.md)

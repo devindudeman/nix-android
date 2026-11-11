@@ -29,6 +29,10 @@
         type = with lib.types; listOf str;
         default = [ ];
         description = "Package ids from the main f-droid.org repo, pinned via apps.lock.json (pins are floors: converge upgrades to >= locked versionCode, never downgrades, never fights on-device updaters).";
+        example = [
+          "org.fdroid.fdroid"
+          "com.termux"
+        ];
       };
 
       fdroid.repos = lib.mkOption {
@@ -97,7 +101,7 @@
                     linkFilter = lib.mkOption {
                       type = str;
                       description = "Extended regex the APK link must match. `update` requires EXACTLY ONE page link to match — zero or several fail loudly (tighten the regex rather than trusting a sort heuristic).";
-                      example = "steam-android/steam-[0-9.]+\\\\.apk$";
+                      example = "steam-android/steam-[0-9.]+\\.apk$";
                     };
                   };
                 });
@@ -127,12 +131,14 @@
         type = with lib.types; listOf str;
         default = [ ];
         description = "Declared-but-human-installed packages without a more specific source. Converge asserts presence and prints a TODO list for the missing.";
+        example = [ "com.example.private-beta" ];
       };
 
       play = lib.mkOption {
         type = with lib.types; listOf str;
         default = [ ];
         description = "Google Play packages asserted present but installed with explicit user consent. Missing entries can be opened one at a time with `android-rebuild assist`; Play remains responsible for delivery, licensing, and updates.";
+        example = [ "com.spotify.music" ];
       };
 
       cleanup = lib.mkOption {
@@ -154,6 +160,13 @@
         lib.mkOption {
           type = with lib.types; attrsOf (either str int);
           default = { };
+          example =
+            {
+              global.stay_on_while_plugged_in = 3;
+              secure.lock_screen_show_notifications = 0;
+              system.screen_off_timeout = 300000;
+            }
+            .${ns};
           description = "Expert escape hatch for `settings put ${ns}` key/values (compared via `settings get`). Keys are Android-version-specific and must be independently verified for write access, read-back, and persistence; OS-owned keys can reject or revert writes.";
         }
       );
@@ -177,6 +190,14 @@
           type = with lib.types; nullOr str;
           default = null;
           description = "Package holding the ${role} role (`cmd role`). null = unmanaged.";
+          example =
+            {
+              browser = "org.mozilla.fennec_fdroid";
+              sms = "com.android.messaging";
+              dialer = "com.android.dialer";
+              home = "app.lawnchair";
+            }
+            .${role};
         }
       );
 
@@ -204,6 +225,10 @@
         type = with lib.types; attrsOf (listOf str);
         default = { };
         description = "Exact canonical BCP 47 per-app locale preference list (`cmd locale`). An empty list resets that app to the system language.";
+        example = {
+          "org.fdroid.fdroid" = [ "en-US" ];
+          "com.termux" = [ ];
+        };
       };
 
       inputMethod = {
@@ -256,6 +281,12 @@
           });
         default = { };
         description = "User-owned app-link handling and domain selections. Domain-verifier results and shell force-approval states are never managed.";
+        example = {
+          "org.fdroid.fdroid" = {
+            allowed = true;
+            selected = [ "f-droid.org" ];
+          };
+        };
       };
 
       permissions = lib.mkOption {
@@ -293,6 +324,12 @@
           });
         default = { };
         description = "Per-package runtime-permission grant bits and writable policy flags, keyed by package id.";
+        example = {
+          "com.termux" = {
+            grant = [ "android.permission.POST_NOTIFICATIONS" ];
+            flags."android.permission.POST_NOTIFICATIONS" = [ "user-set" ];
+          };
+        };
       };
 
       appOps = lib.mkOption {
@@ -309,6 +346,12 @@
           );
         default = { };
         description = "Explicit per-package AppOps overrides (`appops set`), keyed by package id and uppercase operation name. `default` clears the package override; UID-wide modes are intentionally outside this option.";
+        example = {
+          "com.termux" = {
+            RUN_IN_BACKGROUND = "allow";
+            VIBRATE = "deny";
+          };
+        };
       };
 
       batteryOptimization.exempt = lib.mkOption {

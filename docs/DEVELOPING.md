@@ -1,9 +1,9 @@
 # Developing nix-android
 
 Read [CAPABILITIES.md](./CAPABILITIES.md) for the public ADB-to-Nix map,
-[SUPPORT.md](./SUPPORT.md) for the target-family contract,
 [PRIMITIVES.md](./PRIMITIVES.md) before adding an option,
-[LIMITS.md](./LIMITS.md) before widening scope, and [IMPORT.md](./IMPORT.md)
+[LIMITS.md](./LIMITS.md) for the target-family contract and before widening
+scope, and [IMPORT.md](./IMPORT.md)
 before changing device discovery or generated declarations.
 
 ## Architecture
@@ -49,7 +49,7 @@ pairs must fail closed instead of ignoring desired state.
 | `scripts/atlas-probe.sh` | Read-only `cmd`/settings capability capture |
 | `docs/OPTIONS.md` | Generated option reference (regenerate with `just options-doc`; the `options-doc` check guards drift) |
 | `docs/CAPABILITIES.md` | Public ADB read/write/semantics/import coverage map |
-| `docs/SUPPORT.md` | Stock-Pixel/GrapheneOS support contract and executed evidence matrix |
+| `docs/LIMITS.md` | Stock-Pixel/GrapheneOS support contract, evidence matrix, and reconciliation boundaries |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
 | `scripts/test-update-lock.sh` | Offline signed-index, signer, archive, package-ID, atomic-failure, and lock merge/replace resolver tests |
 | `devices/bench.nix` | x86_64 AOSP mutation-test configuration |

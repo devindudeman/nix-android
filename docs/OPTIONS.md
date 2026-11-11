@@ -92,6 +92,21 @@ attribute set of (submodule)
 
 
 
+*Example:*
+
+```nix
+{
+  "org.fdroid.fdroid" = {
+    allowed = true;
+    selected = [
+      "f-droid.org"
+    ];
+  };
+}
+```
+
+
+
 ## android\.appLinks\.\<name>\.allowed
 
 
@@ -172,6 +187,19 @@ attribute set of attribute set of (one of “allow”, “ignore”, “deny”,
 
 ```nix
 { }
+```
+
+
+
+*Example:*
+
+```nix
+{
+  "com.termux" = {
+    RUN_IN_BACKGROUND = "allow";
+    VIBRATE = "deny";
+  };
+}
 ```
 
 
@@ -281,6 +309,14 @@ null
 
 
 
+*Example:*
+
+```nix
+"org.mozilla.fennec_fdroid"
+```
+
+
+
 ## android\.defaultApps\.dialer
 
 
@@ -298,6 +334,14 @@ null or string
 
 ```nix
 null
+```
+
+
+
+*Example:*
+
+```nix
+"com.android.dialer"
 ```
 
 
@@ -323,6 +367,14 @@ null
 
 
 
+*Example:*
+
+```nix
+"app.lawnchair"
+```
+
+
+
 ## android\.defaultApps\.sms
 
 
@@ -340,6 +392,14 @@ null or string
 
 ```nix
 null
+```
+
+
+
+*Example:*
+
+```nix
+"com.android.messaging"
 ```
 
 
@@ -428,6 +488,19 @@ attribute set of list of string
 
 
 
+*Example:*
+
+```nix
+{
+  "com.termux" = [ ];
+  "org.fdroid.fdroid" = [
+    "en-US"
+  ];
+}
+```
+
+
+
 ## android\.permissions
 
 
@@ -445,6 +518,25 @@ attribute set of (submodule)
 
 ```nix
 { }
+```
+
+
+
+*Example:*
+
+```nix
+{
+  "com.termux" = {
+    flags = {
+      "android.permission.POST_NOTIFICATIONS" = [
+        "user-set"
+      ];
+    };
+    grant = [
+      "android.permission.POST_NOTIFICATIONS"
+    ];
+  };
+}
 ```
 
 
@@ -562,6 +654,16 @@ attribute set of (string or signed integer)
 
 
 
+*Example:*
+
+```nix
+{
+  stay_on_while_plugged_in = 3;
+}
+```
+
+
+
 ## android\.settings\.secure
 
 
@@ -579,6 +681,16 @@ attribute set of (string or signed integer)
 
 ```nix
 { }
+```
+
+
+
+*Example:*
+
+```nix
+{
+  lock_screen_show_notifications = 0;
+}
 ```
 
 
@@ -604,6 +716,16 @@ attribute set of (string or signed integer)
 
 
 
+*Example:*
+
+```nix
+{
+  screen_off_timeout = 300000;
+}
+```
+
+
+
 ## apps\.attended
 
 
@@ -621,6 +743,16 @@ list of string
 
 ```nix
 [ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "com.example.private-beta"
+]
 ```
 
 
@@ -663,6 +795,17 @@ list of string
 
 ```nix
 [ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "org.fdroid.fdroid"
+  "com.termux"
+]
 ```
 
 
@@ -806,6 +949,16 @@ list of string
 
 
 
+*Example:*
+
+```nix
+[
+  "com.spotify.music"
+]
+```
+
+
+
 ## apps\.release
 
 
@@ -922,7 +1075,7 @@ string
 *Example:*
 
 ```nix
-"steam-android/steam-[0-9.]+\\\\.apk$"
+"steam-android/steam-[0-9.]+\\.apk$"
 ```
 
 

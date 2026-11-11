@@ -5,17 +5,14 @@ the decisions behind it. Nothing here is implemented. It exists so the lane is
 scoped honestly before any code, and so its real (narrow) value and its
 standing costs are on the table.
 
-Status: **design + emulator prototype (prototype kept off `main`).** The design
-below is on `main`; a working minimal-DPC prototype that proved the three risks
-on the AOSP emulator lives on the separate branch `dpc-prototype` (see
-[§7](#7-phased-plan)). No DPC, option, lane, or provisioning is on `main` or in
-the engine.
-
-Design status: **design only.** No DPC is built on `main`, no device-owner provisioning ships,
-and none is planned until the emulator prototype in
-[§7](#7-phased-plan) proves the three risks and the owner approves the exact
-reviewed plan. The real-phone safety protocol in the repo `CLAUDE.md` applies in
-full: emulator first, never the Pixel as an inferred step.
+Status: **design on `main`; emulator prototype off `main`.** A minimal-DPC
+prototype on the separate branch `dpc-prototype` answered the three risks on
+the AOSP emulator (see [§7](#7-phased-plan)); GrapheneOS silent install remains
+unverified. No DPC, option, lane, or provisioning is on `main` or in the engine,
+and none ships until a spare-device GrapheneOS test passes and the owner
+approves the exact reviewed plan. The real-phone safety protocol in the repo
+`CLAUDE.md` applies in full: emulator first, never the Pixel as an inferred
+step.
 
 ## 1. The premise, challenged first
 

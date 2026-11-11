@@ -8,6 +8,9 @@
   been accepted
 - the adb serial from `adb devices`; device commands never select implicitly
 
+[QUICKSTART.md](./QUICKSTART.md) covers enabling USB or wireless debugging;
+[TROUBLESHOOTING.md](./TROUBLESHOOTING.md) covers common failures.
+
 The controller platform is a required `mkDevice` argument because it determines
 which adb, jq, aapt2, and shell packages Nix builds. Use `"x86_64-linux"` or
 `"aarch64-darwin"`.
@@ -56,10 +59,11 @@ git init && git add -A   # Nix only sees git-tracked files
 nix flake lock && git add flake.lock
 ```
 
-Then edit `phone.nix` (set `device.abi`, uncomment the apps you want) and skip
-to *Resolve the declared app sources* below. Two faster ways to populate it:
-`android-rebuild import --serial SERIAL` reads a live device into a draft config,
-and `android-rebuild suggest-sources` finds F-Droid/GitHub sources for Play apps.
+Then edit `phone.nix` (uncomment the apps you want; `device.abi` already
+defaults to `arm64-v8a`) and skip to *Resolve the declared app sources* below.
+Two faster ways to populate it: `nix run .#android-rebuild -- import --serial
+SERIAL` reads a live device into a draft config, and `nix run .#android-rebuild
+-- suggest-sources` finds F-Droid/GitHub sources for Play apps.
 
 The rest of this section explains what the template writes, if you would rather
 assemble it by hand.
@@ -79,9 +83,9 @@ cat > flake.nix <<'EOF'
     };
 
     # Run the CLI version pinned by this flake, not whatever happens to be
-    # newest upstream.
-    packages.x86_64-linux.android-rebuild =
-      nix-android.packages.x86_64-linux.android-rebuild;
+    # newest upstream, on every supported controller system.
+    packages = builtins.mapAttrs (_: p: { inherit (p) android-rebuild; })
+      nix-android.packages;
   };
 }
 EOF
@@ -106,8 +110,7 @@ git add flake.lock
 ```
 
 `flake.lock` now pins nix-android and its inputs. On Apple Silicon, change the
-controller system and both package-system attributes from `x86_64-linux` to
-`aarch64-darwin`.
+controller `system` from `x86_64-linux` to `aarch64-darwin`.
 
 Resolve the declared app sources, then inspect the manifest without a device:
 
@@ -205,119 +208,17 @@ Hash-locked F-Droid and release sources share safely. If the module declares an
 controller; prefer a path inside a private shared flake or separate
 host-specific modules.
 
-## Complete option surface
+## Options
 
 Every option, with its type, default, and description, is in the generated
 [OPTIONS.md](./OPTIONS.md) (rendered from the typed module options via `just
-options-doc`). Executed device evidence is indexed separately in
-[PRIMITIVES.md](./PRIMITIVES.md). The annotated example below is a faster
-orientation.
-
-```nix
-{
-  device = {
-    name = "pixel";       # nickname; safe characters only
-    abi = "arm64-v8a";   # armeabi-v7a or x86_64 are also accepted
-    user = 0;             # public v1 is owner-only
-  };
-
-  apps = {
-    # Main f-droid.org repository.
-    fdroid.packages = [
-      "org.fdroid.fdroid"
-      "com.termux"
-    ];
-
-    # A third-party F-Droid repository requires its published repository
-    # certificate SHA-256 fingerprint as an explicit trust anchor.
-    fdroid.repos.futo = {
-      url = "https://app.futo.org/fdroid/repo";
-      fingerprint = "39d47869d29cbfce4691d9f7e6946a7b6d7e6ff4883497e6e675744ecdfa6d6d";
-      packages = [ "org.futo.inputmethod.latin" ];
-    };
-
-    # Latest GitHub/Gitea release at lock-update time. Exactly one source is
-    # allowed. A release archive must contain exactly one regular APK.
-    release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
-    release."com.example.app".gitea = "git.example.com/owner/repo";
-
-    # Direct vendor APK channel: a stable HTTPS link, or (preferred when the
-    # vendor offers one) an update-manifest JSON pointing at versioned APKs.
-    # A signer change across refreshes is refused without --allow-signer-rotation.
-    release."us.zoom.videomeetings".url = "https://zoom.us/client/latest/zoom.apk";
-    release."org.thoughtcrime.securesms".updateJson = "https://updates.signal.org/android/latest.json";
-
-    # Page-only vendors: discovery-only scrape. Exactly one page link must
-    # match linkFilter; the download gets the full package-id/signer checks.
-    release."com.valvesoftware.android.steam.community".html = {
-      url = "https://store.steampowered.com/mobile";
-      linkFilter = "apps/steam-android/steam-[0-9.]+\\.apk$";
-    };
-
-    # The file itself is the pin. Keep personal/self-signed APKs outside the
-    # public repo; package ID and versionCode are read with aapt2 at build time.
-    local."com.example.mine".apk = /absolute/path/to/mine.apk;
-
-    # Play packages are presence assertions. `assist --watch` opens their
-    # official Play listings in order; Android still requires user consent.
-    play = [ "com.spotify.music" ];
-
-    # Packages installed by any other human-operated source are also
-    # presence assertions.
-    attended = [ "com.example.other-store-app" ];
-
-    # Safe default. "uninstall" removes undeclared third-party owner apps.
-    cleanup = "none";
-  };
-
-  android = {
-    # Expert escape hatch. Only declare keys independently verified for the
-    # Android version; values are compared as strings.
-    settings.global.stay_on_while_plugged_in = 3;
-    settings.secure.example_key = "value with spaces";
-    settings.system.example_key = 1;
-
-    darkMode = true;              # null = unmanaged; see user-scope note below
-    privateDns = "opportunistic"; # "off", "opportunistic", or a DoT host
-
-    defaultApps = {
-      browser = "org.mozilla.fennec_fdroid";
-      sms = null;
-      dialer = null;
-      home = null;
-    };
-
-    packages.disabled = [ "com.example.unwanted" ];
-    packages.suspended = [ "com.example.pause-me" ];
-    packages.unsuspended = [ ];
-
-    locales."org.mozilla.fennec_fdroid" = [ "en-US" ];
-    inputMethod = {
-      enabled = [ "org.futo.inputmethod.latin/.LatinIME" ];
-      disabled = [ ];
-      default = "org.futo.inputmethod.latin/.LatinIME";
-    };
-    dataSaver.enabled = true;
-    appLinks."org.mozilla.fennec_fdroid" = {
-      allowed = true;
-      selected = [ ];
-      unselected = [ "example.com" ];
-    };
-
-    permissions."com.termux" = {
-      grant = [ "android.permission.POST_NOTIFICATIONS" ];
-      revoke = [ ];
-      # Exact state for the writable subset only. Android-owned flags shown by
-      # dumpsys remain untouched.
-      flags."android.permission.POST_NOTIFICATIONS" = [ "user-set" ];
-    };
-
-    appOps."com.termux".RUN_IN_BACKGROUND = "allow";
-
-    batteryOptimization.exempt = [ "com.termux" ];
-  };
-}
-```
+options-doc`). The canonical annotated example is the template's
+[phone.nix](../templates/default/phone.nix): it documents every option group
+inline, and the `template` check builds its active block against the real
+option surface. The README has a short
+[filled-in example](../README.md#set-up-a-config). Executed device evidence is
+indexed separately in [PRIMITIVES.md](./PRIMITIVES.md). The notes below cover
+semantics the option descriptions only summarize.
 
 Permission flags support `revoked-compat`, `revoke-when-requested`,
 `user-fixed`, and `user-set`. A declared flag list is exact for that writable
@@ -858,5 +759,6 @@ source. Changing a repository URL, fingerprint, or release owner without
 refreshing the lock fails the manifest build. Unreferenced extra lock entries
 are ignored.
 
-Android itself rejects an update signed by an incompatible key. nix-android
-does not yet predict that mismatch during `plan`; see [LIMITS.md](./LIMITS.md).
+Android itself rejects an update signed by an incompatible key. `plan` flags
+that mismatch for each pending upgrade (see *Plan and apply* above and
+[LIMITS.md](./LIMITS.md#apk-signatures)).

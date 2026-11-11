@@ -3,10 +3,10 @@
 # block is deliberately tiny so `nix flake init` gives you a valid, empty
 # config. Uncomment what you want, then run `update` to lock app sources and
 # `plan` to preview. Two shortcuts to a fuller start:
-#   - `android-rebuild import --serial <SERIAL>` reads a live device into a
-#     draft config you paste here.
-#   - `android-rebuild suggest-sources --flake .#phone` finds F-Droid/GitHub
-#     sources for Play apps you list under apps.play/apps.attended.
+#   - `nix run .#android-rebuild -- import --serial <SERIAL>` reads a live
+#     device into a draft config you paste here.
+#   - `nix run .#android-rebuild -- suggest-sources --flake .#phone` finds
+#     F-Droid/GitHub sources for Play apps you list under apps.play/attended.
 #
 # Managed-key semantics throughout: converge only touches what you declare and
 # never reverts device state you left undeclared. App pins are FLOORS, not exact
@@ -17,7 +17,8 @@
   device.abi = "arm64-v8a"; # real phones; the emulator bench is "x86_64"
 
   # --- Apps ------------------------------------------------------------------
-  # After editing app sources, run: android-rebuild update --flake .#phone
+  # After editing app sources, run:
+  #   nix run .#android-rebuild -- update --flake .#phone
   apps = {
     # Main f-droid.org repo, pinned in apps.lock.json:
     # fdroid.packages = [
@@ -58,7 +59,8 @@
     # local."com.example.app".apk = /absolute/path/to/app.apk;
 
     # Google Play apps: asserted present, installed with your consent. Open the
-    # next missing one with `android-rebuild assist --flake .#phone`.
+    # next missing one with
+    #   nix run .#android-rebuild -- assist --flake .#phone --serial <SERIAL>
     # play = [ "com.google.android.apps.maps" ];
 
     # Other human-installed apps with no more specific source (presence + TODO):

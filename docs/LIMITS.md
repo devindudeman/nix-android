@@ -1,10 +1,51 @@
-# Limits and semantics
+# Supported targets, limits, and semantics
 
 nix-android manages only state that adb shell (uid 2000) can read, write, and
 verify without weakening Android's security model. A purpose-built option is
 omitted when there is no reliable read-back or persistence primitive. Raw
 `android.settings` remains an expert escape hatch for independently verified
 keys.
+
+## Supported targets
+
+nix-android supports two device families:
+
+1. Google Pixel devices running Google's stock Android build;
+2. Google Pixel devices running an official GrapheneOS build.
+
+Public configuration manages owner user 0 over authorized adb shell uid 2000.
+The bootloader may remain locked, verified boot remains enabled, and Nix runs on
+the controller rather than the phone. The AOSP emulator is the mutation test
+bench and format reference; it is not a third consumer support family.
+
+| Target | Executed evidence | Role |
+| --- | --- | --- |
+| Stock Pixel | Pixel 9 Pro, Android 16 / SDK 36: read-only snapshot v2, generated-module evaluation, exact no-op plan, and user-approved Play assistance | supported consumer target |
+| GrapheneOS Pixel | Pixel 6, Android 17 / SDK 37, build `2026071101`: read-only snapshot v2, GrapheneOS permission-definition discovery, generated-module evaluation, exact no-op plan, and earlier explicitly approved additive/reversible acceptance tests | supported privacy target |
+| AOSP emulator | Android 15 / SDK 35 x86_64: mutation, idempotence, graceful-reboot persistence, cleanup, bootstrap, and import round trip | mandatory mutation bench |
+
+These rows are concrete compatibility evidence, not a promise that every past
+or future release has identical command output. Synthetic fixtures preserve the
+observed stock/Graphene command shapes without publishing device inventories.
+When an OS update changes a read format, import must fail visibly or classify
+the row as ambiguous; it must never silently emit a weaker declaration.
+
+- Owner user 0 is supported. Work profiles and Private Space can contribute
+  read-only evidence but are not managed targets.
+- Current official stock Android and GrapheneOS releases are the intended
+  compatibility window. Older builds may work but are best-effort unless an
+  executed fixture or hardware check covers them.
+- Other AOSP-derived phones and OEM builds are best-effort. Contributions are
+  welcome, but successful adb authorization alone is not a support claim.
+- Controller platforms are listed under [Host platforms](#host-platforms).
+
+For every public option, the target family must provide a verified read,
+write, read-back, idempotence, and graceful-reboot persistence path on the AOSP
+bench, plus read compatibility on the relevant real-phone family. Unsupported
+or OS-owned state stays snapshot evidence with an explicit coverage status.
+Missing root, enterprise enrollment, and the items under
+[Outside the boundary](#outside-the-boundary) are authority boundaries, not
+missing compatibility shims.
 
 ## Reconciled state
 
@@ -60,12 +101,15 @@ manage dark mode while the owner is active.
 ## Ensure-only state
 
 `android.packages.disabled` and
-`android.batteryOptimization.exempt` ensure their entries are present. Removing
-an entry from Nix does not invert the previous action. Re-enable a package or
-remove a battery exemption imperatively when desired. A disabled entry that is
-not installed for the owner user is skipped with a note rather than failing the
-plan, so a shared config may name system packages one model does not ship; a
-typo in a package name is therefore also only a note.
+`android.batteryOptimization.exempt` ensure their entries are present.
+`android.batteryOptimization.unexempt` is the ensure-absent counterpart: it
+removes a listed package from the allowlist and reasserts the removal if
+something re-adds it. Removing an entry from any of these lists does not invert
+the previous action. Re-enable a package or change a battery exemption
+imperatively when desired. A disabled entry that is not installed for the owner
+user is skipped with a note rather than failing the plan, so a shared config may
+name system packages one model does not ship; a typo in a package name is
+therefore also only a note.
 
 Battery exemption is the one v1 option whose underlying Android primitive is
 not owner-profile-scoped: DeviceIdle stores a global package/appId allowlist. If
@@ -78,7 +122,9 @@ different suspender, so `unsuspended` does not promise the package is globally
 unsuspended. App-link state likewise excludes verifier/force-approval state;
 only owner-user handling and selection are managed.
 
-`apps.cleanup = "none"` is additive. `"uninstall"` removes undeclared
+`apps.cleanup = "none"` is additive. `"report"` is also additive: plan and
+switch print a note per undeclared third-party app without counting it as drift
+or ever uninstalling it. `"uninstall"` removes undeclared
 third-party apps for owner user 0 and is intentionally destructive; always
 review its plan. System packages are not cleanup candidates. Cleanup starts only
 after every preceding install, setting, role, permission, disablement, and
@@ -141,6 +187,7 @@ resolving — already-installed apps are skipped.
 
 ## Outside the boundary
 
+- root, bootloader unlocking, and enterprise device-owner enrollment
 - app data, Keystore keys, eSIMs, and backup-opted-out application state
 - silent consumer-Play fetching or initial-install confirmation
 - work-profile mutation; public v1 supports owner user 0 only
@@ -163,9 +210,11 @@ reviewed.
 ## APK signatures
 
 nix-android authenticates F-Droid repository metadata and pins artifact hashes.
-It does not currently compare installed and desired signer certificates during
-planning. Android's package manager refuses an incompatible replacement during
-apply; switching signing identities therefore requires a human-controlled
+For every pending upgrade, `plan` compares the installed APK's signer digests
+with the manifest APK's and prints a definitive `WILL fail` note when they are
+disjoint, falling back to an installer-provenance heuristic when `apksigner` is
+unavailable or the pull fails (see [USING.md](./USING.md#plan-and-apply)).
+Android's package manager refuses an incompatible replacement during apply; switching signing identities therefore requires a human-controlled
 uninstall/reinstall and may lose app data.
 
 ## Host platforms

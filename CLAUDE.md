@@ -9,8 +9,9 @@ Read these before changing behavior:
 
 - `docs/DEVELOPING.md` — architecture, checks, and contribution workflow
 - `docs/PRIMITIVES.md` — executed adb capability evidence
-- `docs/USING.md` — public behavior and complete option surface
-- `docs/LIMITS.md` — exact reconciliation and no-root boundaries
+- `docs/USING.md` — public behavior and option semantics
+- `docs/LIMITS.md` — supported targets, exact reconciliation, and no-root
+  boundaries
 - `docs/PLAN.md` — first-release gate and deferred roadmap
 - `docs/DEVICE-OWNER.md` — design-only proposal for an opt-in Device Owner lane
 
