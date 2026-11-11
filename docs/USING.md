@@ -800,7 +800,9 @@ For F-Droid repositories, update verifies the `entry.jar` signature, requires
 the trusted certificate fingerprint, verifies that `entry.json` is signed,
 checks the index-v2 hash, and records each APK hash plus up to four HTTPS
 mirror URLs from the same signed index (see Fetch performance). A failed update writes no
-partial lock.
+partial lock. `update` rewrites the lock to exactly the declared F-Droid and
+release set, so a removed declaration drops out; removing the last one leaves
+an empty `packages` set rather than re-resolving the old entries.
 
 A signature cannot tell a fresh index from a replayed old one, so `update`
 also records each repository's signed `entry.json` timestamp in the lock's
