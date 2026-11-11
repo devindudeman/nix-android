@@ -83,7 +83,9 @@ for want in off priority alarms total; do
     [ "$start" != "$want_value" ] || continue
     case $start in 0) from=off ;; 1) from=priority ;; 2) from=total ;; 3) from=alarms ;; esac
     reset "$start"
-    converge "$tmp/$want.json" > "$tmp/plan"
+    # a pending plan exits 3 (exit-code contract, USING.md)
+    status=0; converge "$tmp/$want.json" > "$tmp/plan" || status=$?
+    [ "$status" -eq 3 ] || fail "plan for $from -> $want: expected exit 3, got $status"
     grep -Fxq "dnd      ($from → $want)" "$tmp/plan" || fail "plan for $from -> $want: $(cat "$tmp/plan")"
     [ -z "$(writes)" ] || fail "plan wrote: $(writes)"
     converge "$tmp/$want.json" --apply > /dev/null
