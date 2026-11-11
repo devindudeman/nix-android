@@ -13,6 +13,14 @@
       # Archive-wrapped release: the .tar.gz asset contains plezy.apk.
       "com.edde746.plezy".github = "edde746/plezy";
     };
+    # Installer of record: each updater is itself a managed app, so a fresh
+    # bootstrap exercises updater-first ordering and the self-owned re-install;
+    # the e2e harness demotes one app to a plain adb install to exercise reown.
+    updaters = {
+      fdroid = "org.fdroid.fdroid";
+      release = "dev.imranr.obtainium.fdroid";
+      reown = true;
+    };
   };
 
   # Phase-2 surface — every category exercised on the bench.

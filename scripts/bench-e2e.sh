@@ -99,6 +99,10 @@ verify_state() {
     done <<<"$packages"
     [ "$got" = "$want" ] || { echo "$pkg versionCode: got '$got', want '$want'" >&2; return 1; }
   done < <(jq -r '.apps.managed[] | [.package, (.versionCode | tostring)] | @tsv' "$manifest")
+  while IFS=$'\t' read -r pkg want; do
+    got=$(adb shell pm list packages -i --user 0 "$pkg" | tr -d '\r' | installer_from_pm_list "$pkg")
+    [ "$got" = "$want" ] || { echo "$pkg installer of record: got '$got', want '$want'" >&2; return 1; }
+  done < <(jq -r '.apps.managed[] | select(.installer != null) | [.package, .installer] | @tsv' "$manifest")
 
   while IFS=$'\037' read -r ns key want; do
     got=$(adb shell settings get --user 0 "$ns" "$key" | tr -d '\r')
@@ -316,6 +320,25 @@ for run in $(seq 1 "$runs"); do
     || { echo "bootstrap recorded $((gens_after - gens_before)) generations; only the final phase may record" >&2; exit 1; }
   verify_state "$manifest"
   [ "$(nix run .#android-rebuild --accept-flake-config -- plan --flake .#bench --serial "$serial")" = "✓ device matches manifest" ]
+
+  # Installer of record: a plain adb install (the pre-updater engine, or any
+  # manual sideload) demotes the app to installer null; reown must restore the
+  # configured updater with a same-version reinstall, then plan a no-op.
+  demoted=com.termux
+  adb install -r --user 0 "$(jq -r --arg p "$demoted" '.apps.managed[] | select(.package == $p) | .apk' "$manifest")" >/dev/null
+  reown_out=$(bash engine/converge.sh "$manifest" --apply --serial "$serial")
+  grep -q "reown    $demoted (installer none→org.fdroid.fdroid)" <<<"$reown_out" \
+    || { echo "demoted $demoted did not plan a reown" >&2; exit 1; }
+  verify_state "$manifest"
+  [ "$(bash engine/converge.sh "$manifest" --serial "$serial")" = "✓ device matches manifest" ]
+  # An updater that is not installed must be a note, never a change: -i would
+  # record null and the plan could never converge.
+  jq '.apps.managed[].installer = "org.example.absent"' "$manifest" > "$tmp/absent-updater-$run.json"
+  absent_out=$(bash engine/converge.sh "$tmp/absent-updater-$run.json" --serial "$serial" 2>&1)
+  grep -q 'note: updater org.example.absent is not installed' <<<"$absent_out" \
+    || { echo "absent updater was not noted" >&2; exit 1; }
+  grep -q '✓ device matches manifest' <<<"$absent_out" \
+    || { echo "absent updater wrongly dirtied the plan" >&2; exit 1; }
 
   # Ensure-absent exercise: seed the (now installed) unexempt package into the
   # USER whitelist; converge must plan and apply the removal, and the rest of

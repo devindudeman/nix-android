@@ -149,6 +149,12 @@ SwiftShader rather than host Vulkan. Do not launch the flake emulator naked on
 a laptop; an earlier host-GPU run exhausted unreclaimable memory and hung the
 machine.
 
+On SELinux-enforcing hosts with `selinuxuser_execheap` off (Fedora's default),
+SwiftShader's JIT segfaults the emulator's `RenderThread` with an `execheap`
+AVC denial, at boot or after a guest reboot. `TCMALLOC_SKIP_SBRK=true` only
+delayed the crash. The boolean that gates it can be enabled for the session with
+`sudo setsebool selinuxuser_execheap on` (no `-P`, so it reverts on reboot).
+
 The release persistence pass is:
 
 1. plan a fresh emulator;

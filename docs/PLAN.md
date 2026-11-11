@@ -222,10 +222,10 @@ that, not against surface breadth.
 - attended entries asserting a minimum versionCode (not mere presence) with
   staleness reporting — on-device updaters fail silently by design, and some
   vendor builds (e.g. Signal's website flavor) hard-expire
-- document/bench Android 14 update-ownership interplay: never pass
-  `--update-ownership` on installs, and note that an engine `install -r` makes
-  shell the installer of record, demoting an on-device store's silent-update
-  ability for that package until its next consented update
+- bench a real unattended on-device update (Droid-ify/Obtainium applying a
+  newer version without a prompt) after `apps.updaters` makes the store the
+  installer of record; the installer-of-record write is bench-verified, the
+  store's resulting silent-update behavior is not
 - HEAD-probe for mutable `url` release sources (ETag/Last-Modified before
   download) — a no-change refresh still re-fetches hundreds of MB for
   content-mutating vendor links (Zoom alone is ~330 MB); versioned sources

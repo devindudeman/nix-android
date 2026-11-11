@@ -1190,6 +1190,85 @@ null
 
 
 
+## apps\.updaters\.fdroid
+
+
+
+On-device updater recorded as installer of record for F-Droid (` apps.fdroid.packages ` and ` apps.fdroid.repos `) apps (` adb install -i `)\. Android lets an updater apply unattended updates only to apps it installed, so this hands later updates to it\. Must be installed for the owner user at install time or Android silently records no installer; converge installs a declared updater before the apps that name it\. null = no installer recorded (plain adb install)\.
+
+
+
+*Type:*
+null or string matching the pattern \[A-Za-z0-9_]+(\[\.]\[A-Za-z0-9_]+)+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"com.looker.droidify"
+```
+
+
+
+## apps\.updaters\.release
+
+
+
+On-device updater recorded as installer of record for release (` apps.release `) apps (` adb install -i `)\. Android lets an updater apply unattended updates only to apps it installed, so this hands later updates to it\. Must be installed for the owner user at install time or Android silently records no installer; converge installs a declared updater before the apps that name it\. null = no installer recorded (plain adb install)\.
+
+
+
+*Type:*
+null or string matching the pattern \[A-Za-z0-9_]+(\[\.]\[A-Za-z0-9_]+)+
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"com.looker.droidify"
+```
+
+
+
+## apps\.updaters\.reown
+
+
+
+Re-own installed apps whose installer of record differs from the configured updater by reinstalling the same locked APK with ` -i ` (app data kept; the app is restarted)\. Only when the installed versionCode equals the lock and the updater is installed or being installed\. false = such apps are reported as notes only\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+
+
 ## device\.abi
 
 

@@ -547,6 +547,15 @@
                   reject unknown-android-state '.android.future = {}'
                   reject unknown-managed-field '.apps.managed = [
                     {package:"org.example.app",versionCode:1,apk:"/one.apk",future:true}]'
+                  reject v4-installer '.apps.managed = [
+                    {package:"org.example.app",versionCode:1,apk:"/one.apk",installer:null}]'
+                  reject v5-missing-reown '.manifestVersion = 5'
+                  reject v5-bad-installer '.manifestVersion = 5 | .apps.reown = false | .apps.managed = [
+                    {package:"org.example.app",versionCode:1,apk:"/one.apk",installer:"not a package"}]'
+                  jq '.manifestVersion = 5 | .apps.reown = true | .apps.managed = [
+                    {package:"org.example.app",versionCode:1,apk:"/one.apk",installer:"org.example.updater"}]' \
+                    valid.json > valid5.json
+                  ${pkgs.bash}/bin/bash ${inputs.self}/engine/converge.sh valid5.json --validate-only
                   reject unknown-permission-field '.android.permissions."org.example.app" = {
                     grant:[], revoke:[], flags:{}, future:[]}'
                   reject missing-setting-namespace 'del(.android.settings.system)'

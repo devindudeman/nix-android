@@ -383,6 +383,36 @@ intent is reasserted after an app install or upgrade. Destructive cleanup, when
 explicitly set to `"uninstall"`, runs last so a preceding failure cannot start
 removals.
 
+### Installer of record and on-device updaters
+
+A plain `adb install` records no installer (`installerPackageName=null`,
+initiated by `com.android.shell`). Android lets an app store update a package
+without a confirmation prompt only when that store is the package's installer
+of record, so a store such as Droid-ify or Obtainium cannot silently update
+apps nix-android installed, and an engine upgrade resets an app the store
+already owned. Set `apps.updaters.fdroid` (F-Droid and third-party F-Droid
+repos) and `apps.updaters.release` (`apps.release`) to the updater's package
+ID and every install, upgrade, and bootstrap phase passes `-i <updater>`.
+`apps.local` apps never record one.
+
+The updater must be installed for the owner user at install time; otherwise
+Android silently records null. When the updater is itself a declared app,
+switch installs it first, reads the installer back afterward, and re-owns any
+app that still lacks it (including an updater that is its own installer) with
+one same-version reinstall. An updater missing from the device produces a
+`note: updater … is not installed` and changes nothing.
+
+`plan` also notes installed apps whose installer of record differs from the
+configured updater. The only adb path that changes the installer of an
+existing app is reinstalling the same versionCode with `-i` (`pm
+set-installer` is refused to the shell), so it is opt-in:
+`apps.updaters.reown = true` turns those notes into `reown` plan lines. A
+reown keeps app data but restarts the app, and its permission/AppOps intent is
+reasserted afterward. It only applies when the installed versionCode equals
+the lock; an app that is ahead of the lock stays a note until `update` catches
+the lock up. nix-android never passes `--update-ownership`, so it does not pin
+updates to one store.
+
 On GrapheneOS, the USB-C port defaults to charging-only while locked. A
 session opened before locking keeps working, but a cable replug while locked or
 the auto-reboot drops adb until the next unlock. Keep the phone unlocked for
