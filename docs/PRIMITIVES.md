@@ -40,6 +40,13 @@ Raw `android.settings` is intentionally an expert surface. This table proves
 the command path, not every Android-version-specific key. A key is suitable
 only after a real change reads back and survives a graceful reboot.
 
+GrapheneOS-only settings keys (auto-reboot, radio timeouts, dynamic-code-loading
+restrictions, PIN scrambling, and others) are reachable through
+`android.settings` because GrapheneOS's `SettingsProvider` exempts shell from
+its protection check. Their status is **source-verified, device
+read-verified (Pixel 9 Pro, `CP3A.261005.005`), not bench-verified**; the full
+list and the bench gap are in [GRAPHENEOS.md](./GRAPHENEOS.md).
+
 GrapheneOS Network and Sensors controls map to runtime
 `android.permission.INTERNET` and `android.permission.OTHER_SENSORS` in package
 state. The public engine uses the same verified `pm grant/revoke` mechanism,
@@ -89,7 +96,7 @@ version/persistence design and an engine idempotence test.
 | Quick Settings layout | `settings put secure sysui_qs_tiles` accepted a write, then SystemUI restored its own value. It fails read-back/idempotence and has no option. |
 | Work profile | package inventory is visible through dumpsys, but shell mutations against the managed user returned `SecurityException` because `DISALLOW_DEBUGGING_FEATURES` applies. |
 | Private Space | package enumeration worked on the tested GrapheneOS build, unlike the work profile. It remains outside public v1 pending broader multi-user proof. |
-| GrapheneOS exploit protection | no writable state was found in the settings or `cmd` surface. |
+| GrapheneOS exploit protection | write-only via `pm edit-gos-package-state` (source-verified, not run); no read-back outside root-only `packages.xml`, therefore not managed. See [GRAPHENEOS.md](./GRAPHENEOS.md). |
 | App data and protected identity state | no adb-shell primitive bypasses Android backup opt-out, Keystore, or eSIM boundaries. |
 
 ## Persistence finding

@@ -97,7 +97,8 @@ post-reboot no-op.
 ADB shell does not provide a general, faithful restore path for app-private
 data, login sessions, Android Keystore keys, eSIM state, backup-opted-out data,
 Play entitlement, or silent consumer-Play installation. It also cannot expose
-GrapheneOS controls that the OS does not publish to shell. Root, enterprise
+GrapheneOS controls that the OS does not publish to shell; the per-control map
+is in [GRAPHENEOS.md](./GRAPHENEOS.md). Root, enterprise
 device-owner enrollment, custom recovery, and building a replacement OS are
 different authority models, not hidden nix-android features.
 

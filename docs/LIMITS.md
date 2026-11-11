@@ -193,7 +193,9 @@ resolving — already-installed apps are skipped.
 - work-profile mutation; public v1 supports owner user 0 only
 - app downgrades or a true rollback of Android's mutable state
 - split APK/app-bundle installation and device-to-device APK extraction
-- GrapheneOS exploit-protection toggles not exposed to adb shell
+- GrapheneOS per-app exploit-protection toggles: write-only via
+  `pm edit-gos-package-state` with no read-back, so not managed; other
+  GrapheneOS controls are mapped in [GRAPHENEOS.md](./GRAPHENEOS.md)
 - exact Quick Settings layouts: SystemUI reverted tested writes
 - Wi-Fi declarations and per-app Data Saver UID policy; the latter passes
   read-back but loses user-installed rows across the mandatory AOSP reboot gate

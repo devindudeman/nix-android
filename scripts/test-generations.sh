@@ -33,14 +33,34 @@ record_generation 3 2>/dev/null
 [ "$(jq -r '.serial' "$log")" = emulator-5554 ] || fail "serial not recorded"
 [ "$(jq -r '.manifest' "$log")" = "$state/generations/1.json" ] || fail "ledger should point at saved manifest"
 
+# no OS identity in scope (getprop failed) records explicit unknowns
+[ "$(jq -c '.os' "$log")" = '{"fingerprint":null,"incremental":null}' ] || fail "missing OS build should record null"
+
 # saved manifest is a faithful copy (status re-plans it)
 diff -q "$manifest" "$state/generations/1.json" >/dev/null || fail "saved manifest differs from applied"
 
-# --- second switch increments to 2 -------------------------------------------
+# --- second switch increments to 2 and records the OS build ------------------
+os_fingerprint="google/caiman/caiman:17/CP3A.261005.005/2026110500:user/release-keys"
+os_incremental="2026110500"
 record_generation 0 2>/dev/null
+[ "$(tail -n1 "$log" | jq -r '.os.fingerprint')" = "$os_fingerprint" ] || fail "OS fingerprint not recorded"
+[ "$(tail -n1 "$log" | jq -r '.os.incremental')" = 2026110500 ] || fail "OS incremental not recorded"
 [ "$(wc -l <"$log")" -eq 2 ] || fail "ledger should have two lines"
 [ "$(tail -n1 "$log" | jq -r '.generation')" = 2 ] || fail "second generation should be 2"
 [ -f "$state/generations/2.json" ] || fail "generation 2 manifest not copied"
+
+# --- status OS-change note -----------------------------------------------------
+gen2=$(tail -n1 "$log")
+[ -z "$(os_change_note "$gen2" "$os_fingerprint")" ] || fail "same build must print nothing"
+[ "$(os_change_note "$gen2" "google/caiman/caiman:17/CP3A.261105.001/2026111200:user/release-keys")" = \
+  "OS changed since last switch: $os_fingerprint → google/caiman/caiman:17/CP3A.261105.001/2026111200:user/release-keys" ] \
+  || fail "changed build must be reported"
+[ -z "$(os_change_note "$gen2" "")" ] || fail "unknown current build must print nothing"
+# Receipts from before the os field existed stay readable: unknown, no note.
+legacy='{"generation":1,"time":"2026-07-01T00:00:00Z","serial":"s","device":"bench","manifest":"/x","changes":0}'
+[ -z "$(os_change_note "$legacy" "$os_fingerprint")" ] || fail "legacy receipt must print nothing"
+os_change_note 'not-json' "$os_fingerprint" >/dev/null || fail "a corrupt line must not fail status"
+unset os_fingerprint os_incremental
 
 # --- numbering follows the ledger max, not a live file count -----------------
 # A hand-deleted generation file must not make the next switch reuse a number.

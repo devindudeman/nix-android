@@ -11,7 +11,9 @@
 # older generation converges reachable state only, with the same floors-not-pins
 # caveats as any switch.
 #
-# Uses the ambient $manifest and $serial from the converge engine's scope.
+# Uses the ambient $manifest and $serial from the converge engine's scope, plus
+# optional $os_fingerprint/$os_incremental (ro.build.*). Receipts written before
+# those fields existed, or when getprop failed, record null = unknown.
 # shellcheck disable=SC2154  # $manifest and $serial come from the sourcing engine
 record_generation() { # $1 = applied change count
   local changes=$1 name state gens log last n saved manifest_tmp log_tmp line
@@ -63,7 +65,9 @@ record_generation() { # $1 = applied change count
   fi
   if ! line=$(jq -cn --argjson gen "$n" --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg serial "$serial" --arg name "$name" --arg manifest "$saved" --argjson changes "$changes" \
-    '{generation: $gen, time: $time, serial: $serial, device: $name, manifest: $manifest, changes: $changes}'); then
+    --arg fp "${os_fingerprint:-}" --arg incr "${os_incremental:-}" \
+    '{generation: $gen, time: $time, serial: $serial, device: $name, manifest: $manifest, changes: $changes,
+      os: {fingerprint: (if $fp == "" then null else $fp end), incremental: (if $incr == "" then null else $incr end)}}'); then
     echo "warning: could not build generation ${n} ledger entry; not recording" >&2
     rm -f "$manifest_tmp"
     return 0
@@ -95,4 +99,17 @@ record_generation() { # $1 = applied change count
     return 0
   fi
   echo "recorded generation ${n} for '${name}'" >&2
+}
+
+# Prints a one-line note when the device OS build differs from the one recorded
+# in a ledger line. GrapheneOS ships roughly weekly, so drift after an OTA is
+# worth reading in that light. Unknown on either side (old receipt, failed
+# getprop) prints nothing. Never fails the caller.
+os_change_note() { # $1 = ledger JSON line, $2 = current ro.build.fingerprint
+  local old
+  old=$(jq -r '.os.fingerprint // empty' <<<"$1" 2>/dev/null) || return 0
+  if [ -n "$old" ] && [ -n "$2" ] && [ "$old" != "$2" ]; then
+    echo "OS changed since last switch: ${old} → ${2}"
+  fi
+  return 0
 }
