@@ -435,6 +435,45 @@
               grep -q -- '--max-jobs 3 x#androidConfigurations.bench.manifest' nix.log
               ! PATH=$PWD/stub:$PATH NIX_ANDROID_MAX_JOBS=0 "$cli" build --flake x#bench >/dev/null 2>jobs-err
               grep -q 'NIX_ANDROID_MAX_JOBS' jobs-err
+              # update's argv is NUL-delimited: a newline inside a config value
+              # stays inside that one argument instead of becoming a flag. A
+              # fake nix serves the config and a fake resolver records argv.
+              mkdir -p fakebin fakeresolver/bin
+              printf '%s\n' '#!${pkgs.runtimeShell}' \
+                'case "$1" in' \
+                '  eval) cat "$NIX_ANDROID_TEST_CONFIG" ;;' \
+                '  build) echo "$NIX_ANDROID_TEST_RESOLVER" ;;' \
+                '  *) exit 1 ;;' \
+                'esac' > fakebin/nix
+              printf '%s\n' '#!${pkgs.runtimeShell}' \
+                'printf "%s\0" "$@" > "$NIX_ANDROID_TEST_ARGV"' \
+                > fakeresolver/bin/nix-android-update-lock
+              chmod +x fakebin/nix fakeresolver/bin/nix-android-update-lock
+              printf '%s' '{"abi":"x86_64","fdroid":{"packages":["org.example.one"],"repos":{"x":{
+                "url":"https://repo.example/fdroid\n--allow-signer-rotation","fingerprint":"ff",
+                "packages":["org.example.two"]}}},"release":{"org.example.three":{"github":null,
+                "gitea":null,"url":null,"updateJson":null,
+                "html":{"url":"https://page.example/\n--allow-signer-rotation","linkFilter":"a\nb"}}}}' \
+                > config.json
+              NIX_ANDROID_TEST_CONFIG=$PWD/config.json \
+                NIX_ANDROID_TEST_RESOLVER=$PWD/fakeresolver \
+                NIX_ANDROID_TEST_ARGV=$PWD/argv \
+                PATH="$PWD/fakebin:$PATH" "$cli" update --flake x#dev --lock lock.json
+              mapfile -d "" -t argv < argv
+              for a in "''${argv[@]}"; do
+                [ "$a" != --allow-signer-rotation ] || { echo "newline smuggled a flag into update" >&2; exit 1; }
+              done
+              # --lock lock.json --abi x86_64 --replace, one plain pkg, 4 fdroid
+              # words, 3 html words: 13 arguments.
+              [ "''${#argv[@]}" -eq 13 ] || { echo "update argv has ''${#argv[@]} words, expected 13" >&2; exit 1; }
+              NIX_ANDROID_TEST_CONFIG=$PWD/config.json \
+                NIX_ANDROID_TEST_RESOLVER=$PWD/fakeresolver \
+                NIX_ANDROID_TEST_ARGV=$PWD/argv \
+                PATH="$PWD/fakebin:$PATH" "$cli" update --flake x#dev --allow-index-rollback
+              mapfile -d "" -t argv < argv
+              [ "''${argv[5]}" = --allow-index-rollback ] || { echo "update did not pass --allow-index-rollback" >&2; exit 1; }
+              ! "$cli" build --flake x#bench --allow-index-rollback >/dev/null 2>rollback-err
+              grep -q 'only valid with update' rollback-err
               touch $out
             '';
             import-snapshot =
@@ -624,6 +663,28 @@
                     }).manifest.outPath
                   ).success;
                 rejects = rejectsWithLock ./apps.lock.json;
+                # What `android-rebuild update` reads: the typed apps config.
+                rejectsConfig =
+                  module:
+                  !(builtins.tryEval (
+                    let
+                      inherit
+                        (inputs.self.lib.mkDevice {
+                          inherit system;
+                          modules = [
+                            {
+                              device.name = "config-type";
+                              device.abi = "x86_64";
+                            }
+                            module
+                          ];
+                          lockFile = ./apps.lock.json;
+                        })
+                        config
+                        ;
+                    in
+                    builtins.deepSeq config.apps config.apps
+                  )).success;
               in
               assert rejects {
                 device = {
@@ -809,6 +870,40 @@
                 device.abi = "x86_64";
                 android.settings.global.example = "null";
               };
+              # Release/repo strings become update-lock argv: control characters
+              # and non-HTTPS URLs are type errors before any fetch.
+              assert rejectsConfig {
+                apps.release."org.example.app".url = "https://example.com/a.apk\n--allow-signer-rotation";
+              };
+              assert rejectsConfig {
+                apps.release."org.example.app".github = "owner/repo\n--allow-signer-rotation";
+              };
+              assert rejectsConfig {
+                apps.release."org.example.app".gitea = "git.example.com/owner/repo\r";
+              };
+              assert rejectsConfig {
+                apps.release."org.example.app".updateJson = "http://example.com/latest.json";
+              };
+              assert rejectsConfig {
+                apps.release."org.example.app".html = {
+                  url = "https://example.com/mobile";
+                  linkFilter = "app\\.apk$\n--allow-signer-rotation";
+                };
+              };
+              assert rejectsConfig {
+                apps.fdroid.repos.example = {
+                  url = "http://example.com/fdroid/repo";
+                  fingerprint = "0000000000000000000000000000000000000000000000000000000000000000";
+                };
+              };
+              # The positive control keeps the helper from passing vacuously.
+              assert
+                !(rejectsConfig {
+                  apps.release."org.example.app".html = {
+                    url = "https://example.com/mobile";
+                    linkFilter = "app-[0-9.]+\\.apk$";
+                  };
+                });
               # `.config` is gated by the lock-independent checks (android-rebuild
               # update reads it) …
               assert

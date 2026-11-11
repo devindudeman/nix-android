@@ -8,7 +8,8 @@
 #   android-rebuild generations --flake .#pixel           list recorded convergences
 #   android-rebuild assist --flake .#pixel --serial S     open next missing Play app
 #   android-rebuild bootstrap --flake .#pixel --serial S  phased wiped-device rebuild
-#   android-rebuild update --flake .#pixel [--lock PATH]  refresh apps.lock.json
+#   android-rebuild update --flake .#pixel [--lock PATH] [--allow-index-rollback]
+#                                                       refresh apps.lock.json
 #   android-rebuild import --serial S [--snapshot-out PATH] [--report-out PATH]
 #     [--obtainium-export PATH] [--app-manager-export PATH]
 #
@@ -18,7 +19,13 @@ set -euo pipefail
 
 src=${NIX_ANDROID_SRC:?NIX_ANDROID_SRC not set (use the packaged android-rebuild)}
 nix_android_bash=${NIX_ANDROID_BASH:?NIX_ANDROID_BASH not set (use the packaged android-rebuild)}
-nixargs=(--impure --accept-flake-config)
+# --impure stays: apps.local paths outside the flake, and consumer configs that
+# pick mkDevice.system from builtins.currentSystem (one config for Linux and
+# macOS controllers) or read builtins.getEnv, only evaluate impurely. No
+# --accept-flake-config: --flake may name any flake, and its nixConfig
+# (substituters, keys) must not be trusted silently; Nix asks on a TTY or
+# ignores it with a warning.
+nixargs=(--impure)
 # Device closures are dozens of independent APK fetchurl derivations; build
 # them concurrently whatever the controller's nix.conf says. max-jobs is part
 # of the client options the daemon applies even for untrusted users.
@@ -37,7 +44,7 @@ Usage:
   android-rebuild assist --flake REF#DEVICE --serial SERIAL [--watch]
   android-rebuild bootstrap --flake REF#DEVICE --serial SERIAL
   android-rebuild update --flake REF#DEVICE [--lock apps.lock.json]
-                         [--allow-signer-rotation PKG ...]
+                         [--allow-signer-rotation PKG ...] [--allow-index-rollback]
   android-rebuild import --serial SERIAL [--snapshot-out PATH] [--report-out PATH]
                          [--obtainium-export PATH] [--app-manager-export PATH]
   android-rebuild suggest-sources --flake REF#DEVICE [--discover [--verify]]
@@ -78,6 +85,7 @@ allow_rotation=()
 discover=0
 verify=0
 repo_specs=()
+allow_index_rollback=0
 while [ $# -gt 0 ]; do
   case $1 in
   --flake)
@@ -123,6 +131,7 @@ while [ $# -gt 0 ]; do
     app_manager_export=$2; shift 2
     ;;
   --watch) watch=1; shift ;;
+  --allow-index-rollback) allow_index_rollback=1; shift ;;
   -h | --help) usage; exit 0 ;;
   *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -148,6 +157,10 @@ if [ -n "$obtainium_export" ] && [ "$cmd" != import ]; then
 fi
 if [ -n "$app_manager_export" ] && [ "$cmd" != import ]; then
   echo "--app-manager-export is only valid with import" >&2
+  exit 2
+fi
+if [ "$allow_index_rollback" -eq 1 ] && [ "$cmd" != update ]; then
+  echo "--allow-index-rollback is only valid with update" >&2
   exit 2
 fi
 if [ "$watch" -eq 1 ] && [ "$cmd" != assist ]; then
@@ -318,23 +331,31 @@ update)
   config=$(nix eval "${nixargs[@]}" "$attr.config" \
     --apply 'c: { inherit (c.device) abi; inherit (c.apps) fdroid release; }' --json)
   abi=$(jq -er '.abi' <<<"$config")
-  mapfile -t fdroid < <(jq -r '.fdroid.packages[]' <<<"$config")
-  mapfile -t fspecs < <(jq -r '.fdroid.repos |
-    to_entries[] | .value as $r | $r.packages[] | "--fdroid\n\(.)\n\($r.url)\n\($r.fingerprint)"' <<<"$config")
-  mapfile -t relspecs < <(jq -r '.release |
-    to_entries[] | if .value.github != null
-      then "--github\n\(.key)=\(.value.github)"
+  # NUL-delimited argv: config strings are data, so a value containing a
+  # newline can never become an extra update-lock flag (the option types
+  # already reject control characters; this is the second wall).
+  mapfile -d '' -t fdroid < <(jq -j '.fdroid.packages[] | "\(.)\u0000"' <<<"$config")
+  mapfile -d '' -t fspecs < <(jq -j '.fdroid.repos |
+    to_entries[] | .value as $r | $r.packages[]
+    | ["--fdroid", ., $r.url, $r.fingerprint][] | "\(.)\u0000"' <<<"$config")
+  mapfile -d '' -t relspecs < <(jq -j '.release |
+    to_entries[] | (if .value.github != null
+      then ["--github", "\(.key)=\(.value.github)"]
       elif .value.gitea != null
-      then "--gitea\n\(.key)=\(.value.gitea)"
+      then ["--gitea", "\(.key)=\(.value.gitea)"]
       elif .value.url != null
-      then "--url\n\(.key)=\(.value.url)"
+      then ["--url", "\(.key)=\(.value.url)"]
       elif .value.updateJson != null
-      then "--urljson\n\(.key)=\(.value.updateJson)"
-      else "--html\n\(.key)=\(.value.html.url)\n\(.value.html.linkFilter)" end' <<<"$config")
+      then ["--urljson", "\(.key)=\(.value.updateJson)"]
+      else ["--html", "\(.key)=\(.value.html.url)", .value.html.linkFilter] end)[]
+    | "\(.)\u0000"' <<<"$config")
   resolver=$(nix build "${nixargs[@]}" "$src#update-lock" --no-link --print-out-paths)
   # The config is the authoritative full set of locked packages, so a removed
   # declaration drops out of the lock: rewrite it rather than merge into it.
-  exec "$resolver/bin/nix-android-update-lock" --lock "$lock" --abi "$abi" --replace "${fdroid[@]}" "${fspecs[@]}" "${relspecs[@]}" \
+  rollback=()
+  [ "$allow_index_rollback" -eq 0 ] || rollback=(--allow-index-rollback)
+  exec "$resolver/bin/nix-android-update-lock" --lock "$lock" --abi "$abi" --replace \
+    ${rollback[@]+"${rollback[@]}"} "${fdroid[@]}" "${fspecs[@]}" "${relspecs[@]}" \
     "${allow_rotation[@]}"
   ;;
 esac

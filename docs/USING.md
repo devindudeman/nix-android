@@ -203,6 +203,14 @@ nix run .#android-rebuild -- plan --flake .#pixel-linux --serial SERIAL
 nix run .#android-rebuild -- plan --flake .#pixel-darwin --serial SERIAL
 ```
 
+`android-rebuild` evaluates the target flake with `--impure`, so a single
+output may also pick the controller with
+`system = builtins.currentSystem or "x86_64-linux";` and `apps.local` may
+point outside the flake. It does not pass `--accept-flake-config`: a
+`nixConfig` in the flake you name (extra substituters, keys) is not trusted
+silently. Nix prompts on a terminal and otherwise ignores it with a warning;
+put caches you rely on in `nix.conf`, or answer the prompt once.
+
 Hash-locked F-Droid and release sources share safely. If the module declares an
 `apps.local` APK by path, that path must be available when evaluating from each
 controller; prefer a path inside a private shared flake or separate
@@ -792,9 +800,32 @@ For F-Droid repositories, update verifies the `entry.jar` signature, requires
 the trusted certificate fingerprint, verifies that `entry.json` is signed,
 checks the index-v2 hash, and records each APK hash plus up to four HTTPS
 mirror URLs from the same signed index (see Fetch performance). A failed update writes no
-partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
+partial lock.
+
+A signature cannot tell a fresh index from a replayed old one, so `update`
+also records each repository's signed `entry.json` timestamp in the lock's
+top-level `repoTimestamps` map (repository URL to milliseconds) and refuses an
+index older than the recorded one, or older than the last verified
+`entry.jar` in the local cache. That stops a mirror or network attacker from
+pinning older, validly signed app versions. A lock without the field accepts
+and records the current timestamp; floors are kept even when a repository is
+dropped from the config. If a repository genuinely reset its index, re-run
+`android-rebuild update ... --allow-index-rollback` once. GitHub/Gitea assets are hash-pinned and their Android package ID
 is checked before the lock is written. Release resolution uses anonymous public
 APIs and is therefore subject to the host's unauthenticated rate limits.
+
+Source strings are typed before anything is fetched: F-Droid repository,
+release `url`, `updateJson`, and `html.url` values must be `https://` URLs
+without whitespace, `github` must be `owner/repo`, `gitea` must be
+`host[:port]/owner/repo`, and `linkFilter` may not contain control characters.
+`update` hands these values to the resolver as NUL-delimited arguments, so a
+config value can never turn into a resolver flag such as
+`--allow-signer-rotation`.
+
+Every network fetch the resolver and `suggest-sources --discover` make is
+HTTPS-only (`curl --proto =https`, so no plain-HTTP downgrade or cross-scheme
+redirect), requires TLS 1.2 or newer, and is time- and size-capped. The
+F-Droid index is requested with `--compressed`.
 
 Refreshes short-circuit versioned release sources: when a github/gitea/
 updateJson/html source resolves to the same URL already locked (same ABI,

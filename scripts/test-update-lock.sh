@@ -4,7 +4,7 @@ set -euo pipefail
 
 updater=${1:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT FIXTURE_APK [RAW_SCRIPT]}
 fixture_apk=${2:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT FIXTURE_APK [RAW_SCRIPT]}
-raw_script=${3:-}   # the update-lock.sh source, for the fake-curl release test
+raw_script=${3:?usage: test-update-lock.sh UPDATE_LOCK_SCRIPT FIXTURE_APK RAW_SCRIPT}   # driven with fake curls
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 # The nix build sandbox's $HOME is unwritable; aapt2/java need a writable one.
@@ -54,20 +54,50 @@ jq -n --arg preferred "$preferred" --arg other "$other" --arg sha "$apk_sha" --a
   }
 }' > "$repo/index-v2.json"
 index_sha=$(sha256sum "$repo/index-v2.json" | cut -d' ' -f1)
-jq -n --arg sha "$index_sha" '{index: {name: "/index-v2.json", sha256: $sha}}' > "$tmp/jar/entry.json"
-
 keytool -genkeypair -alias repo -keyalg RSA -keysize 2048 -validity 1 \
   -dname CN=nix-android-test -keystore "$tmp/repo.jks" \
   -storepass changeit -keypass changeit >/dev/null 2>&1
-jar --create --file "$repo/entry.jar" -C "$tmp/jar" entry.json
-jarsigner -keystore "$tmp/repo.jks" -storepass changeit -keypass changeit \
-  "$repo/entry.jar" repo >/dev/null 2>&1
+# Publish a validly signed entry.jar carrying entry.json timestamp $1 (ms).
+sign_entry() {
+  jq -n --arg sha "$index_sha" --argjson ts "$1" \
+    '{timestamp: $ts, index: {name: "/index-v2.json", sha256: $sha}}' > "$tmp/jar/entry.json"
+  rm -f "$repo/entry.jar"
+  jar --create --file "$repo/entry.jar" -C "$tmp/jar" entry.json
+  jarsigner -keystore "$tmp/repo.jks" -storepass changeit -keypass changeit \
+    "$repo/entry.jar" repo >/dev/null 2>&1
+}
+sign_entry 2000
 fingerprint=$(keytool -printcert -jarfile "$repo/entry.jar" 2>/dev/null \
   | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':[:space:]' \
   | tr '[:upper:]' '[:lower:]')
-repo_url="file://$repo"
+repo_url="https://repo.fake.example/repo"
+bash_path=$(command -v bash)
 
-XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+# The F-Droid lane runs offline through a fake curl that serves $repo for
+# $repo_url and refuses any fetch missing the hardening flags.
+fdbin="$tmp/fdbin"; mkdir -p "$fdbin"
+cat > "$fdbin/curl" <<EOF
+#!$bash_path
+set -euo pipefail
+case " \$* " in *" --proto =https "*) ;; *) echo "fake curl: missing --proto =https" >&2; exit 1 ;; esac
+case " \$* " in *" --tlsv1.2 "*) ;; *) echo "fake curl: missing --tlsv1.2" >&2; exit 1 ;; esac
+case " \$* " in *" --max-time "*) ;; *) echo "fake curl: missing --max-time" >&2; exit 1 ;; esac
+case " \$* " in *" --max-filesize "*) ;; *) echo "fake curl: missing --max-filesize" >&2; exit 1 ;; esac
+url=""; out=""; prev=""
+for a in "\$@"; do
+  case "\$a" in https://*) url="\$a" ;; esac
+  [ "\$prev" = -o ] && out="\$a"
+  prev="\$a"
+done
+case "\$url" in
+  $repo_url/*) cp "$repo/\${url#"$repo_url"/}" "\$out" ;;
+  *) echo "fake curl: unexpected url \$url" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$fdbin/curl"
+updater_fdroid() { PATH="$fdbin:$PATH" bash "$raw_script" "$@"; }
+
+XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/lock.json" \
   --abi x86_64 --fdroid org.example.test "$repo_url" "$fingerprint" >/dev/null
 jq -e --arg preferred "$preferred" '
   .packages."org.example.test"
@@ -90,25 +120,25 @@ jq -e '
 # Partial invocations merge into a same-ABI lock instead of wiping it;
 # cross-ABI merges fail closed; --replace rewrites; a no-arg refresh keeps
 # the lock's recorded ABI.
-XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/lock.json" \
   --abi x86_64 --fdroid org.example.second "$repo_url" "$fingerprint" >/dev/null
 jq -e '.packages | has("org.example.test") and has("org.example.second")' "$tmp/lock.json" >/dev/null
-if XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+if XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/lock.json" \
   --abi arm64-v8a --fdroid org.example.second "$repo_url" "$fingerprint" >/dev/null 2>&1; then
   echo "cross-abi merge unexpectedly succeeded" >&2
   exit 1
 fi
 jq -e '.abi == "x86_64" and (.packages | has("org.example.test"))' "$tmp/lock.json" >/dev/null
-XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" \
+XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/lock.json" \
   --abi x86_64 --replace --fdroid org.example.test "$repo_url" "$fingerprint" >/dev/null
 jq -e '.packages | keys == ["org.example.test"]' "$tmp/lock.json" >/dev/null
-XDG_CACHE_HOME="$tmp/cache-good" "$updater" --lock "$tmp/lock.json" >/dev/null
+XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/lock.json" >/dev/null
 jq -e '.abi == "x86_64" and (.packages | keys == ["org.example.test"])' "$tmp/lock.json" >/dev/null
 
 cp "$tmp/lock.json" "$tmp/atomic.json"
 cp "$tmp/atomic.json" "$tmp/atomic.before"
 zeros=$(printf '00%.0s' {1..32})
-if XDG_CACHE_HOME="$tmp/cache-wrong" "$updater" --lock "$tmp/atomic.json" \
+if XDG_CACHE_HOME="$tmp/cache-wrong" updater_fdroid --lock "$tmp/atomic.json" \
   --abi x86_64 --fdroid org.example.test "$repo_url" "$zeros" >/dev/null 2>&1; then
   echo "wrong repository fingerprint unexpectedly succeeded" >&2
   exit 1
@@ -117,17 +147,44 @@ cmp "$tmp/atomic.before" "$tmp/atomic.json"
 
 jq '.packages."org.example.test".repoFingerprint = 7' "$tmp/atomic.json" > "$tmp/malformed.json"
 cp "$tmp/malformed.json" "$tmp/malformed.before"
-if XDG_CACHE_HOME="$tmp/cache-malformed" "$updater" --lock "$tmp/malformed.json" >/dev/null 2>&1; then
+if XDG_CACHE_HOME="$tmp/cache-malformed" updater_fdroid --lock "$tmp/malformed.json" >/dev/null 2>&1; then
   echo "malformed lock refresh unexpectedly succeeded" >&2
   exit 1
 fi
 cmp "$tmp/malformed.before" "$tmp/malformed.json"
 
+# Anti-rollback: the lock records the repo's entry.json timestamp; a replayed
+# older (still validly signed) entry.jar is refused atomically, by the lock's
+# floor and by the cached entry.jar alone, unless --allow-index-rollback.
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 2000' "$tmp/lock.json" >/dev/null \
+  || { echo "repo entry timestamp not recorded" >&2; exit 1; }
+cp "$tmp/lock.json" "$tmp/rollback.json"
+cp "$tmp/rollback.json" "$tmp/rollback.before"
+sign_entry 1000
+if XDG_CACHE_HOME="$tmp/cache-fresh" updater_fdroid --lock "$tmp/rollback.json" >/dev/null 2>&1; then
+  echo "index rollback below the lock floor unexpectedly succeeded" >&2
+  exit 1
+fi
+cmp "$tmp/rollback.before" "$tmp/rollback.json"
+jq 'del(.repoTimestamps)' "$tmp/rollback.json" > "$tmp/legacy.json"
+if XDG_CACHE_HOME="$tmp/cache-good" updater_fdroid --lock "$tmp/legacy.json" >/dev/null 2>&1; then
+  echo "index rollback below the cached entry.jar unexpectedly succeeded" >&2
+  exit 1
+fi
+# A lock without the field (fresh cache) accepts and records.
+XDG_CACHE_HOME="$tmp/cache-legacy" updater_fdroid --lock "$tmp/legacy.json" >/dev/null
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 1000' "$tmp/legacy.json" >/dev/null
+XDG_CACHE_HOME="$tmp/cache-fresh" updater_fdroid --lock "$tmp/rollback.json" --allow-index-rollback >/dev/null
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 1000' "$tmp/rollback.json" >/dev/null
+sign_entry 3000
+XDG_CACHE_HOME="$tmp/cache-fresh" updater_fdroid --lock "$tmp/rollback.json" >/dev/null
+jq -e --arg r "$repo_url" '.repoTimestamps[$r] == 3000' "$tmp/rollback.json" >/dev/null
+
 jq '.index.sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
   "$tmp/jar/entry.json" > "$tmp/jar/tampered.json"
 mv "$tmp/jar/tampered.json" "$tmp/jar/entry.json"
 jar --update --file "$repo/entry.jar" -C "$tmp/jar" entry.json
-if XDG_CACHE_HOME="$tmp/cache-tampered" "$updater" --lock "$tmp/tampered-lock.json" \
+if XDG_CACHE_HOME="$tmp/cache-tampered" updater_fdroid --lock "$tmp/tampered-lock.json" \
   --abi x86_64 --fdroid org.example.test "$repo_url" "$fingerprint" >/dev/null 2>&1; then
   echo "tampered signed entry unexpectedly succeeded" >&2
   exit 1
@@ -162,7 +219,6 @@ fi
 # script with a fake curl so it is fully offline and deterministic.
 if [ -n "$raw_script" ]; then
   fakebin="$tmp/fakebin"; mkdir -p "$fakebin"
-  bash_path=$(command -v bash)
   # Both asset names are arch-less, so ranking keeps their listed order:
   # the wrong flavor is offered first.
   jq -n '{assets: [

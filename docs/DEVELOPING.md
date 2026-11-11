@@ -52,7 +52,7 @@ pairs must fail closed instead of ignoring desired state.
 | `docs/GRAPHENEOS.md` | GrapheneOS-only controls, reachability at uid 2000, bench gap, locked-phone adb, installers |
 | `docs/LIMITS.md` | Stock-Pixel/GrapheneOS support contract, evidence matrix, and reconciliation boundaries |
 | `scripts/bench-e2e.sh` | Two-cycle emulator apply, direct verification, reboot persistence, no-op, and teardown gate |
-| `scripts/test-update-lock.sh` | Offline signed-index, signer and signer-continuity (url and github lanes), archive, package-ID, atomic-failure, and lock merge/replace resolver tests; the `update-lock-safety` check also proves mismatched lock entries fail the APK build |
+| `scripts/test-update-lock.sh` | Offline signed-index, index anti-rollback, signer and signer-continuity (url and github lanes), archive, package-ID, atomic-failure, and lock merge/replace resolver tests; the `update-lock-safety` check also proves mismatched lock entries fail the APK build |
 | `devices/bench.nix` | x86_64 AOSP mutation-test configuration |
 | `.github/workflows/ci.yml` | x86_64 Linux checks and Apple Silicon package/CLI gate |
 
@@ -187,6 +187,10 @@ cycles must pass before any real-phone mutation is proposed.
 - Process substitutions do not make `set -e` notice producer failures. The
   strict manifest preflight runs before the first adb read, so malformed JSON
   can never turn into an empty destructive declaration set.
+- Command substitutions do not inherit `set -e` by default, so a failing
+  first command inside `$(...)` was silently ignored. The engine, bootstrap,
+  assist, and update-lock scripts all set `shopt -s inherit_errexit`; keep it
+  in any new packaged script.
 - Bash also suppresses `set -e` inside functions invoked from conditional
   lists. Receipt staging handles each failure explicitly and commits the saved
   manifest before atomically replacing its JSONL ledger.
@@ -211,7 +215,13 @@ cycles must pass before any real-phone mutation is proposed.
 End with one uniform managed entry: package ID, integer versionCode, and a
 hash-addressed APK store path.
 
+- Type every source string in `modules/options.nix` (HTTPS URLs, no control
+  characters) and keep `android-rebuild update` passing them NUL-delimited;
+  the `validation` and `cli-safety` checks pin both walls.
 - Authenticate repository metadata before trusting hashes.
+- Fetch with `curl --proto '=https' --tlsv1.2 --max-time ... --max-filesize ...`;
+  the offline fake curls in `test-update-lock.sh` and
+  `test-suggest-sources.sh` refuse any fetch without those flags.
 - Bind the lock entry to the configured source and trust anchor.
 - Fail atomically; an unsuccessful refresh must not replace the lock.
 - Validate release package ID with aapt2.

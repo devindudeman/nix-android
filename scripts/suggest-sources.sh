@@ -228,7 +228,8 @@ if [ "$discover" -eq 1 ]; then
     entry=
     for d in simple complex; do
       # Time- and size-cap each fetch: the catalog is a third-party host.
-      entry=$(curl -fsS --max-time 15 --max-filesize 2M "$catalog_base/$d/$p.json" 2>/dev/null) && break
+      entry=$(curl --proto '=https' --tlsv1.2 -fsS --max-time 15 --max-filesize 2M \
+        "$catalog_base/$d/$p.json" 2>/dev/null) && break
       entry=
     done
     discover_queried=$((discover_queried + 1))
