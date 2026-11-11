@@ -12,38 +12,64 @@
 # app's targetSdk), so adb shell cannot own it.
 writable_permission_flags=(revoke-when-requested revoked-compat user-fixed user-set)
 
-# Print only the "User <N>:" block of a `dumpsys package <pkg>` dump.
+# Print only the "User <N>:" blocks of a `dumpsys package <pkg>` dump.
 # Fails when the block is missing so callers fail loudly instead of reading
-# another profile's state.
+# another profile's state. A block ends only at the next "    User N:" header
+# or a line indented fewer than four spaces: AOSP Settings.dumpPackageLPr
+# prints "    Suspend params:" at the header's own indent *inside* the user
+# loop, ahead of "      runtime permissions:", plus a blank line after each
+# suspender, so neither a four-space line nor a blank line may end the block.
+# Every matching header is kept, not just the package entry's: a sharedUserId
+# app's runtime permissions live in the later "Shared users:" section's
+# "    User N: " block. Callers take the first match.
 permission_user_block() {
   local wanted_user=$1
   gawk -v wanted_user="$wanted_user" '
     BEGIN { header = "    User " wanted_user ":" }
-    /^    [^ ]/ {
+    /^    User [0-9]+:/ {
       active = index($0, header) == 1
       if (active) found = 1
     }
+    /^ {0,3}[^ ]/ { active = 0 }
     active { print }
     END { if (!found) exit 1 }
   '
 }
 
-# Print only the package-level "install permissions:" block (absent for apps
-# that request no install-time permissions — empty output is not an error).
+# Print only the "install permissions:" blocks (absent for apps that request
+# no install-time permissions — empty output is not an error). Like the user
+# block, this keeps the "Shared users:" copy that sharedUserId apps rely on.
 install_permission_block() {
   gawk '
     /^    [^ ]/ { active = ($0 == "    install permissions:") }
+    /^ {0,3}[^ ]/ { active = 0 }
+    active { print }
+  '
+}
+
+# Print only the first "  Package [...]" block of a `dumpsys package <pkg>`
+# dump: the target's entry in the "Packages:" section. Excludes the resolver
+# tables printed before it (app-controlled intent-filter strings) and the
+# "Hidden system packages:" copy printed after it. Reads all input instead of
+# exiting early, so a pipefail producer never dies of SIGPIPE.
+package_block() {
+  gawk '
+    /^  Package \[/ { active = !seen; seen = 1 }
+    /^ {0,3}[^ ]/ && !/^  Package \[/ { active = 0 }
     active { print }
   '
 }
 
 # True if a `dumpsys package <pkg>` dump shows an adb-shell suspension for the
-# given user. `suspendingPackage=<N>com.android.shell` lives in the package's
-# separate "Suspend params:" section, not the per-user permission block, but
-# the <N> qualifier already scopes it to that user, so no block slice is
-# needed and no fixed line window can miss it.
+# given user. The <N> in `suspendingPackage=<N>com.android.shell` is the
+# SUSPENDER's user (`pm suspend` always passes USER_SYSTEM), not the suspended
+# user, so the match is scoped to the target user's block of the package entry,
+# where dumpPackageLPr prints that user's "Suspend params:". The anchored line
+# shape also rejects resolver-table keys, which always end in ":".
 has_shell_suspension_in_dump() {
-  grep -Fq "suspendingPackage=<$1>com.android.shell"
+  local user_block
+  user_block=$(package_block | permission_user_block "$1") || return 1
+  grep -Eq '^ +suspendingPackage=<0>com\.android\.shell( |$)' <<<"$user_block"
 }
 
 # Sorted CSV of writable flags present in one dumped `flags=[ ... ]` payload.
@@ -91,20 +117,21 @@ app_link_selected_domains() {
   '
 }
 
-# Installer package from a full `dumpsys package <pkg>` dump. Prints nothing
-# when unset/null (sideloads, adb installs). Provenance heuristic: a
-# Play-ecosystem installer means a Play-signed APK, which a differently-signed
-# repo build can never upgrade in place.
+# Installer package from the package entry of a `dumpsys package <pkg>` dump.
+# Prints nothing when unset/null (sideloads, adb installs). Provenance
+# heuristic: a Play-ecosystem installer means a Play-signed APK, which a
+# differently-signed repo build can never upgrade in place.
 installer_package_from_dump() {
-  sed -n 's/^ *installerPackageName=\(.*\)$/\1/p' | sed '/^null$/d' | head -n1
+  package_block | sed -n 's/^ *installerPackageName=\(.*\)$/\1/p' | sed '/^null$/d' | head -n1
 }
 
-# Other user ids for which the package is installed, from a full
-# `dumpsys package <pkg>` dump. $1 = the managed user to exclude. Owner-profile
-# Play can wedge installing a package another profile already has (LIMITS.md).
+# Other user ids for which the package is installed, from the package entry of
+# a `dumpsys package <pkg>` dump. $1 = the managed user to exclude.
+# Owner-profile Play can wedge installing a package another profile already has
+# (LIMITS.md).
 other_users_with_install() {
   local exclude=$1
-  sed -n 's/^ *User \([0-9][0-9]*\):.*installed=true.*/\1/p' | grep -vx "$exclude" || true
+  package_block | sed -n 's/^    User \([0-9][0-9]*\):.*installed=true.*/\1/p' | grep -vx "$exclude" || true
 }
 
 # Normalized APK signer digests from `apksigner verify --print-certs` output:

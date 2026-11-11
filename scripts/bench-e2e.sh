@@ -78,6 +78,14 @@ bash "$(dirname "${BASH_SOURCE[0]}")/test-read-state.sh" >/dev/null
 # shellcheck source=read-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../engine/read-state.sh"
 
+# Deliberately NOT a read-state.sh parser: the first "    User 0:" header's
+# `suspended=` field (userState.isSuspended(), any suspender). It shares no
+# block-scoping logic with has_shell_suspension_in_dump, so it can catch a
+# regression there that the golden fixtures miss.
+user0_suspended_field() {
+  sed -n 's/^    User 0: .* suspended=\([a-z]*\).*/\1/p' | sed -n 1p
+}
+
 verify_state() {
   local manifest=$1 pkg want got ns key permission role dump packages line found component domain links selected enabled_imes
   local want_csv raw_flags appop_output user_state install_state
@@ -158,10 +166,15 @@ verify_state() {
     got=$(adb shell cmd role get-role-holders --user 0 "$(role_id "$role")" | tr -d '\r')
     [ "$got" = "$pkg" ] || { echo "role $role: got '$got', want '$pkg'" >&2; return 1; }
   done < <(jq -r '.android.roles | to_entries[] | [.key, .value] | @tsv' "$manifest")
+  # Suspension is checked twice: by the shared parser (which suspender) and by
+  # the user-0 header's own `suspended=` field, read without read-state.sh, so
+  # a shared block-scoping regression cannot make engine and oracle agree.
   while read -r pkg; do
     dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
     has_shell_suspension_in_dump 0 <<<"$dump" \
       || { echo "$pkg not suspended by adb shell" >&2; return 1; }
+    [ "$(user0_suspended_field <<<"$dump")" = true ] \
+      || { echo "$pkg user 0 header does not read suspended=true" >&2; return 1; }
   done < <(jq -r '.android.suspended[]' "$manifest")
   while read -r pkg; do
     dump=$(adb shell dumpsys package "$pkg" | tr -d '\r')
@@ -169,6 +182,8 @@ verify_state() {
       echo "$pkg remained suspended by adb shell" >&2
       return 1
     fi
+    [ "$(user0_suspended_field <<<"$dump")" = false ] \
+      || { echo "$pkg user 0 header does not read suspended=false" >&2; return 1; }
   done < <(jq -r '.android.unsuspended[]' "$manifest")
   while IFS=$'\t' read -r pkg want; do
     got=$(adb shell cmd locale get-app-locales "$pkg" --user 0 | tr -d '\r' \
