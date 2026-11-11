@@ -560,8 +560,8 @@ configuration, or evaluation fails with `not in apps.lock.json`. Attended-only
 imports need no update step.
 An optional App Manager JSON app-list export contributes signing-certificate
 SHA-256 evidence and a second installer observation. Signers are emitted as
-comments and coverage facts because plan does not yet enforce installed signer
-identity.
+comments and coverage facts, not enforced; to enforce a release app's signer,
+copy the digest you trust into `apps.release.<pkg>.signerSha256`.
 Permission rendering intersects the package protobuf's broad grant set with
 PackageManager's dangerous/runtime definitions, omits hard/soft restricted
 grants whose installer/platform allowlisting is not portable, and never infers
@@ -604,10 +604,14 @@ preference order, most- to least-declarative:
    your `linkFilter` regex — the page merely *nominates* the URL, and the
    download still passes every package-id and signature check, so a changed
    or hostile page can only fail the update, never install the wrong app.
-   For all three the only trust anchors are TLS and the recorded signer, so
-   `update` refuses a signer change unless explicitly allowed
-   (`--allow-signer-rotation`). Verify the vendor channel before declaring
-   it:
+   For every release lane, GitHub/Gitea included (a release is only an upload
+   by whoever holds the repository's credentials), the only trust anchors are
+   TLS and the recorded signer, so `update` refuses a signer change unless
+   explicitly allowed (`update --allow-signer-rotation PKG`), and the build
+   refuses an APK whose signers are not in the lock. The first lock is
+   trust-on-first-use; pin the signer in config with
+   `apps.release.<pkg>.signerSha256` once you have confirmed it. Verify the
+   vendor channel before declaring it:
 
    ```console
    apksigner verify --print-certs installed.apk   # pulled via adb
@@ -655,8 +659,8 @@ on a wiped phone; lane 5 needs a human with the vendor URL; lane 6 needs Play
 consent per app. The trust model behind lanes 1–3 (record the APK hash and
 signer at lock time; Android itself enforces signer continuity on every
 upgrade) is the same one F-Droid's `AllowedAPKSigningKeys` and Accrescent use —
-the lock-time signer record closes Android's trust-on-first-use gap, the OS
-covers the rest. Floors-not-pins matches Android's own managed-device model
+the lock-time signer record, checked again against every APK at build time,
+closes Android's trust-on-first-use gap, the OS covers the rest. Floors-not-pins matches Android's own managed-device model
 (`minimumVersionCode`), where on-device stores may run ahead but never behind.
 
 ## Move apps off the Play install-consent path
@@ -704,9 +708,10 @@ SHA-256 digest; a confirmed hint is rendered as an `apps.release` entry with
 those digests shown alongside as **advisory evidence**. This establishes
 **package-id compatibility, not source identity**: a different signer's APK with
 the same package id installs on a clean phone, and the signer also governs
-signature-level permissions and shared-uid identity (nix-android does not yet
-enforce signer continuity — see [LIMITS.md](./LIMITS.md)). Confirm the shown
-signer is one you trust before relying on it. An unverifiable hint warns (with the underlying reason) and stays
+signature-level permissions and shared-uid identity. nix-android enforces
+signer continuity only from the first lock onward (see
+[LIMITS.md](./LIMITS.md)), so confirm the shown signer is one you trust before
+relying on it, and consider pinning it with `signerSha256`. An unverifiable hint warns (with the underlying reason) and stays
 `apps.play`/`apps.attended`. An explicit hint takes precedence even when the
 package is also on F-Droid (your explicit intent wins; the F-Droid availability
 is noted).
@@ -723,7 +728,7 @@ nix run .#android-rebuild -- suggest-sources --flake .#pixel --discover
 Discovery is opt-in because it sends your candidate package ids to a third-party
 host over the network. By default its output is **not** promoted into the
 migration: the catalog is untrusted and a package-id match alone does not prove
-signer continuity (which nix-android does not yet enforce, see
+source identity (signer continuity is enforced only after the first lock, see
 [LIMITS.md](./LIMITS.md)). Add `--verify` to resolve each proposal and promote
 the package-id matches to verified `apps.release` entries (with signers), in one
 command:
@@ -806,6 +811,13 @@ source. Changing a repository URL, fingerprint, or release owner without
 refreshing the lock fails the manifest build. Unreferenced extra lock entries
 are ignored.
 
-Android itself rejects an update signed by an incompatible key. `plan` flags
-that mismatch for each pending upgrade (see *Plan and apply* above and
+Each managed APK is also bound to its lock entry at build time: its package
+id and versionCode must equal the lock's, every `apksigner` signer digest must
+appear in the lock's `signerSha256`, and an F-Droid entry's URL must sit under
+its configured repository. A mismatch fails the build naming the package, so a
+lock edit that swaps in a differently-signed APK never reaches a device (fresh
+installs included). Set `apps.release.<pkg>.signerSha256` to pin a release
+app's signer in your configuration, so editing the lock alone cannot change its
+identity. Android itself rejects an update signed by an incompatible key, and `plan`
+predicts that for each pending upgrade (see *Plan and apply* above and
 [LIMITS.md](./LIMITS.md#apk-signatures)).

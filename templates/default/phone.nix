@@ -36,9 +36,11 @@
 
     # Release APKs (Obtainium-style), keyed by package id. Exactly one of
     # github/gitea/url/updateJson/html each; assets may be a bare .apk or a
-    # .tar.gz containing one. All five verify the package id with aapt2 and
-    # record signers at lock time; url/updateJson/html additionally refuse a
-    # signer change on refresh (update --allow-signer-rotation to accept one).
+    # .tar.gz containing one. All five verify the package id with aapt2,
+    # record signers at lock time, refuse a signer change on refresh
+    # (update --allow-signer-rotation PKG to accept one), and fail the build if
+    # an APK's signers are not the locked ones. Optional config pin:
+    # release."<pkg>".signerSha256 = [ "<64-hex digest from apksigner>" ];
     # release."dev.imranr.obtainium.fdroid".github = "ImranR98/Obtainium";
     # release."com.example.app".gitea = "git.example.com/owner/repo";
     # Stable vendor link — content mutates in place; a stale lock can hash-

@@ -117,7 +117,10 @@ that, not against surface breadth.
   (Gitea) confirms a repo through the real resolver, matching the apk package
   id (iterating release flavors until one matches) and surfacing the resolved
   signer for the user to confirm. Package-id match is compatibility, not source
-  identity; signer continuity is not yet enforced.
+  identity. After the first (trust-on-first-use) lock, signer continuity is
+  enforced for every release lane at refresh time, every managed APK is bound
+  to its locked signers and versionCode at build time, and
+  `apps.release.<pkg>.signerSha256` pins a signer in config.
 - **Generations and drift (`status`/`generations`).** After every successful
   `switch`, the controller attempts to stage a generation — a copy of the
   applied manifest plus a JSONL log line under
@@ -184,6 +187,12 @@ that, not against surface breadth.
   against the manifest APK's (match = silent, disjoint = definitive `WILL
   fail` note); falls back to the installer-provenance heuristic when
   apksigner is unavailable (standalone engine) or the pull fails
+- ~~build-time signer binding~~ — shipped: each managed APK's derivation
+  asserts package id, versionCode, and signers ⊆ the lock's `signerSha256`
+  (one shared `apk_signer_digests` parser), F-Droid URLs sit under their
+  repository, and refresh-time continuity covers github/gitea too. Remaining:
+  the import/suggest-sources renderers could emit the observed signer as an
+  `apps.release.<pkg>.signerSha256` pin instead of a comment
 - `assist --watch` skip/reorder for a wedged Play install (today it is
   head-of-line blocking in declaration order)
 - an `assist` note when a declared Play app is already installed in another
@@ -204,8 +213,8 @@ that, not against surface breadth.
   persistent owner-user primitive passes the emulator reboot gate
 - on-device Termux/rish execution
 - shell completion and selected Nix flag passthrough
-- signer key-rotation handling: model lock `signerSha256` as a set of allowed
-  digests and, on mismatch, check the APK's v3/v3.1 proof-of-rotation lineage
+- signer key-rotation handling: lock `signerSha256` is already a set of
+  allowed digests (build-time subset check); on mismatch, check the APK's v3/v3.1 proof-of-rotation lineage
   (`apksigner verify --print-certs -v`) — a pinned cert appearing in the new
   APK's lineage is a legitimate rotation, surfaced as an explicit re-lock
   action, never auto-accepted; require v2+ signatures when verifying (v1-only

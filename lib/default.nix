@@ -258,6 +258,7 @@
           value = {
             source = null;
             repoFingerprint = officialFdroidFingerprint;
+            repoUrl = "https://f-droid.org/repo";
           };
         }) cfg.apps.fdroid.packages
         ++ lib.concatLists (
@@ -268,6 +269,7 @@
               value = {
                 source = "fdroid:${repo.url}";
                 repoFingerprint = lib.toLower repo.fingerprint;
+                repoUrl = repo.url;
               };
             }) repo.packages
           ) cfg.apps.fdroid.repos
@@ -288,6 +290,7 @@
                 "html:${release.html.url}";
             repoFingerprint = null;
             linkFilter = if release.html != null then release.html.linkFilter else null;
+            signerPin = if release.signerSha256 == null then null else map lib.toLower release.signerSha256;
           };
         }) cfg.apps.release
       );
@@ -368,8 +371,22 @@
               throw "nix-android: '${p}' repository fingerprint is stale — run android-rebuild update"
             else if (expected.linkFilter or null) != null && (l0.linkFilter or null) != expected.linkFilter then
               throw "nix-android: '${p}' link filter is stale — run android-rebuild update"
+            else if
+              (expected.repoUrl or null) != null
+              && !(lib.hasPrefix "${lib.removeSuffix "/" expected.repoUrl}/" (l0.url or ""))
+            then
+              throw "nix-android: '${p}' lock url is outside its F-Droid repository ${expected.repoUrl}"
+            else if
+              lockedSigners == [ ] || !(lib.all (d: builtins.match "[0-9a-f]{64}" d != null) lockedSigners)
+            then
+              throw "nix-android: '${p}' has no valid signerSha256 in ${baseNameOf lockFile} — run android-rebuild update"
+            else if !(builtins.isInt (l0.versionCode or null)) then
+              throw "nix-android: '${p}' lock versionCode is not an integer — run android-rebuild update"
             else
               l0;
+          lockedSigners = map lib.toLower (if l0 == null then [ ] else l0.signerSha256 or [ ]);
+          signerList = lib.concatStringsSep " " lockedSigners;
+          pin = expected.signerPin or null;
           # Optional F-Droid mirrors from the signed index: fetchurl tries them
           # in order when the primary fails, and the same sha256 verifies
           # whichever one answers. The store path is named after the primary.
@@ -387,18 +404,63 @@
         {
           package = p;
           inherit (l) versionCode;
-          # Archive-wrapped releases (e.g. plezy ships foo.tar.gz containing
-          # plezy.apk): the lock records the inner path; extract in the store.
+          # Bind the fetched bytes to the lock's identity, not only its hash: the
+          # APK's package id and versionCode must equal the lock's, and every
+          # apksigner signer digest must be a locked signerSha256 (and overlap
+          # the config pin, when set). A lock edit that swaps url+sha256 for a
+          # differently-signed same-package APK fails here, before any device
+          # sees it — including a fresh install, where Android has nothing to
+          # compare against. Archive-wrapped releases (plezy ships a .tar.gz
+          # containing plezy.apk) extract in this same derivation.
           apk =
-            if !(l ? apkPath) then
-              src
-            else if !safeApkPath then
+            if l ? apkPath && !safeApkPath then
               throw "nix-android: unsafe archive member for '${p}' in ${baseNameOf lockFile}"
             else
-              pkgs.runCommand "${p}.apk" { nativeBuildInputs = [ pkgs.gnutar ]; } ''
-                tar -xzOf ${lib.escapeShellArg (toString src)} -- ${lib.escapeShellArg l.apkPath} > "$out"
-              '';
+              pkgs.runCommand "${p}.apk"
+                {
+                  nativeBuildInputs = [
+                    pkgs.aapt
+                    pkgs.apksigner
+                  ]
+                  ++ lib.optional (l ? apkPath) pkgs.gnutar;
+                }
+                ''
+                  set -euo pipefail
+                  export HOME=$TMPDIR
+                  source ${../engine/read-state.sh}
+                  fail() { echo "nix-android: APK for ${p} does not match ${baseNameOf lockFile}: $*" >&2; exit 1; }
+                  ${
+                    if l ? apkPath then
+                      ''
+                        tar -xzOf ${lib.escapeShellArg (toString src)} -- ${lib.escapeShellArg l.apkPath} > "$out"
+                        apk=$out
+                      ''
+                    else
+                      "apk=${src}"
+                  }
+                  badging=$(aapt2 dump badging "$apk") || fail "aapt2 cannot read it"
+                  got=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
+                  [ "$got" = ${lib.escapeShellArg p} ] || fail "package id is '$got'"
+                  got=$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" <<<"$badging")
+                  [ "$got" = ${toString l.versionCode} ] || fail "versionCode is $got, lock says ${toString l.versionCode}"
+                  certs=$(apksigner verify --print-certs "$apk" 2>&1) || fail "signature does not verify"
+                  digests=$(apk_signer_digests <<<"$certs" || true)
+                  [ -n "$digests" ] || fail "no signer certificate"
+                  while read -r d; do
+                    case " ${signerList} " in
+                    *" $d "*) ;;
+                    *) fail "signer $d is not a locked signerSha256 (${signerList})" ;;
+                    esac
+                  done <<<"$digests"
+                  ${lib.optionalString (pin != null) ''
+                    grep -Fxq -f <(printf '%s\n' ${lib.escapeShellArgs pin}) <<<"$digests" \
+                      || fail "no signer matches the apps.release signerSha256 pin"
+                  ''}
+                  [ -e "$out" ] || ln -s "$apk" "$out"
+                '';
         };
+
+      managedApps = map fetchApk managedLockedNames;
 
       # Sugar options desugar to plain settings keys — zero engine surface.
       sugarSettings = {
@@ -453,7 +515,7 @@
             apps = {
               # One unified list regardless of source — the engine doesn't care
               # where an APK came from, only that it's a hash-verified store path.
-              managed = map fetchApk managedLockedNames;
+              managed = managedApps;
               inherit (cfg.apps) attended play cleanup;
             };
           }
@@ -518,6 +580,11 @@
     in
     {
       inherit manifest converge fetchPlan;
+      # Per-app lock-bound APK derivations (`nix build .#androidConfigurations.<dev>.apks.<pkg>`);
+      # checks use them to prove a mismatched APK fails its own build.
+      apks = builtins.listToAttrs (
+        map (m: lib.nameValuePair m.package (builtins.seq validated m.apk)) managedApps
+      );
       config = builtins.seq validatedConfig cfg;
     };
 }

@@ -69,13 +69,13 @@
               github = lib.mkOption {
                 type = nullOr str;
                 default = null;
-                description = "owner/repo whose GitHub releases ship this package's APK.";
+                description = "owner/repo whose GitHub releases ship this package's APK. Signer continuity is enforced across refreshes for this source.";
                 example = "ImranR98/Obtainium";
               };
               gitea = lib.mkOption {
                 type = nullOr str;
                 default = null;
-                description = "host/owner/repo on a Gitea instance whose releases ship this package's APK (anonymous read).";
+                description = "host/owner/repo on a Gitea instance whose releases ship this package's APK (anonymous read). Signer continuity is enforced across refreshes for this source.";
                 example = "git.example.com/owner/repo";
               };
               url = lib.mkOption {
@@ -107,6 +107,12 @@
                 });
                 default = null;
                 description = "Discovery-only HTML scrape for vendors that publish versioned APK links on a page but no stable URL or manifest (e.g. Steam). The page only NOMINATES a URL: the download still passes the full aapt2 package-id check, signer recording, and cross-refresh signer-continuity enforcement, so a changed or hostile page can only fail the update — never install the wrong app. Page redesigns break discovery loudly at lock time; fix the regex and re-run update.";
+              };
+              signerSha256 = lib.mkOption {
+                type = nullOr (listOf (strMatching "[0-9A-Fa-f]{64}"));
+                default = null;
+                description = "Optional config-level signer pin: signing-certificate SHA-256 digests (as `apksigner verify --print-certs` prints them) you trust for this app. When set, the build fails unless at least one of the APK's signers is listed, so editing apps.lock.json alone cannot change the app's identity. Independently of this pin, every managed APK's signers must be a subset of the lock's recorded `signerSha256`.";
+                example = [ "b353601f6a1d5fd6603ae2f50be80cf301367b86b6ab8b1f66243da96cd57362" ];
               };
             };
           });

@@ -984,7 +984,7 @@ attribute set of (submodule)
 
 
 
-host/owner/repo on a Gitea instance whose releases ship this package’s APK (anonymous read)\.
+host/owner/repo on a Gitea instance whose releases ship this package’s APK (anonymous read)\. Signer continuity is enforced across refreshes for this source\.
 
 
 
@@ -1013,7 +1013,7 @@ null
 
 
 
-owner/repo whose GitHub releases ship this package’s APK\.
+owner/repo whose GitHub releases ship this package’s APK\. Signer continuity is enforced across refreshes for this source\.
 
 
 
@@ -1097,6 +1097,37 @@ string
 
 ```nix
 "https://store.steampowered.com/mobile"
+```
+
+
+
+## apps\.release\.\<name>\.signerSha256
+
+
+
+Optional config-level signer pin: signing-certificate SHA-256 digests (as ` apksigner verify --print-certs ` prints them) you trust for this app\. When set, the build fails unless at least one of the APK’s signers is listed, so editing apps\.lock\.json alone cannot change the app’s identity\. Independently of this pin, every managed APK’s signers must be a subset of the lock’s recorded ` signerSha256 `\.
+
+
+
+*Type:*
+null or (list of string matching the pattern \[0-9A-Fa-f]{64})
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "b353601f6a1d5fd6603ae2f50be80cf301367b86b6ab8b1f66243da96cd57362"
+]
 ```
 
 
