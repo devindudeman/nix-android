@@ -203,6 +203,14 @@ nix run .#android-rebuild -- plan --flake .#pixel-linux --serial SERIAL
 nix run .#android-rebuild -- plan --flake .#pixel-darwin --serial SERIAL
 ```
 
+`android-rebuild` evaluates the target flake with `--impure`, so a single
+output may also pick the controller with
+`system = builtins.currentSystem or "x86_64-linux";` and `apps.local` may
+point outside the flake. It does not pass `--accept-flake-config`: a
+`nixConfig` in the flake you name (extra substituters, keys) is not trusted
+silently. Nix prompts on a terminal and otherwise ignores it with a warning;
+put caches you rely on in `nix.conf`, or answer the prompt once.
+
 Hash-locked F-Droid and release sources share safely. If the module declares an
 `apps.local` APK by path, that path must be available when evaluating from each
 controller; prefer a path inside a private shared flake or separate

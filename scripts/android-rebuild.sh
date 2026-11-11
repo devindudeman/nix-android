@@ -19,7 +19,13 @@ set -euo pipefail
 
 src=${NIX_ANDROID_SRC:?NIX_ANDROID_SRC not set (use the packaged android-rebuild)}
 nix_android_bash=${NIX_ANDROID_BASH:?NIX_ANDROID_BASH not set (use the packaged android-rebuild)}
-nixargs=(--impure --accept-flake-config)
+# --impure stays: apps.local paths outside the flake, and consumer configs that
+# pick mkDevice.system from builtins.currentSystem (one config for Linux and
+# macOS controllers) or read builtins.getEnv, only evaluate impurely. No
+# --accept-flake-config: --flake may name any flake, and its nixConfig
+# (substituters, keys) must not be trusted silently; Nix asks on a TTY or
+# ignores it with a warning.
+nixargs=(--impure)
 # Device closures are dozens of independent APK fetchurl derivations; build
 # them concurrently whatever the controller's nix.conf says. max-jobs is part
 # of the client options the daemon applies even for untrusted users.
