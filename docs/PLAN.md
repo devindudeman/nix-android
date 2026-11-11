@@ -129,8 +129,9 @@ that, not against surface breadth.
   `plan`, which diffs the current config); `generations` lists the ledger. This
   is a controller-side receipt, not a NixOS bootable snapshot: it cannot restore
   app data, downgrade an app, or invert ensure-only state, and does not yet
-  offer a rollback verb. The receipt logic is unit-tested device-free
-  (`test-generations.sh`).
+  offer a rollback verb. Receipts record the OS build fingerprint and
+  incremental, and `status` notes an OTA since the last switch. The receipt
+  logic is unit-tested device-free (`test-generations.sh`).
 - **Flake `templates` + self-documenting scaffold.** `nix flake init -t
   github:devindudeman/nix-android` writes a starter config repo: a consumer
   `flake.nix` pinning the CLI, a `phone.nix` that documents the main option
@@ -238,16 +239,24 @@ that, not against surface breadth.
   vendor-direct lanes, not just F-Droid
 - `diff-generations`: render app/version/permission deltas between two
   recorded generation receipts (the ledger exists; it deserves a viewer)
+- typed `grapheneos.*` options over the security-relevant GrapheneOS settings
+  keys (auto-reboot timeout, dynamic-code-loading restrictions, PIN scrambling,
+  radio timeouts; list in [GRAPHENEOS.md](./GRAPHENEOS.md)). They are
+  shell-writable by source and read-verified on a Pixel 9 Pro, so they work
+  today through `android.settings`. Gated on a GrapheneOS mutation bench (a
+  spare Pixel 8a+ on official stable; a GrapheneOS emulator is `userdebug` and
+  changes the behavior under test)
 
 ### Not planned
 
-- Declaring low-value ambient settings for their own sake (radio auto-off,
-  screen timeouts, and similar). A dedicated `grapheneos.*` namespace and a
-  from-source GrapheneOS emulator bench were considered and dropped: they cost
-  a heavy build/maintenance treadmill to declare state worth seconds of manual
-  tapping. GrapheneOS-specific keys remain available through the
-  `android.settings` expert escape hatch, and real-device read-only comparison
-  stays the way GrapheneOS behavior is checked.
+- Declaring low-value ambient settings for their own sake (screen timeouts
+  and similar). A from-source GrapheneOS emulator bench was considered and
+  dropped: it is a heavy build/maintenance treadmill, and its `userdebug` build
+  flips the behavior under test anyway ([GRAPHENEOS.md](./GRAPHENEOS.md#the-bench-gap)).
+  The security-relevant `grapheneos.*` keys are deferred above, not dropped.
+  GrapheneOS-specific keys remain available through the `android.settings`
+  expert escape hatch, and real-device read-only comparison stays the way
+  GrapheneOS behavior is checked.
 
 No `stateVersion`, module hierarchy, daemon, website, or alternate engine
 language is planned until a demonstrated compatibility or maintenance problem

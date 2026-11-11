@@ -112,6 +112,7 @@ cache.
   module definitions
 - [docs/LIMITS.md](docs/LIMITS.md) — supported targets and what adb-shell
   cannot or does not manage
+- [docs/GRAPHENEOS.md](docs/GRAPHENEOS.md) — GrapheneOS controls reachable from adb shell, locked-phone adb, installers
 - [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — auditable ADB read/write/import-to-Nix map
 - [docs/DEVELOPING.md](docs/DEVELOPING.md) — architecture, checks, and emulator
   workflow

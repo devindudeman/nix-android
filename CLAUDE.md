@@ -12,6 +12,7 @@ Read these before changing behavior:
 - `docs/USING.md` — public behavior and option semantics
 - `docs/LIMITS.md` — supported targets, exact reconciliation, and no-root
   boundaries
+- `docs/GRAPHENEOS.md` — GrapheneOS controls reachable at uid 2000 and the bench gap
 - `docs/PLAN.md` — first-release gate and deferred roadmap
 - `docs/DEVICE-OWNER.md` — design-only proposal for an opt-in Device Owner lane
 

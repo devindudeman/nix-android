@@ -349,6 +349,12 @@ intent is reasserted after an app install or upgrade. Destructive cleanup, when
 explicitly set to `"uninstall"`, runs last so a preceding failure cannot start
 removals.
 
+On GrapheneOS, the USB-C port defaults to charging-only while locked. A
+session opened before locking keeps working, but a cable replug while locked or
+the auto-reboot drops adb until the next unlock. Keep the phone unlocked for
+long runs (`assist --watch`, `bootstrap`, a large `switch`); `switch` warns
+when the keyguard is showing. See [GRAPHENEOS.md](./GRAPHENEOS.md).
+
 Do not hard-reboot immediately after a switch. Android package restrictions,
 app-ops, and device-idle state use write-behind storage. Use a normal power-menu
 reboot. In an emulator-only persistence test, after allowing state to settle,
@@ -379,7 +385,11 @@ nix run .#android-rebuild -- \
 `status` re-plans the *last-applied* generation against the device, so it
 reports divergence since the last switch — distinct from `plan`, which shows
 what the *current* config would change. It reads reachable state only; a clean
-result prints `✓ device matches manifest`. If the last generation's saved
+result prints `✓ device matches manifest`. Each receipt also records the OS
+build (`ro.build.fingerprint`, `ro.build.version.incremental`); when the device
+has since taken an OTA, `status` prints `OS changed since last switch: <old> →
+<new>` first, and `generations` lists each receipt's build (`unknown` for
+receipts recorded before this field). If the last generation's saved
 manifest is missing (deleted or never fully written), `status` says so rather
 than guessing.
 
@@ -426,7 +436,9 @@ no verified general primitive here for authenticating that package's signer.
 
 On GrapheneOS, the initial app installation still requires explicit consent.
 Sandboxed Google Play can perform unattended updates afterward when Play was
-the last installer. See GrapheneOS's
+the last installer. Keep `com.android.vending` and `com.google.android.gms` in
+`apps.attended`; GrapheneOS only accepts their installation from its own App
+Store or from shell ([GRAPHENEOS.md](./GRAPHENEOS.md#grapheneos-and-installers)). See GrapheneOS's
 [sandboxed Google Play documentation](https://grapheneos.org/usage#sandboxed-google-play)
 and Android's official
 [Google Play linking documentation](https://developer.android.com/distribute/marketing-tools/linking-to-google-play).
