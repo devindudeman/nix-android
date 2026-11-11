@@ -402,6 +402,25 @@
               grep -q 'only valid with import' app-manager-err
               ! "$cli" build --flake x#bench --watch >/dev/null 2>watch-err
               grep -q 'only valid with assist' watch-err
+              # Device-closure builds pass --max-jobs (parallel APK fetches)
+              # regardless of nix.conf; a stub nix records the invocation.
+              mkdir stub
+              cat > stub/nix <<EOF
+              #!${pkgs.bash}/bin/bash
+              echo "\$*" >> $PWD/nix.log
+              case "\$*" in
+              *fetchPlan*) echo '[{"path":"/nix/store/absent.apk","size":2500000},{"path":"/","size":7},{"path":"/nix/store/absent2.apk"}]' ;;
+              *) echo /nix/store/fake-manifest ;;
+              esac
+              EOF
+              chmod +x stub/nix
+              PATH=$PWD/stub:$PATH "$cli" build --flake x#bench >/dev/null 2>progress-err
+              grep -qx 'fetching 2 APKs (2+ MB) ...' progress-err
+              grep -q -- 'build .* --max-jobs 8 x#androidConfigurations.bench.manifest' nix.log
+              PATH=$PWD/stub:$PATH NIX_ANDROID_MAX_JOBS=3 "$cli" build --flake x#bench >/dev/null
+              grep -q -- '--max-jobs 3 x#androidConfigurations.bench.manifest' nix.log
+              ! PATH=$PWD/stub:$PATH NIX_ANDROID_MAX_JOBS=0 "$cli" build --flake x#bench >/dev/null 2>jobs-err
+              grep -q 'NIX_ANDROID_MAX_JOBS' jobs-err
               touch $out
             '';
             import-snapshot =

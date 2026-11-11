@@ -219,6 +219,18 @@ hash-addressed APK store path.
 - Test correct resolution, wrong trust anchor, wrong package ID, duplicate
   declarations, and stale-source rejection.
 
+Lock format notes: every entry has `url`, `sha256`, `versionCode`,
+`versionName`, `signerSha256`, and (except main f-droid.org) `source`.
+F-Droid entries add `repoFingerprint`, `preferredSigner`, an optional `size`
+(the index's `file.size`, used only for android-rebuild's progress line via
+the `fetchPlan` output), and an optional `mirrors` list of full HTTPS APK URLs (repo `repo.mirrors` from the signed
+index-v2, `http`/`.onion`/malformed URLs and the configured repo itself
+dropped, index order, at most four). `fetchApk` passes `[ url ] ++ mirrors` as
+fetchurl `urls`; the store path is named after `url`, so adding mirrors changes
+neither the hash chain nor existing store paths. A missing `mirrors` field
+means primary only. New optional fields must keep that shape: absent is the
+old behavior.
+
 Attended sources are deliberately different: they create no APK store path and
 never automate a consent screen. `apps.play` only asserts package presence and
 lets `assist` open the official listing. Any new attended source must preserve

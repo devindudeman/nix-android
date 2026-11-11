@@ -1,4 +1,4 @@
-# mkDevice: modules → { manifest, converge, config }.
+# mkDevice: modules → { manifest, converge, config, fetchPlan }.
 # Manifest is pure data (JSON); APKs are fetched into the store by the hashes
 # in the lock file, so a device's app payload is a real Nix closure.
 { nixpkgs }:
@@ -370,8 +370,12 @@
               throw "nix-android: '${p}' link filter is stale — run android-rebuild update"
             else
               l0;
+          # Optional F-Droid mirrors from the signed index: fetchurl tries them
+          # in order when the primary fails, and the same sha256 verifies
+          # whichever one answers. The store path is named after the primary.
           src = pkgs.fetchurl {
-            inherit (l) url sha256;
+            inherit (l) sha256;
+            urls = [ l.url ] ++ (l.mirrors or [ ]);
           };
           safeApkPath =
             l ? apkPath
@@ -504,9 +508,16 @@
           exec ${pkgs.bash}/bin/bash ${../engine}/converge.sh ${manifest} "$@"
         '';
       };
+      # android-rebuild's pre-build progress line: each managed APK's store
+      # path (eval-only, nothing is fetched) and its download size when the
+      # lock records one (F-Droid entries do).
+      fetchPlan = map (p: {
+        path = "${(fetchApk p).apk}";
+        size = lock.packages.${p}.size or null;
+      }) managedLockedNames;
     in
     {
-      inherit manifest converge;
+      inherit manifest converge fetchPlan;
       config = builtins.seq validatedConfig cfg;
     };
 }

@@ -19,6 +19,12 @@ set -euo pipefail
 src=${NIX_ANDROID_SRC:?NIX_ANDROID_SRC not set (use the packaged android-rebuild)}
 nix_android_bash=${NIX_ANDROID_BASH:?NIX_ANDROID_BASH not set (use the packaged android-rebuild)}
 nixargs=(--impure --accept-flake-config)
+# Device closures are dozens of independent APK fetchurl derivations; build
+# them concurrently whatever the controller's nix.conf says. max-jobs is part
+# of the client options the daemon applies even for untrusted users.
+max_jobs=${NIX_ANDROID_MAX_JOBS:-8}
+[[ $max_jobs =~ ^([1-9][0-9]*|auto)$ ]] || { echo "NIX_ANDROID_MAX_JOBS must be a positive integer or 'auto'" >&2; exit 2; }
+buildargs=("${nixargs[@]}" --max-jobs "$max_jobs")
 
 usage() {
   cat <<'EOF'
@@ -37,6 +43,8 @@ Usage:
     [--repo URL FINGERPRINT LABEL ...] [--release-hint PKG=owner/repo ...]
 
 The --serial argument (or ANDROID_SERIAL) is mandatory for every device command.
+APK fetches run in parallel: NIX_ANDROID_MAX_JOBS (default 8, or 'auto') is
+passed to nix build as --max-jobs.
 suggest-sources is read-only and device-free: it reports which apps.play /
 apps.attended entries are published on a hash-lockable F-Droid source. Add
 --repo to also check a third-party F-Droid repo (e.g. FUTO). --release-hint
@@ -186,26 +194,51 @@ attr="$flake#androidConfigurations.$dev"
 
 engine_args=(--serial "$serial")
 
+# Nix prints only "copying path" lines while fetching, so say up front how
+# much is coming. Best-effort: any failure (or an eval slower than a few
+# seconds) prints nothing and the build reports the real error.
+# ponytail: `-e` on the store path assumes the controller's local /nix/store;
+# a remote --store would over-count. Size is unknown for release-lane
+# entries and pre-size locks: "M+ MB" when partial, no size when none known.
+fetch_progress() {
+  local plan path size missing=0 bytes=0 unknown=
+  plan=$(timeout 5 nix eval "${nixargs[@]}" "$attr.fetchPlan" --json 2>/dev/null) || return 0
+  while IFS=$'\t' read -r path size; do
+    [ -n "$path" ] && [ ! -e "$path" ] || continue
+    missing=$((missing + 1))
+    if [[ $size =~ ^[0-9]+$ ]]; then bytes=$((bytes + size)); else unknown=+; fi
+  done < <(jq -r '.[] | [.path, (.size // "")] | @tsv' <<<"$plan" 2>/dev/null)
+  [ "$missing" -gt 0 ] || return 0
+  if [ "$bytes" -eq 0 ]; then
+    echo "fetching $missing APKs ..." >&2
+  else
+    echo "fetching $missing APKs ($((bytes / 1000000))$unknown MB) ..." >&2
+  fi
+}
+case $cmd in
+build | plan | switch | assist | bootstrap) fetch_progress ;;
+esac
+
 case $cmd in
 build)
-  out=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  out=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   echo "manifest: $out"
   ;;
 plan | switch)
-  conv=$(nix build "${nixargs[@]}" "$attr.converge" --no-link --print-out-paths)
+  conv=$(nix build "${buildargs[@]}" "$attr.converge" --no-link --print-out-paths)
   apply=()
   # switch records a generation receipt; plan never mutates or records.
   [ "$cmd" = switch ] && apply=(--apply --record)
   exec "$conv"/bin/* "${engine_args[@]}" "${apply[@]}"
   ;;
 assist)
-  manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  manifest=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   assist_args=()
   [ "$watch" -eq 0 ] || assist_args+=(--watch)
   exec "$nix_android_bash" "$src/scripts/assist-play.sh" "$manifest" --serial "$serial" "${assist_args[@]}"
   ;;
 bootstrap)
-  manifest=$(nix build "${nixargs[@]}" "$attr.manifest" --no-link --print-out-paths)
+  manifest=$(nix build "${buildargs[@]}" "$attr.manifest" --no-link --print-out-paths)
   exec "$nix_android_bash" "$src/scripts/bootstrap.sh" "$manifest" --serial "$serial"
   ;;
 suggest-sources)

@@ -354,6 +354,40 @@ app-ops, and device-idle state use write-behind storage. Use a normal power-menu
 reboot. In an emulator-only persistence test, after allowing state to settle,
 use `adb -s emulator-5554 shell svc power reboot userrequested`.
 
+### Fetch performance
+
+Every managed APK is its own fixed-output `fetchurl` derivation, so a lock
+refresh that moves many apps means many downloads. `build`, `plan`, `switch`,
+`assist`, and `bootstrap` pass `--max-jobs 8` to `nix build`, so those fetches
+run concurrently even on a controller whose `nix.conf` says `max-jobs = 1`.
+Override it with `NIX_ANDROID_MAX_JOBS` (a positive integer or `auto`):
+
+```console
+NIX_ANDROID_MAX_JOBS=16 nix run .#android-rebuild -- plan --flake .#pixel --serial SERIAL
+```
+
+`max-jobs` is one of the client options the Nix daemon applies for every
+client, trusted or not, so no `trusted-users` entry is needed.
+
+Before building, those commands print `fetching N APKs (M MB) ...` on stderr
+when managed APKs are missing from the local store (nothing when all are
+present). The count comes from a sub-second evaluation of the device's
+`fetchPlan` output; it is skipped silently if that evaluation fails or takes
+longer than five seconds. Sizes come from the lock: F-Droid entries record
+the signed index's file size, release entries do not, so the figure reads
+`M+ MB` when some sizes are unknown and is omitted when none are known.
+
+F-Droid entries also carry up to four HTTPS mirrors, taken at `update` time
+from the repository's signed index (`repo.mirrors`; `http://` and `.onion`
+mirrors are dropped). The APK is fetched with `fetchurl { urls = [ primary ] ++
+mirrors; }` under the same locked sha256, so a mirror that serves different
+bytes fails the hash check exactly as a tampered primary would. Mirrors are
+tried in order only when the previous URL fails (an HTTP error, connection
+failure, or hash mismatch); a primary that is merely slow is not abandoned.
+Locks written before mirrors existed simply have no `mirrors` field and fetch
+from the primary only; run `update` to add them. Release-lane entries never
+have mirrors.
+
 ## Generations and drift
 
 After every successful `switch` (including a no-op switch on an
@@ -739,7 +773,8 @@ a personal setup.
 
 For F-Droid repositories, update verifies the `entry.jar` signature, requires
 the trusted certificate fingerprint, verifies that `entry.json` is signed,
-checks the index-v2 hash, and records each APK hash. A failed update writes no
+checks the index-v2 hash, and records each APK hash plus up to four HTTPS
+mirror URLs from the same signed index (see Fetch performance). A failed update writes no
 partial lock. GitHub/Gitea assets are hash-pinned and their Android package ID
 is checked before the lock is written. Release resolution uses anonymous public
 APIs and is therefore subject to the host's unauthenticated rate limits.
